@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/gabriel-rivero/berth/compare/v0.4.0...v0.5.0) (2026-11-03)
+
+
+### Features
+
+* **ui:** alt+arrow pane focus navigation + fix intercepted chords leaking to PTY ([6102ea8](https://github.com/gabriel-rivero/berth/commit/6102ea86110cfe68bdc904bc7fb9e79b11477595))
+
 ## [0.4.0](https://github.com/gabriel-rivero/berth/compare/v0.3.0...v0.4.0) (2026-11-03)
 
 
