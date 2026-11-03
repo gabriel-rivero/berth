@@ -769,7 +769,7 @@ impl Renderer {
         &mut self,
         cx: f32,
         cy: f32,
-        metrics: Metrics,
+        _metrics: Metrics,
         color: [f32; 4],
         sink: &mut QuadSink,
     ) {
@@ -777,8 +777,10 @@ impl Renderer {
             dlog!("draw_close: '×' glyph unavailable");
             return;
         };
-        let gx = cx - g.uv[2] * 0.5 + g.left as f32;
-        let gy = cy - metrics.ascent * 0.5 - g.top as f32;
+        // Center on the ink box, not on cell/ascent metrics: ink centers
+        // differently per font (macOS font chain misaligned the other way).
+        let gx = cx - g.uv[2] * 0.5;
+        let gy = cy - g.uv[3] * 0.5;
         sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
     }
 

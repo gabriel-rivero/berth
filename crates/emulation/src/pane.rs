@@ -108,6 +108,12 @@ impl Pane {
         let master = pair.master;
 
         let mut cmd = CommandBuilder::new_default_prog();
+        // Full-capability terminfo: most children inherit a minimal/dumb TERM
+        // from the PTY session, which degrades TUI palettes (claude/vim...) to
+        // one color. Only what we actually implement goes here.
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("COLORTERM", "truecolor");
+        cmd.env("TERM_PROGRAM", "berth");
         if let Some(cwd) = cwd {
             cmd.cwd(cwd);
         }

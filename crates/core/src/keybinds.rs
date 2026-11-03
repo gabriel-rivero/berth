@@ -1,9 +1,9 @@
 //! User-configurable keybinds: `action = ["chord", ...]` TOML table.
 //!
 //! Chord syntax: modifier tokens joined with `+`, key last, e.g.
-//! "ctrl+shift+enter", "alt+left", "ctrl+tab". Modifiers: ctrl, shift, alt,
-//! super (super-chords are reserved and never match). Keys are matched by
-//! physical key name; letters/digits use their lowercase character.
+//! "ctrl+shift+enter", "alt+left", "cmd+t". Modifiers: ctrl, shift, alt,
+//! super/cmd/win. Keys are matched by physical key name; letters/digits use
+//! their lowercase character.
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -70,19 +70,23 @@ impl Action {
         })
     }
 
-    /// All actions with their default chords (matches pre-config behavior).
+    /// Defaults follow iTerm2's chord style (cmd on all platforms; ctrl
+    /// variants kept as aliases so Linux/Windows muscle memory still works).
     pub fn defaults() -> &'static [(Action, &'static [&'static str])] {
         &[
-            (Action::Copy, &["ctrl+shift+c"]),
-            (Action::Paste, &["ctrl+v"]),
-            (Action::ScrollPageUp, &["shift+pageup"]),
-            (Action::ScrollPageDown, &["shift+pagedown"]),
-            (Action::SplitVertical, &["ctrl+shift+enter"]),
-            (Action::SplitHorizontal, &["ctrl+shift+backslash"]),
-            (Action::NewTab, &["ctrl+shift+n"]),
-            (Action::ClosePane, &["ctrl+shift+w"]),
-            (Action::NextTab, &["ctrl+tab"]),
-            (Action::PrevTab, &["ctrl+shift+tab"]),
+            (Action::Copy, &["cmd+c", "ctrl+shift+c"]),
+            (Action::Paste, &["cmd+v", "ctrl+v"]),
+            (Action::ScrollPageUp, &["shift+pageup", "cmd+pageup"]),
+            (Action::ScrollPageDown, &["shift+pagedown", "cmd+pagedown"]),
+            (Action::SplitVertical, &["cmd+d", "ctrl+shift+enter"]),
+            (
+                Action::SplitHorizontal,
+                &["cmd+shift+d", "ctrl+shift+backslash"],
+            ),
+            (Action::NewTab, &["cmd+t", "ctrl+shift+n"]),
+            (Action::ClosePane, &["cmd+w", "ctrl+shift+w"]),
+            (Action::NextTab, &["cmd+]", "ctrl+tab"]),
+            (Action::PrevTab, &["cmd+[", "ctrl+shift+tab"]),
             (Action::NewWorkspace, &["ctrl+shift+o"]),
             (Action::CloseWorkspace, &["ctrl+shift+q"]),
             (Action::NextWorkspace, &["ctrl+alt+right"]),
@@ -97,6 +101,7 @@ pub struct Chord {
     pub ctrl: bool,
     pub shift: bool,
     pub alt: bool,
+    pub super_key: bool,
     pub key: String,
 }
 
@@ -108,6 +113,7 @@ pub fn parse_chord(s: &str) -> Option<Chord> {
         ctrl: false,
         shift: false,
         alt: false,
+        super_key: false,
         key: String::new(),
     };
     let mut parts = s.split('+');
@@ -122,11 +128,11 @@ pub fn parse_chord(s: &str) -> Option<Chord> {
             "ctrl" | "control" => chord.ctrl = true,
             "shift" => chord.shift = true,
             "alt" | "option" => chord.alt = true,
-            "super" | "cmd" | "win" => {} // reserved: parses, never matches
+            "super" | "cmd" | "win" => chord.super_key = true,
             _ => return None,
         }
     }
-    if !chord.ctrl && !chord.shift && !chord.alt {
+    if !chord.ctrl && !chord.shift && !chord.alt && !chord.super_key {
         return None;
     }
     Some(chord)
@@ -143,6 +149,8 @@ fn is_bindable_key(k: &str) -> bool {
             | "backspace"
             | "space"
             | "backslash"
+            | "bracketleft"
+            | "bracketright"
             | "pageup"
             | "pagedown"
             | "home"
@@ -153,7 +161,10 @@ fn is_bindable_key(k: &str) -> bool {
             | "right"
             | "up"
             | "down"
-    ) || k.len() == 1 && k.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+    ) || k.len() == 1
+        && k.chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '[' || c == ']')
         || (k.len() == 3 && k.starts_with('f') && k[1..].chars().all(|c| c.is_ascii_digit()))
 }
 
@@ -222,6 +233,10 @@ mod tests {
         let c = parse_chord("alt+left").unwrap();
         assert_eq!(c.key, "left");
         assert!(c.alt && !c.ctrl);
+        let cmd_t = parse_chord("cmd+t").unwrap();
+        assert!(cmd_t.super_key && !cmd_t.ctrl && !cmd_t.shift);
+        let bracket = parse_chord("cmd+]").unwrap();
+        assert_eq!(bracket.key, "]");
         assert_eq!(parse_chord("n"), None); // bare key never binds
         assert_eq!(parse_chord("ctrl+bogus+enter"), None);
         assert_eq!(parse_chord("ctrl+enter").unwrap().key, "enter");
@@ -234,6 +249,11 @@ mod tests {
         assert!(warn.is_empty());
         let chord = parse_chord("ctrl+shift+Enter").unwrap();
         assert_eq!(bindings.get(&chord), Some(&Action::SplitVertical));
+        // iTerm2-style primary chords are seeded.
+        let chord = parse_chord("cmd+t").unwrap();
+        assert_eq!(bindings.get(&chord), Some(&Action::NewTab));
+        let chord = parse_chord("cmd+w").unwrap();
+        assert_eq!(bindings.get(&chord), Some(&Action::ClosePane));
         // case-insensitive key
         let chord = parse_chord("CTRL+SHIFT+N").unwrap();
         assert_eq!(bindings.get(&chord), Some(&Action::NewTab));

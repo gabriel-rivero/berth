@@ -600,11 +600,18 @@ impl Berth {
                 ctrl,
                 shift,
                 alt,
-                key: key_name,
+                super_key: mods.super_key(),
+                key: key_name.clone(),
             };
             if let Some(action) = self.bindings.get(&chord).copied() {
                 dlog_app!("chord matched {:?}: {action:?}", chord);
                 return self.run_action(action);
+            }
+            // Mac-style global modifier: unbound cmd combos never reach the
+            // PTY (Terminal.app behaves the same for unhandled cmd chords).
+            if mods.super_key() {
+                dlog_app!("super chord unbound ({key_name}) -> consumed");
+                return true;
             }
         }
         false

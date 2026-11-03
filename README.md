@@ -38,42 +38,50 @@ v0.11.0 — M1 done, M2 done except polish, M3 mostly done, M4 not started.
 
 ### Keybinds
 
+Defaults follow iTerm2 (`cmd`/super chords work on all platforms); legacy
+`ctrl` combos ship as aliases. Everything is user-overridable.
+
 | action | keys |
 | --- | --- |
-| split vertically / horizontally | `ctrl+shift+Enter` / `ctrl+shift+\` |
+| split vertically / horizontally | `cmd+d` (`ctrl+shift+Enter`) / `cmd+shift+d` (`ctrl+shift+\`) |
 | resize split | drag divider (2px, 4px hit slack) |
+| new tab | `cmd+t` (`ctrl+shift+n`) |
 | new / close workspace | `ctrl+shift+o` / `ctrl+shift+q` |
 | cycle workspaces | `ctrl+alt+←` / `ctrl+alt+→` |
-| new tab / cycle tabs | `ctrl+shift+n` / `ctrl+tab` (+shift for prev) |
-| close focused pane | `ctrl+shift+w` |
+| cycle tabs | `cmd+]` / `cmd+[` (`ctrl+tab`, +shift for prev) |
+| close focused pane | `cmd+w` (`ctrl+shift+w`) |
 | close any tab / workspace | `✕` button in the tab slot / sidebar entry |
 | resize sidebar | drag its right edge (hover shows ⟷ cursor) |
 | pane focus | `alt+arrows` |
-| copy / paste selection | `ctrl+shift+c` / `ctrl+v` |
-| scroll | mouse wheel, `shift+PgUp` / `shift+PgDn` |
+| copy / paste selection | `cmd+c` / `cmd+v` (`ctrl+shift+c` / `ctrl+v`) |
+| scroll | mouse wheel, `shift+PgUp` / `shift+PgDn`, `cmd+PgUp` / `cmd+PgDn` |
 
-Every chord above is user-overridable in `config.toml`:
+Every chord above is reassignable in `config.toml`; a user entry replaces all
+defaults for that action:
 
 ```toml
 [keybinds]
-"new-tab"   = ["ctrl+shift+t"]   # replaces the ctrl+shift+n default
-"copy"      = ["ctrl+shift+c", "cmd+c"]   # super-chords are reserved (no-op) for now
+"new-tab"   = ["ctrl+shift+t", "cmd+t"]   # extra chord, removes default aliases as wanted
+"copy"      = ["ctrl+shift+c"]            # drop the cmd+c default if it collides
 ```
 
 Action ids: `split-vertical`, `split-horizontal`, `new-tab`, `close-pane`,
 `close-tab`, `next-tab`, `prev-tab`, `new-workspace`, `close-workspace`,
 `next-workspace`, `prev-workspace`, `copy`, `paste`, `scroll-page-up`,
-`scroll-page-down`. Chord syntax is `ctrl`/`shift`/`alt` + key (`enter`,
-`tab`, `backslash`, `left/right/up/down`, `pageup/pagedown`, `home`, `end`,
-`insert`, `delete`, `escape`, `space`, `f1..f12`, or any digit/letter).
-Unknown actions or unparseable chords are reported on stderr at load.
-Changes hot-reload like the rest of the config.
+`scroll-page-down`. Chord syntax is modifier tokens (`ctrl`/`control`,
+`shift`, `alt`/`option`, `super`/`cmd`/`win`) joined with `+` plus the key
+(`enter`, `tab`, `backslash`, `[`, `]`, `left/right/up/down`,
+`pageup/pagedown`, `home`, `end`, `insert`, `delete`, `escape`, `space`,
+`f1..f12`, or any digit/letter). Unknown actions or unparseable chords are
+reported on stderr at load. Changes hot-reload like the rest of the config.
 
 ### Remaining
 
 - sidebar: workspace/tab rename, drag tabs between workspaces, drag tabs between panes
 - polish: no window-title-based quit guard, no close-confirmation, scrolling
   selection interplay; wide-glyph spacing beyond the fallback chain
+- advanced TUIs: kitty keyboard protocol probe/responses (TERM=xterm-256color
+  + COLORTERM=truecolor already cover the common palette cases)
 - platform: keep ConPTY path honest on Windows (CI compiles but manual QA pending)
 - **M4** — plugin host (`crates/plugins`), capability-gated WASM ABI,
   example plugins
