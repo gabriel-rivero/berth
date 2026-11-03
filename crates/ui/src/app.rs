@@ -1107,6 +1107,12 @@ impl Berth {
     }
 }
 
+/// App config dir (berth/), shared with Config::path()'s origin. None when the
+/// platform has no config home.
+pub fn config_dir() -> Option<std::path::PathBuf> {
+    directories::ProjectDirs::from("com", "berth", "berth").map(|d| d.config_dir().to_path_buf())
+}
+
 pub fn run() -> anyhow::Result<()> {
     let config = Config::load()?;
     let layout = Layout::with_defaults("main");

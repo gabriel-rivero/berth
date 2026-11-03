@@ -10,6 +10,7 @@ repository.workspace = true
 
 [dependencies]
 berth-core = { path = "../core" }
+directories.workspace = true
 berth-emulation = { path = "../emulation" }
 alacritty_terminal.workspace = true
 winit.workspace = true

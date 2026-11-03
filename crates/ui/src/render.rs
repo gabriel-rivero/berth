@@ -206,16 +206,26 @@ struct Upload {
     bytes: Vec<u8>,
 }
 
+/// Owned fallback face (emoji/symbol/CJK) + its 'static FontRef.
+struct FallbackFont {
+    _data: Vec<u8>,
+    font: FontRef<'static>,
+    /// fontdb family name (diagnostics only).
+    name: String,
+}
+
 /// Per-font glyph cache + raster contexts.
 pub struct FontCtx {
     /// Font data kept alive for the transmuted 'static FontRef.
     _data: Vec<u8>,
     font: FontRef<'static>,
+    /// Faces consulted when the primary lacks a glyph (first hit wins).
+    fallbacks: Vec<FallbackFont>,
     size_px: f32,
     /// The family this context was built for (hot-reload comparison).
     family: String,
     ctx: ScaleContext,
-    /// char -> raster (None = glyph unavailable in this font).
+    /// char -> raster (None = glyph unavailable in the whole chain).
     glyphs: HashMap<char, Option<GlyphRef>>,
     pub metrics: Metrics,
 }
@@ -228,6 +238,14 @@ impl FontCtx {
     pub fn new(family: &str, size_px: f32) -> anyhow::Result<Self> {
         let mut db = Database::new();
         db.load_system_fonts();
+        // User-vendored faces: drop TTFs in the config dir's fonts/ to make them
+        // selectable (custom families) or auto-available as fallbacks.
+        if let Some(cfg) = crate::app::config_dir() {
+            let dir = cfg.join("fonts");
+            if dir.is_dir() {
+                db.load_fonts_dir(&dir);
+            }
+        }
         // fontdb resolves generic "monospace" to Courier New on macOS (bad
         // hhea metrics => clipped glyphs), so prefer known-good per-OS faces
         // before the generic family name.
@@ -278,9 +296,56 @@ impl FontCtx {
             .unwrap_or_else(|| "bundled JetBrainsMono-Regular".to_string());
         dlog!("font: family={family:?} -> {source_desc}");
 
+        // Emoji/symbol/CJK fallbacks: consulted only for glyphs the primary lacks.
+        const FALLBACK_FAMILIES: &[&str] = &[
+            "Apple Color Emoji",
+            "Segoe UI Emoji",
+            "Noto Color Emoji",
+            "Noto Emoji",
+            "Noto Sans CJK SC",
+            "Noto Sans Symbols 2",
+            "Symbola",
+            "DejaVu Sans",
+        ];
+        let mut seen: std::collections::HashSet<Option<fontdb::ID>> =
+            std::collections::HashSet::new();
+        seen.insert(id);
+        let mut fallbacks = Vec::new();
+        for name in FALLBACK_FAMILIES {
+            if fallbacks.len() >= 4 {
+                break;
+            }
+            let Some(fid) = db.query(&Query {
+                families: &[Family::Name(name)],
+                weight: Weight::NORMAL,
+                stretch: Stretch::Normal,
+                style: Style::Normal,
+            }) else {
+                continue;
+            };
+            if !seen.insert(Some(fid)) {
+                continue;
+            }
+            let Some((fdata, fidx)) = db.with_face_data(fid, |d, idx| (d.to_vec(), idx)) else {
+                continue;
+            };
+            let Some(fr) = FontRef::from_index(&fdata, fidx as usize) else {
+                continue;
+            };
+            // SAFETY: `fdata` moves into FallbackFont below and outlives its FontRef.
+            let fr: FontRef<'static> = unsafe { std::mem::transmute(fr) };
+            dlog!("fallback: {name} (index {fidx})");
+            fallbacks.push(FallbackFont {
+                _data: fdata,
+                font: fr,
+                name: (*name).to_string(),
+            });
+        }
+
         Ok(Self {
             _data: data,
             font,
+            fallbacks,
             size_px,
             family: family.to_string(),
             ctx: swash::scale::ScaleContext::new(),
@@ -813,65 +878,88 @@ impl Renderer {
         }
     }
 
-    /// Rasterize `c` (cached); queues the atlas upload on first use.
+    /// Rasterize `c` (cached) from the primary font or fallbacks; queues the atlas upload on first use.
     fn rasterize(&mut self, c: char, sink: &mut QuadSink) -> Option<GlyphRef> {
         if let Some(cached) = self.font.glyphs.get(&c).copied() {
             return cached;
         }
-        let font = &mut self.font;
-        let mut scaler = font.ctx.builder(font.font).size(font.size_px).build();
-        let gid = font.font.charmap().map(c);
+        let fontc = &mut self.font;
+        let sources = [
+            Source::ColorOutline(0),
+            Source::ColorBitmap(StrikeWith::BestFit),
+            Source::Outline,
+        ];
+        // FontRefs are Copy; snapshot the whole chain (primary first).
+        // Chain snapshot taken via self.font.fallbacks to keep fontc's mut
+        // field borrow disjoint (fontc = self.font, fallbacks = sibling field).
+        let fonts: Vec<(FontRef<'static>, Option<String>)> = {
+            let mut chain = vec![(fontc.font, None)];
+            chain.extend(
+                fontc
+                    .fallbacks
+                    .iter()
+                    .map(|f| (f.font, Some(f.name.clone()))),
+            );
+            chain
+        };
         let mut found = None;
-        if gid != 0 {
-            let sources = [
-                Source::ColorOutline(0),
-                Source::ColorBitmap(StrikeWith::BestFit),
-                Source::Outline,
-            ];
+        for (font, fname) in fonts {
+            let gid = font.charmap().map(c);
+            if gid == 0 {
+                continue;
+            }
+            let mut scaler = fontc.ctx.builder(font).size(fontc.size_px).build();
             let mut render = Render::new(&sources);
             let render = render.format(zeno::Format::Alpha);
-            if let Some(image) = render.render(&mut scaler, gid) {
-                let is_color = matches!(image.content, Content::Color);
-                let placement = image.placement;
-                let bytes = if is_color {
-                    image.data.clone()
-                } else {
-                    image
-                        .data
-                        .iter()
-                        .flat_map(|&a| [255u8, 255, 255, a])
-                        .collect::<Vec<u8>>()
-                };
-                let w = placement.width;
-                let h = placement.height;
-                if w > 0 && h > 0 {
-                    match self.atlas.pack(w, h) {
-                        Some([px, py]) => {
-                            let g = GlyphRef {
-                                uv: [px as f32, py as f32, w as f32, h as f32],
-                                left: placement.left,
-                                top: placement.top,
-                                color: is_color,
-                            };
-                            sink.uploads.push(Upload {
-                                x: px,
-                                y: py,
-                                w,
-                                h,
-                                bytes,
-                            });
-                            found = Some(g);
-                        }
-                        None => {
-                            // Atlas exhausted: reset packer; glyph cache cleared by reset().
-                            self.atlas.reset();
-                            self.font.glyphs.clear();
-                        }
+            let Some(image) = render.render(&mut scaler, gid) else {
+                continue;
+            };
+            let is_color = matches!(image.content, Content::Color);
+            let bytes = if is_color {
+                image.data.clone()
+            } else {
+                image
+                    .data
+                    .iter()
+                    .flat_map(|&a| [255u8, 255, 255, a])
+                    .collect::<Vec<u8>>()
+            };
+            let w = image.placement.width;
+            let h = image.placement.height;
+            if w == 0 || h == 0 {
+                continue;
+            }
+            match self.atlas.pack(w, h) {
+                Some([px, py]) => {
+                    let g = GlyphRef {
+                        uv: [px as f32, py as f32, w as f32, h as f32],
+                        left: image.placement.left,
+                        top: image.placement.top,
+                        color: is_color,
+                    };
+                    sink.uploads.push(Upload {
+                        x: px,
+                        y: py,
+                        w,
+                        h,
+                        bytes,
+                    });
+                    found = Some(g);
+                    if let Some(name) = fname {
+                        dlog!("glyph '{}' (U+{:04X}) via fallback {name}", c, c as u32);
                     }
                 }
+                None => {
+                    // Atlas exhausted: reset packer; glyph cache cleared by reset().
+                    self.atlas.reset();
+                    fontc.glyphs.clear();
+                }
+            }
+            if found.is_some() {
+                break;
             }
         }
-        self.font.glyphs.insert(c, found);
+        fontc.glyphs.insert(c, found);
         found
     }
 
