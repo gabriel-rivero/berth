@@ -12,10 +12,12 @@ use winit::{
     event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
     keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey},
-    window::{Window, WindowId},
+    window::{Cursor, CursorIcon, Window, WindowId},
 };
 
-use crate::render::{Renderer, TAB_BAR_H, sidebar_width, tab_index_at, workspace_index_at};
+use crate::render::{
+    Renderer, TAB_BAR_H, TAB_WIDTH, UI_CLOSE_W, sidebar_width, tab_index_at, workspace_index_at,
+};
 
 /// How many lines one wheel tick moves.
 const WHEEL_LINES_PER_TICK: i32 = 3;
@@ -51,8 +53,8 @@ pub struct Berth {
     mouse: PhysicalPosition<f64>,
     /// True while left button held over a pane.
     dragging: bool,
-    /// DFS index of the split whose divider is being dragged (Some = dragging).
-    divider_drag: Option<usize>,
+    /// DFS index + axis of the split whose divider is being dragged (Some = dragging).
+    divider_drag: Option<(usize, bool)>,
     /// True while dragging the sidebar's right edge to resize it.
     sidebar_drag: bool,
     /// Last press (time + zone) for double-click detection (tab bar / workspace bar).
@@ -448,6 +450,74 @@ impl Berth {
         }
     }
 
+    /// Mirror hover/drag state into the OS cursor icon (resize arrows on both
+    /// sides of resize targets so the affordance exists without any chrome).
+    fn update_cursor(&self) {
+        let Some(window) = &self.window else {
+            return;
+        };
+        let sb_w = sidebar_width(self.config.sidebar.show, self.config.sidebar.width_px);
+        let on_sidebar_edge = (self.mouse.x - f64::from(sb_w)).abs() <= SIDEBAR_EDGE_GRAB;
+        let on_divider = if self.mouse.y >= f64::from(TAB_BAR_H) && !on_sidebar_edge {
+            let x = self.mouse.x.max(0.0) as u32;
+            let y = self.mouse.y.max(0.0) as u32;
+            self.layout
+                .active_tab()
+                .and_then(|t| t.grab_index_at(x, y, self.content_rect()))
+        } else {
+            None
+        };
+        let icon = if self.sidebar_drag || on_sidebar_edge {
+            CursorIcon::EwResize
+        } else if let Some((_, vertical)) = self.divider_drag.or(on_divider) {
+            if vertical {
+                CursorIcon::NsResize
+            } else {
+                CursorIcon::EwResize
+            }
+        } else {
+            CursorIcon::Default
+        };
+        window.set_cursor(Cursor::Icon(icon));
+    }
+
+    /// Kill every pane of the tab at slot `index` of the active workspace; the
+    /// Closed event cascade removes the now-empty tab (event if it is not focused).
+    fn close_tab(&mut self, index: usize) {
+        let Some(tab) = self
+            .layout
+            .active_workspace()
+            .and_then(|ws| ws.tabs.get(index))
+        else {
+            return;
+        };
+        let ids = tab.pane_ids_in_order();
+        dlog_app!("close tab slot{index} {:?} panes={ids:?}", tab.id);
+        for id in ids {
+            if let Some(pane) = self.panes.get(&id) {
+                pane.lock().expect("pane poisoned").kill();
+            }
+        }
+    }
+
+    /// Kill every pane of the workspace at sidebar slot `index`; the Closed
+    /// cascade empties its tabs, then drops the workspace.
+    fn close_workspace_at(&mut self, index: usize) {
+        let Some(ws) = self.layout.workspaces.get(index) else {
+            return;
+        };
+        let mut ids: Vec<PaneId> = Vec::new();
+        for tab in &ws.tabs {
+            ids.extend(tab.pane_ids_in_order());
+        }
+        dlog_app!("close workspace {} panes={ids:?}", ws.id.0);
+        for id in ids {
+            if let Some(pane) = self.panes.get(&id) {
+                pane.lock().expect("pane poisoned").kill();
+            }
+        }
+    }
+
     fn set_clipboard(&mut self, text: String) {
         if let Some(cb) = &mut self.clipboard {
             let _ = cb.set_text(text);
@@ -748,37 +818,37 @@ impl ApplicationHandler<PaneEvent> for Berth {
             }
             PaneEvent::Closed(id) => {
                 let _ = self.panes.remove(&id);
-                // Empty tab -> drop the tab; empty workspace -> exit (M2 has a single
-                // workspace; when the sidebar lands this becomes "leave workspace").
-                let mut empty_tab = None;
-                if let Some(tab) = self.layout.active_tab_mut()
-                    && tab.remove_pane(id)
-                {
-                    empty_tab = Some(tab.id);
-                }
-                if let Some(tab_id) = empty_tab {
-                    let mut exit = false;
-                    if let Some(ws) = self.layout.active_workspace_mut() {
-                        ws.remove_tab(tab_id);
-                        if ws.tabs.is_empty() {
-                            let ws_id = ws.id;
-                            dlog_app!("workspace {ws_id:?} empty -> closing");
-                            self.layout.remove_workspace(ws_id);
-                            if self.layout.workspaces.is_empty() {
-                                exit = true;
+                // The pane may belong to any tab of any workspace (close buttons
+                // and close_workspace act on non-focused trees too), so walk all
+                // of them: drop the pane from its tab, the tab when empty, the
+                // workspace when empty; exit only when nothing remains.
+                let mut empty_ws: Vec<WorkspaceId> = Vec::new();
+                'outer: for ws in &mut self.layout.workspaces {
+                    for tab in &mut ws.tabs {
+                        // remove_pane() returns true when the tab's ROOT pane
+                        // itself closed — the tree then holds a dangling leaf
+                        // and the tab is definitively empty. Collapsed splits
+                        // (non-root removal) need the pane-id recheck.
+                        if tab.remove_pane(id) || tab.pane_ids_in_order().is_empty() {
+                            dlog_app!("tab {:?} empty -> closing", tab.id);
+                            let tab_id = tab.id;
+                            ws.remove_tab(tab_id);
+                            if ws.tabs.is_empty() {
+                                dlog_app!("workspace {:?} empty -> closing", ws.id);
+                                empty_ws.push(ws.id);
                             }
+                            break 'outer;
                         }
                     }
-                    if exit {
-                        self.panes.clear();
-                        self.layout = Layout::default();
-                        event_loop.exit();
-                        return;
-                    }
-                    if let Some(tab) = self.layout.active_tab() {
-                        self.focused_pane = tab.focused;
-                    }
-                    self.sync_size();
+                }
+                for ws_id in empty_ws {
+                    self.layout.remove_workspace(ws_id);
+                }
+                if self.layout.workspaces.is_empty() {
+                    dlog_app!("all workspaces gone -> exit");
+                    self.panes.clear();
+                    self.layout = Layout::default();
+                    event_loop.exit();
                     return;
                 }
                 if let Some(tab) = self.layout.active_tab()
@@ -827,11 +897,10 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }
-                } else if self.divider_drag.is_some() {
+                } else if let Some((idx, _vertical)) = self.divider_drag {
                     let x = position.x.max(0.0) as u32;
                     let y = position.y.max(0.0) as u32;
                     let area = self.content_rect();
-                    let idx = self.divider_drag.unwrap_or(0);
                     let mut resized = false;
                     if let Some(tab) = self.layout.active_tab_mut() {
                         resized = tab.resize_index(idx, x, y, area);
@@ -855,6 +924,7 @@ impl ApplicationHandler<PaneEvent> for Berth {
                         w.request_redraw();
                     }
                 }
+                self.update_cursor();
             }
             WindowEvent::MouseInput {
                 state,
@@ -876,19 +946,26 @@ impl ApplicationHandler<PaneEvent> for Berth {
                         dlog_app!("sidebar grab");
                         self.sidebar_drag = true;
                     } else if self.mouse.x < sb_w_f {
-                        // Sidebar click: pick the workspace entry under the cursor;
-                        // double-click below the entries creates a workspace.
+                        // Sidebar click: entries select or close (right edge of
+                        // the entry is the close button); double-click below
+                        // the entries creates a workspace.
                         let count = self.layout.workspaces.len();
                         if let Some(i) = workspace_index_at(self.mouse.y as f32, count) {
-                            dlog_app!("sidebar click ws#{i}");
-                            self.select_workspace(i);
+                            if self.mouse.x >= sb_w_f - f64::from(UI_CLOSE_W) {
+                                dlog_app!("sidebar close ws#{i}");
+                                self.close_workspace_at(i);
+                            } else {
+                                dlog_app!("sidebar click ws#{i}");
+                                self.select_workspace(i);
+                            }
                         } else if self.double_click(ClickZone::SidebarEmpty) {
                             dlog_app!("sidebar double-click -> new workspace");
                             self.new_workspace();
                         }
                     } else if self.mouse.y < f64::from(TAB_BAR_H) {
-                        // Tab strip: double-click on the focused tab (or empty area)
-                        // opens a new tab; any other click selects.
+                        // Tab strip: the right corner of a slot closes that tab;
+                        // double-click on the focused tab (or empty area) opens
+                        // a new tab; any other click selects.
                         let count = self
                             .layout
                             .active_workspace()
@@ -899,7 +976,13 @@ impl ApplicationHandler<PaneEvent> for Berth {
                             .active_workspace()
                             .and_then(|ws| ws.tabs.iter().position(|t| t.id == ws.focused_tab));
                         let slot = tab_index_at(self.mouse.x as f32 - sb_w, count);
-                        if self.double_click(ClickZone::TabBar)
+                        let x_rel = self.mouse.x as f32 - sb_w;
+                        if let Some(i) = slot
+                            && x_rel >= i as f32 * TAB_WIDTH + (TAB_WIDTH - UI_CLOSE_W)
+                        {
+                            dlog_app!("tab close slot{i}");
+                            self.close_tab(i);
+                        } else if self.double_click(ClickZone::TabBar)
                             && (slot.is_none() || focused_idx.is_none_or(|f| slot == Some(f)))
                         {
                             dlog_app!("tab bar double-click -> new tab");
@@ -915,9 +998,9 @@ impl ApplicationHandler<PaneEvent> for Berth {
                             .layout
                             .active_tab()
                             .and_then(|t| t.grab_index_at(x, y, self.content_rect()));
-                        if let Some(idx) = grab {
-                            dlog_app!("divider grab #{idx} at ({x},{y})");
-                            self.divider_drag = Some(idx);
+                        if let Some((idx, vertical)) = grab {
+                            dlog_app!("divider grab #{idx} vertical={vertical} at ({x},{y})");
+                            self.divider_drag = Some((idx, vertical));
                         } else {
                             self.dragging = true;
                             if let Some((id, row, col)) = self.pane_at_mouse() {
@@ -941,6 +1024,7 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     self.dragging = false;
                     self.divider_drag = None;
                     self.sidebar_drag = false;
+                    self.update_cursor();
                 }
             },
             WindowEvent::MouseWheel { delta, .. } => {

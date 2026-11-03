@@ -45,6 +45,8 @@ v0.8.0 — M1 done, M2 done except polish, M3 mostly done, M4 not started.
 | cycle workspaces | `ctrl+alt+←` / `ctrl+alt+→` |
 | new tab / cycle tabs | `ctrl+shift+n` / `ctrl+tab` (+shift for prev) |
 | close focused pane | `ctrl+shift+w` |
+| close any tab / workspace | `✕` button in the tab slot / sidebar entry |
+| resize sidebar | drag its right edge (hover shows ⟷ cursor) |
 | pane focus | `alt+arrows` |
 | copy / paste selection | `ctrl+shift+c` / `ctrl+v` |
 | scroll | mouse wheel, `shift+PgUp` / `shift+PgDn` |
@@ -58,6 +60,13 @@ v0.8.0 — M1 done, M2 done except polish, M3 mostly done, M4 not started.
 - platform: keep ConPTY path honest on Windows (CI compiles but manual QA pending)
 - **M4** — plugin host (`crates/plugins`), capability-gated WASM ABI,
   example plugins
+
+### macOS notes
+
+The `Berth.app` bundle is ad-hoc signed, not notarized: on first launch use
+right-click → Open, or `xattr -cr Berth.app` to clear Gatekeeper. Font
+selection prefers Menlo / SF Mono / Monaco over the generic `monospace`
+(that resolves to Courier New on macOS, whose metrics clip glyphs).
 
 ## Crates
 

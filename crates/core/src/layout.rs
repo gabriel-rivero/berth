@@ -264,13 +264,14 @@ impl Tab {
 const DIVIDER_HIT: u32 = 4;
 
 impl Tab {
-    /// Read-only divider grab check (same hit zones as resize_in); returns the
-    /// DFS index of the split whose divider is under (x,y), for later resize_index.
-    pub fn grab_index_at(&self, x: u32, y: u32, area: Rect) -> Option<usize> {
+    /// Read-only divider grab check (same hit zones as resize_n); returns the
+    /// DFS index of the split under (x,y) together with its axis (true = vertical),
+    /// so the cursor can show the right resize icon and resize_index can move it.
+    pub fn grab_index_at(&self, x: u32, y: u32, area: Rect) -> Option<(usize, bool)> {
         Self::grab_in(&self.root, x, y, area)
     }
 
-    fn grab_in(node: &SplitNode, x: u32, y: u32, area: Rect) -> Option<usize> {
+    fn grab_in(node: &SplitNode, x: u32, y: u32, area: Rect) -> Option<(usize, bool)> {
         if let SplitNode::Split {
             first,
             second,
@@ -286,7 +287,7 @@ impl Tab {
                     && y >= dy.saturating_sub(DIVIDER_HIT)
                     && y < dy + DIVIDER_PX + DIVIDER_HIT;
                 if on {
-                    return Some(0);
+                    return Some((0, true));
                 }
                 let sub = Self::grab_in(
                     first,
@@ -310,7 +311,7 @@ impl Tab {
                         },
                     )
                 });
-                return sub.map(|i| i + 1);
+                return sub.map(|(i, v)| (i + 1, v));
             }
             let (left, right) = split_two(area.w, *ratio);
             let dx = area.x + left;
@@ -319,7 +320,7 @@ impl Tab {
                 && x >= dx.saturating_sub(DIVIDER_HIT)
                 && x < dx + DIVIDER_PX + DIVIDER_HIT;
             if on {
-                return Some(0);
+                return Some((0, false));
             }
             let sub = Self::grab_in(
                 first,
@@ -343,7 +344,7 @@ impl Tab {
                     },
                 )
             });
-            return sub.map(|i| i + 1);
+            return sub.map(|(i, v)| (i + 1, v));
         }
         None
     }

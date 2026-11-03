@@ -76,6 +76,9 @@ jobs:
           </dict>
           </plist>
           EOF
+          # Ad-hoc signature (no identity needed): keeps Gatekeeper from calling
+          # the unsigned bundle "damaged"; users still right-click > Open once.
+          codesign --force --deep --sign - Berth.app
           zip -qr berth-${GITHUB_REF_NAME#v}-${{ matrix.target }}.app.zip Berth.app
       - name: package (windows)
         if: matrix.archive == 'zip'

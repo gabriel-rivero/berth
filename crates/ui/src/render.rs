@@ -62,7 +62,11 @@ const ATLAS_H: u32 = 2048;
 
 /// Top tab strip geometry (device px). TODO(M3): scale with window scale_factor.
 pub const TAB_BAR_H: f32 = 28.0;
-const TAB_WIDTH: f32 = 140.0;
+pub const TAB_WIDTH: f32 = 140.0;
+
+/// Width of the ✕ close-hit zone in the right corner of tab slots and
+/// sidebar entries (shared by renderer and input).
+pub const UI_CLOSE_W: f32 = 14.0;
 
 /// Sidebar geometry: full-height column on the left; entries start below a
 /// header strip that aligns with the tab bar.
@@ -222,20 +226,33 @@ impl FontCtx {
     pub fn new(family: &str, size_px: f32) -> anyhow::Result<Self> {
         let mut db = Database::new();
         db.load_system_fonts();
+        // fontdb resolves generic "monospace" to Courier New on macOS (bad
+        // hhea metrics => clipped glyphs), so prefer known-good per-OS faces
+        // before the generic family name.
+        let generic = matches!(
+            family.trim().to_ascii_lowercase().as_str(),
+            "" | "monospace"
+        );
+        let preferred: &[&str] = if cfg!(target_os = "macos") {
+            &["Menlo", "SF Mono", "Monaco"]
+        } else if cfg!(target_os = "windows") {
+            &["Cascadia Mono", "Consolas"]
+        } else {
+            &["DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono"]
+        };
+        let mut fams = Vec::with_capacity(preferred.len() + 2);
+        if !generic {
+            fams.push(Family::Name(family));
+        }
+        fams.extend(preferred.iter().copied().map(Family::Name));
+        fams.push(Family::Monospace);
         let query = Query {
-            families: &[Family::Name(family), Family::Name("monospace")],
+            families: &fams,
             weight: Weight::NORMAL,
             stretch: Stretch::Normal,
             style: Style::Normal,
         };
-        let id = db.query(&query).or_else(|| {
-            db.query(&Query {
-                families: &[Family::Monospace],
-                weight: Weight::NORMAL,
-                stretch: Stretch::Normal,
-                style: Style::Normal,
-            })
-        });
+        let id = db.query(&query);
         let (data, face_index) = id
             .and_then(|id| db.with_face_data(id, |d, idx| (d.to_vec(), idx)))
             .unwrap_or_else(|| (Self::FALLBACK_FONT.to_vec(), 0));
@@ -271,9 +288,11 @@ impl FontCtx {
 
     fn compute_metrics(font: &FontRef<'_>, size_px: f32) -> Metrics {
         let m = font.metrics(&[]).scale(size_px);
-        // swash: ascent = baseline->top (positive), descent = baseline->bottom (negative).
+        // swash: ascent = baseline->top (positive), descent = baseline->bottom
+        // (negative; some faces report it positive, so normalize).
         let ascent = m.ascent;
-        let cell_h = (m.ascent - m.descent).clamp(6.0, 128.0).round();
+        let descent = m.descent.abs();
+        let cell_h = (ascent + descent).clamp(6.0, 128.0).round();
         let gid = font.charmap().map('M');
         let cell_w = font
             .glyph_metrics(&[])
@@ -446,7 +465,7 @@ impl Renderer {
             phys.width,
             phys.height
         );
-        font.raster_probe(&['M', 'p', '%']);
+        font.raster_probe(&['M', 'p', '%', '×']);
 
         // Env-overridable (WGPU_BACKEND etc. via with_env), display handled per-surface.
         let instance =
@@ -658,6 +677,24 @@ impl Renderer {
         }
     }
 
+    /// Rasterize a close glyph ('×') centered in the given box.
+    fn draw_close(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        metrics: Metrics,
+        color: [f32; 4],
+        sink: &mut QuadSink,
+    ) {
+        let Some(g) = self.rasterize('×', sink) else {
+            dlog!("draw_close: '×' glyph unavailable");
+            return;
+        };
+        let gx = cx - g.uv[2] * 0.5 + g.left as f32;
+        let gy = cy - metrics.ascent * 0.5 - g.top as f32;
+        sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
+    }
+
     /// Draw the top tab strip (starting right of the sidebar): one fixed-width
     /// slot per tab, active slot brighter.
     fn draw_tab_bar(
@@ -678,7 +715,8 @@ impl Renderer {
             let x0 = sb_w + i as f32 * TAB_WIDTH;
             let bg = if *active { TAB_ACTIVE_BG } else { TAB_BG };
             sink.push(x0, 0.0, x0 + TAB_WIDTH, TAB_BAR_H, bg, None);
-            let max_chars = (((TAB_WIDTH - 16.0) / metrics.cell_w).floor() as usize).max(1);
+            let max_chars =
+                (((TAB_WIDTH - UI_CLOSE_W - 16.0) / metrics.cell_w).floor() as usize).max(1);
             let text: String = title.chars().take(max_chars).collect();
             let mut pen = x0 + 8.0;
             for c in text.chars() {
@@ -691,6 +729,13 @@ impl Renderer {
                 sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
                 pen += metrics.cell_w;
             }
+            self.draw_close(
+                x0 + TAB_WIDTH - UI_CLOSE_W * 0.5,
+                TAB_BAR_H * 0.5,
+                metrics,
+                TAB_TEXT,
+                sink,
+            );
         }
     }
 
@@ -717,7 +762,9 @@ impl Renderer {
             sink.push(0.0, y0, sb_w, y0 + SIDEBAR_ENTRY_H, bg, None);
             let baseline = (SIDEBAR_ENTRY_H - metrics.cell_h) * 0.5 + metrics.ascent;
             let baseline = y0 + baseline;
-            let max_chars = (((sb_w - 2.0 * SIDEBAR_PAD) / metrics.cell_w).floor() as usize).max(1);
+            let max_chars = (((sb_w - 2.0 * SIDEBAR_PAD - UI_CLOSE_W) / metrics.cell_w).floor()
+                as usize)
+                .max(1);
             let text: String = label.chars().take(max_chars).collect();
             let mut pen = SIDEBAR_PAD;
             for c in text.chars() {
@@ -734,6 +781,13 @@ impl Renderer {
                 sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
                 pen += metrics.cell_w;
             }
+            self.draw_close(
+                sb_w - UI_CLOSE_W * 0.5,
+                y0 + SIDEBAR_ENTRY_H * 0.5,
+                metrics,
+                SIDEBAR_TEXT,
+                sink,
+            );
         }
     }
 
