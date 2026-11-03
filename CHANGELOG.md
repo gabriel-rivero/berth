@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/gabriel-rivero/berth/compare/v0.9.0...v0.10.0) (2026-11-03)
+
+
+### Features
+
+* **ui:** tab/workspace close buttons, resize cursor affordance, macOS font fix ([08fa4f9](https://github.com/gabriel-rivero/berth/commit/08fa4f95d09fe8b540e92261a3caf0d5e752170d))
+
 ## [0.9.0](https://github.com/gabriel-rivero/berth/compare/v0.8.0...v0.9.0) (2026-11-03)
 
 
