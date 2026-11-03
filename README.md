@@ -21,7 +21,7 @@ cargo build --release
 
 ## Status
 
-v0.8.0 — M1 done, M2 done except polish, M3 mostly done, M4 not started.
+v0.11.0 — M1 done, M2 done except polish, M3 mostly done, M4 not started.
 
 ### Shipped
 
@@ -33,7 +33,8 @@ v0.8.0 — M1 done, M2 done except polish, M3 mostly done, M4 not started.
   pane focus with `alt+arrows`, OSC window/tab titles
 - **M3** — left sidebar with workspaces (`ctrl+shift+o` new,
   `ctrl+shift+q` close, `ctrl+alt+←/→` cycle, click entries), auto
-  `ws N` labels, per-workspace tabs
+  `ws N` labels, per-workspace tabs, hot-reload of `config.toml`
+  (mtime polling, every change incl. font swaps applies live)
 
 ### Keybinds
 
@@ -53,7 +54,7 @@ v0.8.0 — M1 done, M2 done except polish, M3 mostly done, M4 not started.
 
 ### Remaining
 
-- config: hot-reload of `config.toml`; user keybind config (currently compiled in)
+- config: user keybind config (currently compiled in)
 - sidebar: workspace/tab rename, drag tabs between workspaces, drag tabs between panes
 - polish: no window-title-based quit guard, no close-confirmation, scrolling
   selection interplay; emoji/wide-glyph fallback fonts

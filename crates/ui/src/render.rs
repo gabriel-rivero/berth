@@ -212,6 +212,8 @@ pub struct FontCtx {
     _data: Vec<u8>,
     font: FontRef<'static>,
     size_px: f32,
+    /// The family this context was built for (hot-reload comparison).
+    family: String,
     ctx: ScaleContext,
     /// char -> raster (None = glyph unavailable in this font).
     glyphs: HashMap<char, Option<GlyphRef>>,
@@ -280,10 +282,16 @@ impl FontCtx {
             _data: data,
             font,
             size_px,
+            family: family.to_string(),
             ctx: swash::scale::ScaleContext::new(),
             glyphs: HashMap::new(),
             metrics: Self::compute_metrics(&font, size_px),
         })
+    }
+
+    /// True when this context is already built for `family` (size compared separately).
+    pub fn matches(&self, family: &str) -> bool {
+        self.family == family
     }
 
     fn compute_metrics(font: &FontRef<'_>, size_px: f32) -> Metrics {
@@ -665,6 +673,20 @@ impl Renderer {
     /// Font metrics in device px.
     pub fn metrics(&self) -> Metrics {
         self.font.metrics
+    }
+
+    /// Hot font swap for config reload: rebuild the font context (fresh glyph
+    /// cache) and rewind the atlas packer. Stale pixels get overwritten as the
+    /// new glyphs upload at the same shelf positions.
+    pub fn set_font(&mut self, family: &str, size_px: f32) -> anyhow::Result<()> {
+        if (size_px - self.font.size_px).abs() <= f32::EPSILON && self.font.matches(family) {
+            return Ok(());
+        }
+        dlog!("set_font: family={family:?} size_px={size_px}");
+        self.font = FontCtx::new(family, size_px)?;
+        self.font.raster_probe(&['M', 'p', '%']);
+        self.atlas.reset();
+        Ok(())
     }
 
     pub fn resize_surface(&mut self, window: &Window) {

@@ -10,7 +10,7 @@ use winit::{
     application::ApplicationHandler,
     dpi::PhysicalPosition,
     event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
-    event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey},
     window::{Cursor, CursorIcon, Window, WindowId},
 };
@@ -40,6 +40,8 @@ fn term_point(pane: &Pane, row: usize, col: usize) -> TermPoint {
 pub struct Berth {
     /// live config (sidebar on/off + width; hot reload is a TODO).
     config: Config,
+    /// mtime of config.toml at last seen change; poll trigger for hot reload.
+    config_mtime: Option<std::time::SystemTime>,
     /// layout tree: geometry + focus; sidebar lists layout.workspaces.
     layout: Layout,
     window: Option<Window>,
@@ -1055,7 +1057,54 @@ impl ApplicationHandler<PaneEvent> for Berth {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {}
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.poll_config_reload();
+        event_loop.set_control_flow(ControlFlow::WaitUntil(
+            std::time::Instant::now() + std::time::Duration::from_millis(CONFIG_POLL_MS),
+        ));
+    }
+}
+
+/// Config polling interval for hot reload.
+const CONFIG_POLL_MS: u64 = 750;
+
+impl Berth {
+    /// Re-read config.toml when its mtime changes; font changes rebuild the
+    /// atlas + re-tile grids. Parse errors keep the previous config (and only
+    /// retry on the *next* mtime change, so broken files don't spam).
+    fn poll_config_reload(&mut self) {
+        let Some(path) = Config::path() else { return };
+        let Ok(meta) = std::fs::metadata(&path) else {
+            return;
+        };
+        let Ok(mtime) = meta.modified() else { return };
+        if self.config_mtime == Some(mtime) {
+            return;
+        }
+        self.config_mtime = Some(mtime);
+        let Ok(cfg) = Config::load() else {
+            eprintln!("config reload: parse failed, keeping previous config");
+            return;
+        };
+        let font_changed = cfg.font.family != self.config.font.family
+            || cfg.font.size_pt != self.config.font.size_pt;
+        self.config = cfg;
+        dlog_app!(
+            "config reload: sidebar={} width={} font=\"{}\" pt={}",
+            self.config.sidebar.show,
+            self.config.sidebar.width_px,
+            self.config.font.family,
+            self.config.font.size_pt
+        );
+        if font_changed && let (Some(renderer), Some(window)) = (&mut self.renderer, &self.window) {
+            // Same scale chain as Renderer::new (pt -> CSS px -> device px).
+            let size_px = self.config.font.size_pt * 1.333_333 * window.scale_factor() as f32;
+            match renderer.set_font(&self.config.font.family, size_px) {
+                Ok(()) => self.sync_size(),
+                Err(e) => eprintln!("config reload: font swap failed: {e}"),
+            }
+        }
+    }
 }
 
 pub fn run() -> anyhow::Result<()> {
@@ -1081,6 +1130,9 @@ pub fn run() -> anyhow::Result<()> {
         last_click: None,
         focused_pane,
         titles: HashMap::new(),
+        config_mtime: Config::path()
+            .and_then(|p| std::fs::metadata(&p).ok())
+            .and_then(|m| m.modified().ok()),
     };
     event_loop.run_app(&mut app)?;
     Ok(())
