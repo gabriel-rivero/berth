@@ -19,6 +19,18 @@ use wgpu::{
 };
 use winit::window::Window;
 
+/// One-line stdout diagnostics, enabled with BERTH_DEBUG=1 (cross-platform font/render triage).
+pub fn debug_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("BERTH_DEBUG").ok().as_deref() == Some("1"))
+}
+
+macro_rules! dlog {
+    ($($arg:tt)*) => {
+        if debug_enabled() { eprintln!($($arg)*); }
+    };
+}
+
 const PANEL_BG: [f32; 4] = [0.05, 0.05, 0.06, 1.0];
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     r: 0.05,
@@ -149,22 +161,36 @@ impl FontCtx {
             stretch: Stretch::Normal,
             style: Style::Normal,
         };
-        let id = db
-            .query(&query)
-            .or_else(|| {
-                db.query(&Query {
-                    families: &[Family::Monospace],
-                    weight: Weight::NORMAL,
-                    stretch: Stretch::Normal,
-                    style: Style::Normal,
-                })
+        let id = db.query(&query).or_else(|| {
+            db.query(&Query {
+                families: &[Family::Monospace],
+                weight: Weight::NORMAL,
+                stretch: Stretch::Normal,
+                style: Style::Normal,
             })
-            .and_then(|id| db.with_face_data(id, |d, _| d.to_vec()));
-        let data = id.unwrap_or_else(|| Self::FALLBACK_FONT.to_vec());
-        let font_ref =
-            FontRef::from_index(&data, 0).ok_or_else(|| anyhow::anyhow!("invalid sfnt font"))?;
+        });
+        let (data, face_index) = id
+            .and_then(|id| db.with_face_data(id, |d, idx| (d.to_vec(), idx)))
+            .unwrap_or_else(|| (Self::FALLBACK_FONT.to_vec(), 0));
+        let face_index = face_index as usize;
+        let font_ref = FontRef::from_index(&data, face_index)
+            .ok_or_else(|| anyhow::anyhow!("invalid sfnt font"))?;
         // SAFETY: `data` is owned by this struct and outlives the FontRef.
         let font: FontRef<'static> = unsafe { std::mem::transmute(font_ref) };
+        let source_desc = id
+            .and_then(|id| db.face(id))
+            .map(|fi| {
+                format!(
+                    "system '{}' (index {face_index}, ps {:?})",
+                    fi.families
+                        .first()
+                        .map(|f| &f.0)
+                        .unwrap_or(&"?".to_string()),
+                    fi.post_script_name
+                )
+            })
+            .unwrap_or_else(|| "bundled JetBrainsMono-Regular".to_string());
+        dlog!("font: family={family:?} -> {source_desc}");
 
         Ok(Self {
             _data: data,
@@ -188,6 +214,43 @@ impl FontCtx {
             .clamp(cell_h * 0.25, cell_h * 2.0)
             .round();
         Metrics { cell_w, cell_h }
+    }
+
+    /// Probe a handful of representative chars; part of BERTH_DEBUG triage output.
+    pub fn raster_probe(&mut self, chars: &[char]) {
+        if !debug_enabled() {
+            return;
+        }
+        let mut ok = 0usize;
+        for &c in chars {
+            let gid = self.font.charmap().map(c);
+            if gid == 0 {
+                dlog!("probe '{c}' (U+{:04X}): not in font", c as u32);
+                continue;
+            }
+            let mut scaler = self.ctx.builder(self.font).size(self.size_px).build();
+            let sources = [
+                Source::ColorOutline(0),
+                Source::ColorBitmap(StrikeWith::BestFit),
+                Source::Outline,
+            ];
+            let mut render = Render::new(&sources);
+            let render = render.format(zeno::Format::Alpha);
+            match render.render(&mut scaler, gid) {
+                Some(image) => {
+                    ok += 1;
+                    dlog!(
+                        "probe '{c}' (U+{:04X}): gid={gid} {}x{} content={:?}",
+                        c as u32,
+                        image.placement.width,
+                        image.placement.height,
+                        image.content
+                    );
+                }
+                None => dlog!("probe '{c}' (U+{:04X}): gid={gid} RENDER FAILED", c as u32),
+            }
+        }
+        dlog!("probe done: {ok}/{} rasterized", chars.len());
     }
 
     /// Update rasters after DPI/size change; invalidates the glyph cache.
@@ -303,7 +366,15 @@ impl Renderer {
     pub fn new(window: &Window, family: &str, size_pt: f32) -> anyhow::Result<Self> {
         let scale = window.scale_factor();
         let size_px = size_pt * 1.333_333 * scale as f32;
-        let font = FontCtx::new(family, size_px)?;
+        let mut font = FontCtx::new(family, size_px)?;
+        let phys = window.inner_size();
+        dlog!(
+            "renderer: scale={scale} size_px={size_px} metrics={:?} surface={}x{}",
+            font.metrics,
+            phys.width,
+            phys.height
+        );
+        font.raster_probe(&['M', 'p', '%']);
 
         // Env-overridable (WGPU_BACKEND etc. via with_env), display handled per-surface.
         let instance =
@@ -501,6 +572,7 @@ impl Renderer {
     pub fn resize_surface(&mut self, window: &Window) {
         let size = window.inner_size();
         if size.width > 0 && size.height > 0 {
+            dlog!("resize_surface: {}x{}", size.width, size.height);
             self.config.width = size.width;
             self.config.height = size.height;
             self.surface.configure(&self.device, &self.config);
@@ -587,6 +659,11 @@ impl Renderer {
         let pane = (0.0f32, 0.0f32); // pane covers the window (M1)
         let cols = ((screen_w - pane.0) / metrics.cell_w).floor().max(1.0) as usize;
         let rows = ((screen_h - pane.1) / metrics.cell_h).floor().max(1.0) as usize;
+        dlog!(
+            "draw: screen={screen_w}x{screen_h} cell={0:.1}x{1:.1} grid={cols}x{rows}",
+            metrics.cell_w,
+            metrics.cell_h,
+        );
 
         let content = term.renderable_content();
         let mut sink = QuadSink::default();
@@ -651,6 +728,8 @@ impl Renderer {
                 let gx = px + g.left as f32;
                 let gy = py + g.top as f32;
                 sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], fg, Some(g));
+            } else if debug_enabled() {
+                dlog!("char '{}' (U+{:04X}) has no glyph quad", c, c as u32);
             }
         }
 
