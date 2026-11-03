@@ -13,5 +13,5 @@ berth-core = { path = "../core" }
 berth-emulation = { path = "../emulation" }
 winit.workspace = true
 wgpu.workspace = true
-pollster = "0.4"
+pollster = "1.0"
 anyhow.workspace = true
