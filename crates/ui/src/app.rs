@@ -53,6 +53,8 @@ pub struct Berth {
     dragging: bool,
     /// Pane currently receiving keys / selection events.
     focused_pane: PaneId,
+    /// OSC title per pane (empty until the shell sets one; falls back to tab label).
+    titles: HashMap<PaneId, String>,
 }
 
 impl Berth {
@@ -85,6 +87,9 @@ impl Berth {
 
     /// Propagate window size -> renderer surface + every pane grid.
     fn sync_size(&mut self) {
+        if self.window.is_some() {
+            self.sync_window_title();
+        }
         let Some(window) = &self.window else { return };
         let Some(renderer) = &mut self.renderer else {
             return;
@@ -123,13 +128,20 @@ impl Berth {
         };
         let rect_map: HashMap<PaneId, Rect> = tab.pane_rects(area).into_iter().collect();
         let dividers = tab.dividers(area);
+        let self_titles = &self.titles;
         let tabs: Vec<(&str, bool)> = self
             .layout
             .active_workspace()
             .map(|ws| {
                 ws.tabs
                     .iter()
-                    .map(|t| (t.label.as_str(), t.id == ws.focused_tab))
+                    .map(|t| {
+                        let label = self_titles
+                            .get(&t.focused)
+                            .map(String::as_str)
+                            .unwrap_or(t.label.as_str());
+                        (label, t.id == ws.focused_tab)
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -364,7 +376,19 @@ impl Berth {
         if let Some(tab) = self.layout.active_tab_mut() {
             tab.focused = pane;
         }
+        self.sync_window_title();
         self.window.as_ref().inspect(|w| w.request_redraw());
+    }
+
+    /// Mirror the focused pane's OSC title into the OS window title.
+    fn sync_window_title(&mut self) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        match self.titles.get(&self.focused_pane) {
+            Some(title) => window.set_title(format!("berth — {title}").as_str()),
+            None => window.set_title("berth"),
+        }
     }
 
     /// Kill the focused pane's shell; the Closed event does tree cleanup.
@@ -649,6 +673,22 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 }
                 self.redraw();
             }
+            PaneEvent::Title(id, title) => {
+                dlog_app!("osc title pane={id:?} {title:?}");
+                self.titles.insert(id, title);
+                if self.focused_pane == id {
+                    self.sync_window_title();
+                }
+                self.redraw();
+            }
+            PaneEvent::TitleReset(id) => {
+                dlog_app!("osc title reset pane={id:?}");
+                self.titles.remove(&id);
+                if self.focused_pane == id {
+                    self.sync_window_title();
+                }
+                self.redraw();
+            }
             PaneEvent::Closed(id) => {
                 let _ = self.panes.remove(&id);
                 // Empty tab -> drop the tab; empty workspace -> exit (M2 has a single
@@ -834,6 +874,7 @@ pub fn run() -> anyhow::Result<()> {
         mouse: PhysicalPosition::new(0.0, 0.0),
         dragging: false,
         focused_pane,
+        titles: HashMap::new(),
     };
     event_loop.run_app(&mut app)?;
     Ok(())

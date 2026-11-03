@@ -1,7 +1,7 @@
 //! Pane: the emulation atom. Wraps one `alacritty_terminal::Term` grid plus one `portable-pty`
 //! master. A reader thread forwards raw PTY bytes to an internal channel; the UI calls `pump()`
 //! on its side to drain into the grid and drive redraws. UI never touches the PtyPair directly.
-use alacritty_terminal::event::VoidListener;
+use alacritty_terminal::event::EventListener;
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
@@ -20,13 +20,43 @@ pub enum PaneEvent {
     Output(PaneId),
     /// child process exited (or the read side broke).
     Closed(PaneId),
+    /// OSC 0/2 title change from the shell (pane's window/tab label).
+    Title(PaneId, String),
+    /// OSC 112 or ESC c cleared the title.
+    TitleReset(PaneId),
 }
 
 /// Callback the pane uses to wake the UI event loop.
 pub type Notifier = Arc<dyn Fn(PaneEvent) + Send + Sync>;
 
+/// Forwards relevant Term events to the UI loop (VoidListener discards them).
+pub struct TermListener {
+    pane: PaneId,
+    notify: Notifier,
+}
+
+impl TermListener {
+    pub fn new(pane: PaneId, notify: Notifier) -> Self {
+        Self { pane, notify }
+    }
+}
+
+impl EventListener for TermListener {
+    fn send_event(&self, event: alacritty_terminal::event::Event) {
+        match event {
+            alacritty_terminal::event::Event::Title(title) => {
+                (self.notify)(PaneEvent::Title(self.pane, title));
+            }
+            alacritty_terminal::event::Event::ResetTitle => {
+                (self.notify)(PaneEvent::TitleReset(self.pane));
+            }
+            _ => {}
+        }
+    }
+}
+
 pub struct Pane {
-    term: Term<VoidListener>,
+    term: Term<TermListener>,
     parser: Processor,
     /// PTY output queued by the reader thread (empty vec = EOF sentinel).
     pending: Receiver<Vec<u8>>,
@@ -90,7 +120,11 @@ impl Pane {
             rows: 24,
             scrollback: 10_000,
         };
-        let term = Term::new(TermConfig::default(), &size, VoidListener);
+        let term = Term::new(
+            TermConfig::default(),
+            &size,
+            TermListener::new(id, notify.clone()),
+        );
 
         // Reader thread: PTY -> bytes channel; never touches Term (grid lives on the UI side).
         let (tx, rx) = channel::<Vec<u8>>();
@@ -148,7 +182,7 @@ impl Pane {
     }
 
     /// Grid handle for the renderer (lines/cells incl. scrollback offsets).
-    pub fn term(&self) -> &Term<VoidListener> {
+    pub fn term(&self) -> &Term<TermListener> {
         &self.term
     }
 

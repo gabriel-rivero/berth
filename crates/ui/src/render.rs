@@ -3,13 +3,13 @@
 //! Per frame: cell backgrounds -> selection tint -> cursor -> glyph quads, all
 //! in one dynamic vertex buffer. Glyphs are rasterized with swash into a single
 //! RGBA8 atlas (alpha glyphs stored as white-with-coverage, color glyphs raw).
-use alacritty_terminal::event::VoidListener;
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Point};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Term, point_to_viewport, viewport_to_point};
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
 use berth_core::layout::Rect;
+use berth_emulation::pane::TermListener;
 use bytemuck::{Pod, Zeroable};
 use fontdb::{Database, Family, Query, Stretch, Style, Weight};
 use std::collections::HashMap;
@@ -802,7 +802,7 @@ impl Renderer {
     /// Full frame: sidebar + tab strip + tiled panes (term + rect) + dividers.
     pub fn draw(
         &mut self,
-        panes: &[(&Term<VoidListener>, Rect)],
+        panes: &[(&Term<TermListener>, Rect)],
         dividers: &[Rect],
         tabs: &[(&str, bool)],
         workspaces: &[(&str, bool)],
@@ -1008,7 +1008,7 @@ impl Renderer {
     /// Returns (glyph_quads, bg_quads, unused-upload placer).
     fn draw_term(
         &mut self,
-        term: &Term<VoidListener>,
+        term: &Term<TermListener>,
         rect: Rect,
         metrics: Metrics,
         quad_trace: bool,
