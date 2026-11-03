@@ -4,6 +4,10 @@ name: release
 on:
   push:
     tags: ["v*"]
+  # needed in practice: release-please tags with GITHUB_TOKEN, and tag pushes
+  # made with GITHUB_TOKEN do not trigger other workflows -> dispatch manually
+  # on the tag ref after merging the release PR.
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
