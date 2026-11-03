@@ -1,0 +1,17 @@
+# berth ui: winit event loop, wgpu renderer (glyphs, sidebar, tabs, splits)
+[package]
+name = "berth-ui"
+description = "berth's window/renderer: sidebar, tab bar, pane grids"
+publish = false
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+berth-core = { path = "../core" }
+berth-emulation = { path = "../emulation" }
+winit.workspace = true
+wgpu.workspace = true
+pollster = "0.4"
+anyhow.workspace = true

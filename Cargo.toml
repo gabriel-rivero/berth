@@ -1,0 +1,31 @@
+# berth — cross-platform terminal emulator with left-side tab sidebar and workspaces.
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/gabriel-rivero/berth"
+readme = "README.md"
+
+[workspace.dependencies]
+# emulation
+alacritty_terminal = "0.26"
+portable-pty = "0.9"
+# ui
+winit = "0.30"
+wgpu = "30"
+# plugins (sandboxed, wasm32-wasip1 guests)
+wasmtime = "50"
+# plumbing
+toml = "1"
+serde = { version = "1", features = ["derive"] }
+directories = "6"
+anyhow = "1"
+thiserror = "2"
+
+[profile.release]
+lto = "thin"
+strip = "debuginfo"

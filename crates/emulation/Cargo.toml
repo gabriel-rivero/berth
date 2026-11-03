@@ -1,0 +1,15 @@
+# berth emulation: alacritty_terminal VT core + portable-pty per pane (UI-free)
+[package]
+name = "berth-emulation"
+description = "berth's terminal pane: VT state machine + PTY lifecycle"
+publish = false
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+berth-core = { path = "../core" }
+alacritty_terminal.workspace = true
+portable-pty.workspace = true
+anyhow.workspace = true

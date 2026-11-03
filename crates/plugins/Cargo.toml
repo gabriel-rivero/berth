@@ -1,0 +1,13 @@
+# berth plugins: wasmtime host, capability-gated host ABI for wasm32-wasip1 guests
+[package]
+name = "berth-plugins"
+description = "berth's sandboxed WASM plugin host"
+publish = false
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+wasmtime.workspace = true
+anyhow.workspace = true

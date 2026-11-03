@@ -1,0 +1,20 @@
+# berth app: the binary. Wires core/config, emulation panes, ui window, plugin host.
+[package]
+name = "berth"
+description = "A Ghostty-like cross-platform terminal with a left tab sidebar and workspaces"
+publish = false
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+
+[[bin]]
+name = "berth"
+path = "src/main.rs"
+
+[dependencies]
+berth-core = { path = "../core" }
+berth-emulation = { path = "../emulation" }
+berth-ui = { path = "../ui" }
+# berth-plugins = { path = "../plugins" }  # TODO(M4): link at startup when ABI lands
