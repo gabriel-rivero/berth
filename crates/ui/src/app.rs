@@ -53,11 +53,29 @@ pub struct Berth {
     dragging: bool,
     /// DFS index of the split whose divider is being dragged (Some = dragging).
     divider_drag: Option<usize>,
+    /// True while dragging the sidebar's right edge to resize it.
+    sidebar_drag: bool,
+    /// Last press (time + zone) for double-click detection (tab bar / workspace bar).
+    last_click: Option<(std::time::Instant, ClickZone)>,
     /// Pane currently receiving keys / selection events.
     focused_pane: PaneId,
     /// OSC title per pane (empty until the shell sets one; falls back to tab label).
     titles: HashMap<PaneId, String>,
 }
+
+/// Where the last mouse press landed — used for double-click-to-create.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ClickZone {
+    /// tab strip (slot or empty area right of the last tab)
+    TabBar,
+    /// sidebar, below the workspace entries (empty space)
+    SidebarEmpty,
+}
+
+/// Double-click window (matches macOS/Windows defaults, generous on purpose).
+const DOUBLE_CLICK_MS: u128 = 500;
+/// px slack around the sidebar's right edge for the resize grab.
+const SIDEBAR_EDGE_GRAB: f64 = 4.0;
 
 impl Berth {
     fn cell_metrics(&self) -> (f32, f32) {
@@ -315,6 +333,17 @@ impl Berth {
             self.focused_pane = pane_id;
         }
         self.sync_size();
+    }
+
+    /// True when two presses land in `zone` within the double-click window;
+    /// always records the press (a matched pair resets the tracker).
+    fn double_click(&mut self, zone: ClickZone) -> bool {
+        let now = std::time::Instant::now();
+        let dbl = self.last_click.is_some_and(|(t, z)| {
+            z == zone && now.duration_since(t).as_millis() <= DOUBLE_CLICK_MS
+        });
+        self.last_click = if dbl { None } else { Some((now, zone)) };
+        dbl
     }
 
     /// Spawn a fresh shell tab in the active workspace and focus it.
@@ -788,7 +817,17 @@ impl ApplicationHandler<PaneEvent> for Berth {
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::CursorMoved { position, .. } => {
                 self.mouse = position;
-                if self.divider_drag.is_some() {
+                if self.sidebar_drag {
+                    // Logical px by design; device px == logical * scale is ignored for now
+                    // so the value matches what content_rect()/render use for sb_w.
+                    let w = position.x.clamp(120.0, 720.0) as f32;
+                    self.config.sidebar.width_px = w;
+                    dlog_app!("sidebar drag -> width {w}");
+                    self.sync_size();
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                } else if self.divider_drag.is_some() {
                     let x = position.x.max(0.0) as u32;
                     let y = position.y.max(0.0) as u32;
                     let area = self.content_rect();
@@ -825,27 +864,47 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 ElementState::Pressed => {
                     let sb_w =
                         sidebar_width(self.config.sidebar.show, self.config.sidebar.width_px);
+                    let sb_w_f = f64::from(sb_w);
                     dlog_app!(
                         "mouse press at ({:?},{:?}) sb_w={sb_w} y_strip={}",
                         self.mouse.x,
                         self.mouse.y,
                         TAB_BAR_H
                     );
-                    if self.mouse.x < f64::from(sb_w) {
-                        // Sidebar click: pick the workspace entry under the cursor.
+                    if (self.mouse.x - sb_w_f).abs() <= SIDEBAR_EDGE_GRAB {
+                        // Sidebar edge grab wins over entry clicks: drag to resize.
+                        dlog_app!("sidebar grab");
+                        self.sidebar_drag = true;
+                    } else if self.mouse.x < sb_w_f {
+                        // Sidebar click: pick the workspace entry under the cursor;
+                        // double-click below the entries creates a workspace.
                         let count = self.layout.workspaces.len();
                         if let Some(i) = workspace_index_at(self.mouse.y as f32, count) {
                             dlog_app!("sidebar click ws#{i}");
                             self.select_workspace(i);
+                        } else if self.double_click(ClickZone::SidebarEmpty) {
+                            dlog_app!("sidebar double-click -> new workspace");
+                            self.new_workspace();
                         }
                     } else if self.mouse.y < f64::from(TAB_BAR_H) {
-                        // Tab strip wins over pane selection: y above the strip picks a tab.
+                        // Tab strip: double-click on the focused tab (or empty area)
+                        // opens a new tab; any other click selects.
                         let count = self
                             .layout
                             .active_workspace()
                             .map(|ws| ws.tabs.len())
                             .unwrap_or(0);
-                        if let Some(i) = tab_index_at(self.mouse.x as f32 - sb_w, count) {
+                        let focused_idx = self
+                            .layout
+                            .active_workspace()
+                            .and_then(|ws| ws.tabs.iter().position(|t| t.id == ws.focused_tab));
+                        let slot = tab_index_at(self.mouse.x as f32 - sb_w, count);
+                        if self.double_click(ClickZone::TabBar)
+                            && (slot.is_none() || focused_idx.is_none_or(|f| slot == Some(f)))
+                        {
+                            dlog_app!("tab bar double-click -> new tab");
+                            self.new_tab();
+                        } else if let Some(i) = slot {
                             self.select_tab(i);
                         }
                     } else {
@@ -881,6 +940,7 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 ElementState::Released => {
                     self.dragging = false;
                     self.divider_drag = None;
+                    self.sidebar_drag = false;
                 }
             },
             WindowEvent::MouseWheel { delta, .. } => {
@@ -933,6 +993,8 @@ pub fn run() -> anyhow::Result<()> {
         mouse: PhysicalPosition::new(0.0, 0.0),
         dragging: false,
         divider_drag: None,
+        sidebar_drag: false,
+        last_click: None,
         focused_pane,
         titles: HashMap::new(),
     };

@@ -51,6 +51,32 @@ jobs:
           mkdir "$dir"
           cp target/${{ matrix.target }}/release/berth "$dir"/
           tar czf berth-${GITHUB_REF_NAME#v}-${{ matrix.target }}.tar.gz "$dir"
+      - name: package .app bundle (macOS)
+        # A raw Unix binary launched from Finder opens a Terminal.app window first
+        # (the reported behavior); a Berth.app bundle launches clean without a
+        # terminal. Unsigned: users need right-click > Open (or xattr -cr Berth.app)
+        # to pass Gatekeeper.
+        if: matrix.archive == 'tar.gz' && contains(matrix.target, 'apple-darwin')
+        run: |
+          app=Berth.app/Contents
+          mkdir -p "$app/MacOS" "$app/Resources"
+          cp target/${{ matrix.target }}/release/berth "$app/MacOS/berth"
+          cat > "$app/Info.plist" <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>berth</string>
+            <key>CFBundleIdentifier</key><string>io.github.gabriel-rivero.berth</string>
+            <key>CFBundleName</key><string>Berth</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${GITHUB_REF_NAME#v}</string>
+            <key>NSHighResolutionCapable</key><true/>
+            <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
+          </dict>
+          </plist>
+          EOF
+          zip -qr berth-${GITHUB_REF_NAME#v}-${{ matrix.target }}.app.zip Berth.app
       - name: package (windows)
         if: matrix.archive == 'zip'
         run: |
@@ -60,5 +86,7 @@ jobs:
           Compress-Archive -Path "$dir" -DestinationPath "berth-${GITHUB_REF_NAME#v}-${{ matrix.target }}.zip"
       - uses: softprops/action-gh-release@v3
         with:
-          files: berth-*${{ matrix.archive }}
+          files: |
+            berth-*${{ matrix.archive }}
+            berth-*.app.zip
           generate_release_notes: true
