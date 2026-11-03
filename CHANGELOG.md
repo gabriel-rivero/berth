@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.0](https://github.com/gabriel-rivero/berth/compare/v0.11.0...v0.12.0) (2026-11-03)
+
+
+### Features
+
+* **keybinds:** user-configurable keybinds in config.toml ([358ba25](https://github.com/gabriel-rivero/berth/commit/358ba25840075b4c7d413a73dfa7abcb0640d71a))
+* **ui:** emoji/symbol fallback font chain + user font dir ([8055407](https://github.com/gabriel-rivero/berth/commit/8055407cbcf614c777ea9882497a6607f615f561))
+
 ## [0.11.0](https://github.com/gabriel-rivero/berth/compare/v0.10.0...v0.11.0) (2026-11-03)
 
 
