@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/gabriel-rivero/berth/compare/v0.12.0...v0.13.0) (2026-11-03)
+
+
+### Features
+
+* **keybinds:** iTerm2-style cmd chords; fix pane colors + close buttons ([43d9198](https://github.com/gabriel-rivero/berth/commit/43d91986413ea3ce51862494be96f5780398302e))
+
 ## [0.12.0](https://github.com/gabriel-rivero/berth/compare/v0.11.0...v0.12.0) (2026-11-03)
 
 
