@@ -182,6 +182,7 @@ fn encode_key(event: &KeyEvent, mods: ModifiersState) -> Option<Vec<u8>> {
 
     let bytes: Option<Vec<u8>> = match &event.logical_key {
         Key::Named(named) => match named {
+            NamedKey::Space => Some(vec![b' ']),
             NamedKey::Enter => Some(vec![b'\r']),
             NamedKey::Backspace => Some(vec![0x7f]),
             NamedKey::Tab => {
@@ -277,7 +278,8 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 if let (Some(renderer), Some(window), Some(pane)) =
                     (self.renderer.as_mut(), &self.window, &self.pane)
                 {
-                    let guard = pane.lock().expect("pane poisoned");
+                    let mut guard = pane.lock().expect("pane poisoned");
+                    guard.pump();
                     if renderer.draw(guard.term(), window).is_err() {
                         self.renderer = None;
                     }

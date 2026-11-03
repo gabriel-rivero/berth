@@ -4,6 +4,7 @@
 //! in one dynamic vertex buffer. Glyphs are rasterized with swash into a single
 //! RGBA8 atlas (alpha glyphs stored as white-with-coverage, color glyphs raw).
 use alacritty_terminal::event::VoidListener;
+use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Point};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Term, point_to_viewport, viewport_to_point};
@@ -29,6 +30,18 @@ macro_rules! dlog {
     ($($arg:tt)*) => {
         if debug_enabled() { eprintln!($($arg)*); }
     };
+}
+
+/// BERTH_FRAME_DUMP=1: read back every presented frame to
+/// /tmp/opencode/berth-frame-N.ppm (rootless render-truth check).
+fn frame_dump_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("BERTH_FRAME_DUMP").ok().as_deref() == Some("1"))
+}
+
+fn frame_dump_index() -> u32 {
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
 }
 
 const PANEL_BG: [f32; 4] = [0.05, 0.05, 0.06, 1.0];
@@ -70,6 +83,8 @@ const PALETTE: [[f32; 4]; 16] = [
 pub struct Metrics {
     pub cell_w: f32,
     pub cell_h: f32,
+    /// Baseline distance from cell top (swash scale ascent, y-down).
+    pub ascent: f32,
 }
 
 /// A rasterized glyph parked in the atlas.
@@ -205,6 +220,7 @@ impl FontCtx {
     fn compute_metrics(font: &FontRef<'_>, size_px: f32) -> Metrics {
         let m = font.metrics(&[]).scale(size_px);
         // swash: ascent = baseline->top (positive), descent = baseline->bottom (negative).
+        let ascent = m.ascent;
         let cell_h = (m.ascent - m.descent).clamp(6.0, 128.0).round();
         let gid = font.charmap().map('M');
         let cell_w = font
@@ -213,7 +229,11 @@ impl FontCtx {
             .advance_width(gid)
             .clamp(cell_h * 0.25, cell_h * 2.0)
             .round();
-        Metrics { cell_w, cell_h }
+        Metrics {
+            cell_w,
+            cell_h,
+            ascent,
+        }
     }
 
     /// Probe a handful of representative chars; part of BERTH_DEBUG triage output.
@@ -308,10 +328,10 @@ impl QuadSink {
         let [r, g, b, a] = color;
         let (u0, v0, u1, v1, tex) = match glyph {
             Some(gl) => (
-                gl.uv[0],
-                gl.uv[1],
-                gl.uv[0] + gl.uv[2],
-                gl.uv[1] + gl.uv[3],
+                gl.uv[0] / ATLAS_W as f32,
+                gl.uv[1] / ATLAS_H as f32,
+                (gl.uv[0] + gl.uv[2]) / ATLAS_W as f32,
+                (gl.uv[1] + gl.uv[3]) / ATLAS_H as f32,
                 if gl.color { 2u32 } else { 1u32 },
             ),
             None => (0.0, 0.0, 0.0, 0.0, 0u32),
@@ -395,11 +415,18 @@ impl Renderer {
         }))?;
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
+        // Surface backend validation errors loudly: glyphs/atlas issues show up here.
+        device.on_uncaptured_error(std::sync::Arc::new(|err| {
+            eprintln!("wgpu uncaptured error: {err}");
+        }));
 
         let size = window.inner_size();
         let config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .ok_or_else(|| anyhow::anyhow!("no matching surface configuration"))?;
+        // COPY_SRC enables BERTH_FRAME_DUMP readbacks.
+        let mut config = config;
+        config.usage |= wgpu::TextureUsages::COPY_SRC;
 
         let atlas_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("berth-atlas"),
@@ -664,10 +691,20 @@ impl Renderer {
             metrics.cell_w,
             metrics.cell_h,
         );
+        let quad_trace = std::env::var("BERTH_TRACE").ok().as_deref() == Some("1");
 
         let content = term.renderable_content();
+        dlog!(
+            "term grid: {}x{} display_offset={}",
+            term.grid().columns(),
+            term.grid().screen_lines(),
+            content.display_offset
+        );
+        let mut dump_rows: Vec<String> = Vec::new();
+        let mut dump_cur: Option<(usize, String)> = None; // (row, chars)
         let mut sink = QuadSink::default();
         let cursor = point_to_viewport(content.display_offset, content.cursor.point);
+        let (mut quads_bg, mut quads_glyph) = (0usize, 0usize);
 
         // Row-major iteration over the visible viewport cells.
         let mut cells = content.display_iter;
@@ -697,13 +734,26 @@ impl Renderer {
             }
             if !is_default_bg {
                 sink.push(px, py, px + metrics.cell_w, py + metrics.cell_h, bg, None);
+                quads_bg += 1;
+            }
+            if std::env::var("BERTH_DUMP").ok().as_deref() == Some("1") {
+                match &mut dump_cur {
+                    Some((r, chars)) if *r == row => {}
+                    _ => {
+                        if let Some((r, chars)) = dump_cur.take() {
+                            dump_rows.push(format!("[{r:02}] |{chars}|"));
+                        }
+                        dump_cur = Some((row, String::new()));
+                    }
+                }
+                if let Some((_, chars)) = &mut dump_cur {
+                    chars.push(cell.c);
+                }
             }
 
             let c = cell.c;
-            if c == ' ' || c == '\0' || cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                continue;
-            }
-            // cursor: block drawn under the glyph (shown here in inverse).
+            // cursor: block drawn under the glyph (shown here in inverse). Must be
+            // handled before the empty-cell skip so the block shows on blank rows.
             let mut fg = color_of(cell.fg);
             if selected {
                 fg = blend(fg);
@@ -720,16 +770,45 @@ impl Renderer {
                     CURSOR_BG,
                     None,
                 );
-                fg = BG_DEFAULT;
             }
+            if c == ' ' || c == '\0' || cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                continue;
+            }
+            fg = if on_cursor { BG_DEFAULT } else { fg };
 
             if let Some(g) = self.rasterize(c, &mut sink) {
-                // Glyph quads: top-left = pen + placement offsets.
+                // swash origin = (pen_x, baseline_y), y-up: the image's top edge
+                // sits `top` px above the baseline, `left` px right of the pen.
                 let gx = px + g.left as f32;
-                let gy = py + g.top as f32;
+                let gy = py + metrics.ascent - g.top as f32;
                 sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], fg, Some(g));
+                quads_glyph += 1;
+                if quad_trace && row < 4 {
+                    dlog!(
+                        "quad [{row},{col}] '{c}' gx={gx:.2} gy={gy:.2} gx2={:.2} gy2={:.2} tex={}",
+                        gx + g.uv[2],
+                        gy + g.uv[3],
+                        if g.color { 2u32 } else { 1u32 }
+                    );
+                }
             } else if debug_enabled() {
                 dlog!("char '{}' (U+{:04X}) has no glyph quad", c, c as u32);
+            }
+        }
+
+        dlog!(
+            "draw done: bg_quads={} glyph_quads={} uploads={} total_verts={}",
+            quads_bg,
+            quads_glyph,
+            sink.uploads.len(),
+            sink.verts.len()
+        );
+        if !dump_rows.is_empty() {
+            if let Some((r, chars)) = dump_cur.take() {
+                dump_rows.push(format!("[{r:02}] |{chars}|"));
+            }
+            for line in &dump_rows {
+                dlog!("{line}");
             }
         }
 
@@ -808,6 +887,69 @@ impl Renderer {
             }
         }
         self.queue.submit(Some(encoder.finish()));
+
+        if frame_dump_enabled() {
+            let (w, h) = (self.config.width, self.config.height);
+            let padded = (w * 4).div_ceil(256) * 256;
+            let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("berth-frame-dump"),
+                size: padded as u64 * h as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut enc = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("berth-frame-dump-enc"),
+                });
+            enc.copy_texture_to_buffer(
+                frame.texture.as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buf,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(padded),
+                        rows_per_image: None,
+                    },
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
+            self.queue.submit(Some(enc.finish()));
+
+            // flush copy, map, read back (debug only)
+            let slice = buf.slice(..);
+            let (txm, rxm) = std::sync::mpsc::channel();
+            slice.map_async(wgpu::MapMode::Read, move |_| {
+                let _ = txm.send(());
+            });
+            let _ = self.device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(std::time::Duration::from_secs(2)),
+            });
+            let _ = rxm.recv_timeout(std::time::Duration::from_secs(2));
+            let data = slice
+                .get_mapped_range()
+                .map_err(|e| anyhow::anyhow!("frame dump map failed: {e}"))?;
+            let fx = format!("/tmp/opencode/berth-frame-{}.ppm", frame_dump_index());
+            if let Ok(mut f) = std::fs::File::create(&fx) {
+                use std::io::Write;
+                let _ = write!(f, "P6\n{w} {h}\n255\n");
+                for y in 0..h as usize {
+                    let row = &data[y * padded as usize..][..(w * 4) as usize];
+                    for px in row.as_chunks::<4>().0 {
+                        // surface format (bgra) -> ppm rgb, expected srgb bytes
+                        let _ = f.write_all(&[px[2], px[1], px[0]]);
+                    }
+                }
+            }
+            drop(data);
+            buf.unmap();
+            dlog!("frame dumped: {fx}");
+        }
         self.queue.present(frame);
         Ok(())
     }
