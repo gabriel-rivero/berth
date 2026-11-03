@@ -62,6 +62,8 @@ pub struct Berth {
     sidebar_drag: bool,
     /// Last press (time + zone) for double-click detection (tab bar / workspace bar).
     last_click: Option<(std::time::Instant, ClickZone)>,
+    /// Live sidebar rename (workspace + buffer), active while Some.
+    rename_edit: Option<RenameEdit>,
     /// Pane currently receiving keys / selection events.
     focused_pane: PaneId,
     /// OSC title per pane (empty until the shell sets one; falls back to tab label).
@@ -71,12 +73,20 @@ pub struct Berth {
 }
 
 /// Where the last mouse press landed — used for double-click-to-create.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum ClickZone {
     /// tab strip (slot or empty area right of the last tab)
     TabBar,
     /// sidebar, below the workspace entries (empty space)
     SidebarEmpty,
+    /// sidebar workspace entry (index) — double-click starts rename
+    SidebarEntry(usize),
+}
+
+/// In-progress sidebar rename (workspace id + current buffer text).
+struct RenameEdit {
+    ws: WorkspaceId,
+    buf: String,
 }
 
 /// Double-click window (matches macOS/Windows defaults, generous on purpose).
@@ -172,11 +182,20 @@ impl Berth {
                     .collect()
             })
             .unwrap_or_default();
+        // Rename editor: show buffer + caret for the edited workspace entry.
+        let rename_ws = self.rename_edit.as_ref().map(|r| r.ws);
+        let edit_label = self.rename_edit.as_ref().map(|r| format!("{}_", r.buf));
         let workspaces: Vec<(&str, bool)> = self
             .layout
             .workspaces
             .iter()
-            .map(|ws| (ws.label.as_str(), ws.id == self.layout.active))
+            .map(|ws| {
+                let label = edit_label
+                    .as_deref()
+                    .filter(|_| rename_ws == Some(ws.id))
+                    .unwrap_or(ws.label.as_str());
+                (label, ws.id == self.layout.active)
+            })
             .collect();
         let sb_w = sidebar_width(self.config.sidebar.show, self.config.sidebar.width_px);
 
@@ -342,12 +361,88 @@ impl Berth {
         self.sync_size();
     }
 
+    /// Start editing a workspace's sidebar label in place.
+    fn begin_rename(&mut self, index: usize) {
+        let Some(ws) = self.layout.workspaces.get(index) else {
+            return;
+        };
+        self.rename_edit = Some(RenameEdit {
+            ws: ws.id,
+            // Select-all semantics: type replaces the label; Enter on an
+            // empty buffer keeps the old one.
+            buf: String::new(),
+        });
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+    }
+
+    /// Key interception while the rename editor is up. Consumes everything.
+    fn rename_chord(&mut self, event: &KeyEvent) -> bool {
+        if self.rename_edit.is_none() {
+            return false;
+        }
+        // 0 = keep, 1 = commit, 2 = cancel, 3 = change buf.
+        enum Rm {
+            Keep,
+            Commit,
+            Cancel,
+        }
+        use winit::keyboard::{Key, NamedKey};
+        let mut action = Rm::Keep;
+        if let Some(edit) = &mut self.rename_edit {
+            match &event.logical_key {
+                Key::Named(NamedKey::Enter)
+                | Key::Named(NamedKey::ArrowDown) // keys that would move focus
+                => {
+                    action = Rm::Commit;
+                }
+                Key::Named(NamedKey::Escape) => action = Rm::Cancel,
+                Key::Named(NamedKey::Backspace) => {
+                    edit.buf.pop();
+                }
+                Key::Named(NamedKey::Space) => edit.buf.push(' '),
+                _ => {
+                    if let Some(txt) = event
+                        .text
+                        .as_ref()
+                        .and_then(|t| t.chars().next())
+                        .filter(|c| !c.is_control())
+                    {
+                        edit.buf.push(txt);
+                    }
+                }
+            }
+        }
+        match action {
+            Rm::Keep => {}
+            Rm::Commit => {
+                let (ws, buf) = match self.rename_edit.take() {
+                    Some(e) => (e.ws, e.buf),
+                    None => return true,
+                };
+                let label = buf.trim();
+                if !label.is_empty()
+                    && let Some(ws) = self.layout.workspaces.iter_mut().find(|w| w.id == ws)
+                {
+                    dlog_app!("rename ws {:?} -> {label:?}", ws.id);
+                    ws.label = label.to_string();
+                }
+            }
+            Rm::Cancel => self.rename_edit = None,
+        }
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+        true
+    }
+
     /// True when two presses land in `zone` within the double-click window;
     /// always records the press (a matched pair resets the tracker).
     fn double_click(&mut self, zone: ClickZone) -> bool {
         let now = std::time::Instant::now();
-        let dbl = self.last_click.is_some_and(|(t, z)| {
-            z == zone && now.duration_since(t).as_millis() <= DOUBLE_CLICK_MS
+        let dbl = self.last_click.as_ref().is_some_and(|(t, z)| {
+            *z == zone && now.duration_since(*t).as_millis() <= DOUBLE_CLICK_MS
         });
         self.last_click = if dbl { None } else { Some((now, zone)) };
         dbl
@@ -574,6 +669,11 @@ impl Berth {
             "chord: logical={named:?} ctrl={ctrl} shift={shift} alt={alt} super={}",
             mods.super_key()
         );
+
+        // Sidebar rename editor consumes keys while it is up.
+        if self.rename_chord(event) {
+            return true;
+        }
 
         // alt+arrows move pane focus within the tab (before table lookup).
         if alt {
@@ -1011,10 +1111,17 @@ impl ApplicationHandler<PaneEvent> for Berth {
                         if let Some(i) = workspace_index_at(self.mouse.y as f32, count) {
                             if self.mouse.x >= sb_w_f - f64::from(UI_CLOSE_W) {
                                 dlog_app!("sidebar close ws#{i}");
+                                self.rename_edit = None;
                                 self.close_workspace_at(i);
                             } else {
                                 dlog_app!("sidebar click ws#{i}");
-                                self.select_workspace(i);
+                                if self.double_click(ClickZone::SidebarEntry(i)) {
+                                    dlog_app!("sidebar double-click -> rename ws#{i}");
+                                    self.begin_rename(i);
+                                } else {
+                                    self.rename_edit = None;
+                                    self.select_workspace(i);
+                                }
                             }
                         } else if self.double_click(ClickZone::SidebarEmpty) {
                             dlog_app!("sidebar double-click -> new workspace");
@@ -1199,6 +1306,7 @@ pub fn run() -> anyhow::Result<()> {
         divider_drag: None,
         sidebar_drag: false,
         last_click: None,
+        rename_edit: None,
         focused_pane,
         titles: HashMap::new(),
         bindings,

@@ -77,7 +77,9 @@ reported on stderr at load. Changes hot-reload like the rest of the config.
 
 ### Remaining
 
-- sidebar: workspace/tab rename, drag tabs between workspaces, drag tabs between panes
+- sidebar: rename is done (**double-click a workspace entry** to rename it
+  inline; Enter commits, Esc cancels); still missing drag tabs between
+  workspaces, drag tabs between panes
 - polish: no window-title-based quit guard, no close-confirmation, scrolling
   selection interplay; wide-glyph spacing beyond the fallback chain
 - advanced TUIs: kitty keyboard protocol probe/responses (TERM=xterm-256color
