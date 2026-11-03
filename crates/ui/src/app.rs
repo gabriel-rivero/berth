@@ -15,7 +15,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use crate::render::Renderer;
+use crate::render::{Renderer, TAB_BAR_H, tab_index_at};
 
 /// How many lines one wheel tick moves.
 const WHEEL_LINES_PER_TICK: i32 = 3;
@@ -65,16 +65,20 @@ impl Berth {
             .unwrap_or((8.0, 16.0))
     }
 
-    /// Window content rect the layout tree tiles into (sidebar cuts this in M3).
+    /// Window rect the layout tree tiles into: below the tab strip (sidebar cuts
+    /// this further in M3).
     fn content_rect(&self) -> Rect {
         self.window
             .as_ref()
             .map(|w| w.inner_size())
-            .map(|s| Rect {
-                x: 0,
-                y: 0,
-                w: s.width,
-                h: s.height,
+            .map(|s| {
+                let bar = TAB_BAR_H as u32;
+                Rect {
+                    x: 0,
+                    y: bar,
+                    w: s.width,
+                    h: s.height.saturating_sub(bar),
+                }
             })
             .unwrap_or_default()
     }
@@ -119,6 +123,16 @@ impl Berth {
         };
         let rect_map: HashMap<PaneId, Rect> = tab.pane_rects(area).into_iter().collect();
         let dividers = tab.dividers(area);
+        let tabs: Vec<(&str, bool)> = self
+            .layout
+            .active_workspace()
+            .map(|ws| {
+                ws.tabs
+                    .iter()
+                    .map(|t| (t.label.as_str(), t.id == ws.focused_tab))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let mut guards = Vec::new();
         for (id, rect) in rect_map {
@@ -134,7 +148,7 @@ impl Berth {
             .collect::<Vec<_>>();
 
         let failed = match (self.renderer.as_mut(), self.window.as_ref()) {
-            (Some(r), Some(w)) => r.draw(&spans, &dividers, w).is_err(),
+            (Some(r), Some(w)) => r.draw(&spans, &dividers, &tabs, w).is_err(),
             _ => false,
         };
         if failed {
@@ -254,6 +268,19 @@ impl Berth {
         if let Some(tab) = self.layout.active_tab() {
             self.focused_pane = tab.focused;
         }
+        self.sync_size();
+    }
+
+    /// Focus the tab at slot `index` of the active workspace (tab bar click).
+    fn select_tab(&mut self, index: usize) {
+        let Some(ws) = self.layout.active_workspace_mut() else {
+            return;
+        };
+        let Some((tab_id, pane_id)) = ws.tabs.get(index).map(|t| (t.id, t.focused)) else {
+            return;
+        };
+        ws.focused_tab = tab_id;
+        self.focused_pane = pane_id;
         self.sync_size();
     }
 
@@ -577,16 +604,28 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 ..
             } => match state {
                 ElementState::Pressed => {
-                    self.dragging = true;
-                    if let Some((id, row, col)) = self.pane_at_mouse() {
-                        self.focused_pane = id;
-                        if let Some(tab) = self.layout.active_tab_mut() {
-                            tab.focused = id;
+                    // Tab strip wins over pane selection: y above the strip picks a tab.
+                    if self.mouse.y < f64::from(TAB_BAR_H) {
+                        let count = self
+                            .layout
+                            .active_workspace()
+                            .map(|ws| ws.tabs.len())
+                            .unwrap_or(0);
+                        if let Some(i) = tab_index_at(self.mouse.x as f32, count) {
+                            self.select_tab(i);
                         }
-                        if let Some(pane) = self.panes.get(&id) {
-                            let mut pane = pane.lock().expect("pane poisoned");
-                            let pt = term_point(&pane, row, col);
-                            pane.start_selection(pt);
+                    } else {
+                        self.dragging = true;
+                        if let Some((id, row, col)) = self.pane_at_mouse() {
+                            self.focused_pane = id;
+                            if let Some(tab) = self.layout.active_tab_mut() {
+                                tab.focused = id;
+                            }
+                            if let Some(pane) = self.panes.get(&id) {
+                                let mut pane = pane.lock().expect("pane poisoned");
+                                let pt = term_point(&pane, row, col);
+                                pane.start_selection(pt);
+                            }
                         }
                     }
                     if let Some(w) = &self.window {

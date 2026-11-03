@@ -60,6 +60,25 @@ const DIM_FACTOR: f32 = 0.62;
 const ATLAS_W: u32 = 2048;
 const ATLAS_H: u32 = 2048;
 
+/// Top tab strip geometry (device px). TODO(M3): scale with window scale_factor.
+pub const TAB_BAR_H: f32 = 28.0;
+const TAB_WIDTH: f32 = 140.0;
+
+const BAR_BG: [f32; 4] = [0.03, 0.03, 0.04, 1.0];
+const TAB_BG: [f32; 4] = [0.09, 0.09, 0.1, 1.0];
+const TAB_ACTIVE_BG: [f32; 4] = [0.14, 0.14, 0.16, 1.0];
+const TAB_TEXT: [f32; 4] = [0.65, 0.65, 0.68, 1.0];
+const TAB_TEXT_ACTIVE: [f32; 4] = [0.95, 0.95, 0.95, 1.0];
+
+/// Which fixed-width tab slot sits under device-px `x` (None past the last tab).
+pub fn tab_index_at(x: f32, count: usize) -> Option<usize> {
+    if count == 0 {
+        return None;
+    }
+    let i = (x / TAB_WIDTH).floor() as usize;
+    (i < count).then_some(i)
+}
+
 /// xterm-style 16 color palette (0-7 dim, 8-15 bright).
 const PALETTE: [[f32; 4]; 16] = [
     [0.0, 0.0, 0.0, 1.0],
@@ -608,6 +627,32 @@ impl Renderer {
         }
     }
 
+    /// Draw the top tab strip: one fixed-width slot per tab, active slot brighter.
+    fn draw_tab_bar(&mut self, tabs: &[(&str, bool)], metrics: Metrics, sink: &mut QuadSink) {
+        let bar_w = self.config.width as f32;
+        sink.push(0.0, 0.0, bar_w, TAB_BAR_H, BAR_BG, None);
+        // Vertical centering: text baseline sits half a cell below the strip middle.
+        let baseline = (TAB_BAR_H - metrics.cell_h) * 0.5 + metrics.ascent;
+        for (i, (title, active)) in tabs.iter().enumerate() {
+            let x0 = i as f32 * TAB_WIDTH;
+            let bg = if *active { TAB_ACTIVE_BG } else { TAB_BG };
+            sink.push(x0, 0.0, x0 + TAB_WIDTH, TAB_BAR_H, bg, None);
+            let max_chars = (((TAB_WIDTH - 16.0) / metrics.cell_w).floor() as usize).max(1);
+            let text: String = title.chars().take(max_chars).collect();
+            let mut pen = x0 + 8.0;
+            for c in text.chars() {
+                let Some(g) = self.rasterize(c, sink) else {
+                    continue;
+                };
+                let gx = pen + g.left as f32;
+                let gy = baseline - g.top as f32;
+                let color = if *active { TAB_TEXT_ACTIVE } else { TAB_TEXT };
+                sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
+                pen += metrics.cell_w;
+            }
+        }
+    }
+
     /// Rasterize `c` (cached); queues the atlas upload on first use.
     fn rasterize(&mut self, c: char, sink: &mut QuadSink) -> Option<GlyphRef> {
         if let Some(cached) = self.font.glyphs.get(&c).copied() {
@@ -670,11 +715,12 @@ impl Renderer {
         found
     }
 
-    /// Full frame: tile `panes` (term + rect) over the window and stroke `dividers`.
+    /// Full frame: tab strip + tiled panes (term + rect) + dividers.
     pub fn draw(
         &mut self,
         panes: &[(&Term<VoidListener>, Rect)],
         dividers: &[Rect],
+        tabs: &[(&str, bool)],
         window: &Window,
     ) -> anyhow::Result<()> {
         let phys = window.inner_size();
@@ -699,6 +745,7 @@ impl Renderer {
         let quad_trace = std::env::var("BERTH_TRACE").ok().as_deref() == Some("1");
 
         let mut sink = QuadSink::default();
+        self.draw_tab_bar(tabs, metrics, &mut sink);
         let mut uploads_pending = 0usize;
         let mut quads_bg = 0usize;
         let mut quads_glyph = 0usize;

@@ -56,7 +56,8 @@ impl Tab {
     pub fn new(id: TabId, root_pane: PaneId, cwd: Option<String>) -> Self {
         Self {
             id,
-            label: "shell".to_string(),
+            // Session-style numbering (monotonic tab ids) keeps labels distinct.
+            label: format!("shell {}", id.0 + 1),
             cwd,
             focused: root_pane,
             root: SplitNode::Pane(root_pane),
