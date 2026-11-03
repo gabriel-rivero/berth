@@ -2,8 +2,8 @@
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "packages": {
     ".": {
-      "release-type": "rust",
-      "extra-files": ["Cargo.toml"],
+      "release-type": "simple",
+      "extra-files": [{ "type": "generic", "path": "Cargo.toml" }],
       "changelog-type": "default"
     }
   },
