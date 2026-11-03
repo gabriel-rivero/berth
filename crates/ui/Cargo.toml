@@ -11,7 +11,16 @@ repository.workspace = true
 [dependencies]
 berth-core = { path = "../core" }
 berth-emulation = { path = "../emulation" }
+alacritty_terminal.workspace = true
 winit.workspace = true
 wgpu.workspace = true
 pollster = "1.0"
 anyhow.workspace = true
+swash = "0.2.10"
+fontdb = "0.24.0"
+arboard = { version = "3.7.0", features = ["wayland-data-control"] }
+bytemuck = { version = "1.25.2", features = ["derive"] }
+
+[dev-dependencies]
+# WGSL validation of the render shader without a GPU (tests run on CI runners too).
+naga = "30"
