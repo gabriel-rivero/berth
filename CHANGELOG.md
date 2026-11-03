@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/gabriel-rivero/berth/compare/v0.3.0...v0.4.0) (2026-11-03)
+
+
+### Features
+
+* **ui:** visible tab strip with click-to-focus ([072f2e2](https://github.com/gabriel-rivero/berth/commit/072f2e271386627690849060526cad0b6c1f83cb))
+
 ## [0.3.0](https://github.com/gabriel-rivero/berth/compare/v0.2.0...v0.3.0) (2026-11-03)
 
 
