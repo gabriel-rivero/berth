@@ -260,6 +260,179 @@ impl Tab {
     }
 }
 
+/// Drag-resize slack: cursor within this many px of a divider counts as a grab.
+const DIVIDER_HIT: u32 = 4;
+
+impl Tab {
+    /// Read-only divider grab check (same hit zones as resize_in); returns the
+    /// DFS index of the split whose divider is under (x,y), for later resize_index.
+    pub fn grab_index_at(&self, x: u32, y: u32, area: Rect) -> Option<usize> {
+        Self::grab_in(&self.root, x, y, area)
+    }
+
+    fn grab_in(node: &SplitNode, x: u32, y: u32, area: Rect) -> Option<usize> {
+        if let SplitNode::Split {
+            first,
+            second,
+            ratio,
+            vertical,
+        } = node
+        {
+            if *vertical {
+                let (top, bottom) = split_two(area.h, *ratio);
+                let dy = area.y + top;
+                let on = x >= area.x
+                    && x < area.x + area.w
+                    && y >= dy.saturating_sub(DIVIDER_HIT)
+                    && y < dy + DIVIDER_PX + DIVIDER_HIT;
+                if on {
+                    return Some(0);
+                }
+                let sub = Self::grab_in(
+                    first,
+                    x,
+                    y,
+                    Rect {
+                        y: area.y,
+                        h: top,
+                        ..area
+                    },
+                )
+                .or_else(|| {
+                    Self::grab_in(
+                        second,
+                        x,
+                        y,
+                        Rect {
+                            y: dy + DIVIDER_PX,
+                            h: bottom.saturating_sub(DIVIDER_PX),
+                            ..area
+                        },
+                    )
+                });
+                return sub.map(|i| i + 1);
+            }
+            let (left, right) = split_two(area.w, *ratio);
+            let dx = area.x + left;
+            let on = y >= area.y
+                && y < area.y + area.h
+                && x >= dx.saturating_sub(DIVIDER_HIT)
+                && x < dx + DIVIDER_PX + DIVIDER_HIT;
+            if on {
+                return Some(0);
+            }
+            let sub = Self::grab_in(
+                first,
+                x,
+                y,
+                Rect {
+                    x: area.x,
+                    w: left,
+                    ..area
+                },
+            )
+            .or_else(|| {
+                Self::grab_in(
+                    second,
+                    x,
+                    y,
+                    Rect {
+                        x: dx + DIVIDER_PX,
+                        w: right.saturating_sub(DIVIDER_PX),
+                        ..area
+                    },
+                )
+            });
+            return sub.map(|i| i + 1);
+        }
+        None
+    }
+
+    /// Move the DFS-index-th split's divider to (x,y). Indices are stable for a
+    /// drag (structure does not change while dragging). Returns true on change.
+    pub fn resize_index(&mut self, index: usize, x: u32, y: u32, area: Rect) -> bool {
+        Self::resize_n(&mut self.root, 0, index, x, y, area)
+    }
+
+    fn resize_n(node: &mut SplitNode, i: usize, index: usize, x: u32, y: u32, area: Rect) -> bool {
+        if let SplitNode::Split {
+            first,
+            second,
+            ratio,
+            vertical,
+        } = node
+        {
+            if i == index {
+                if *vertical {
+                    if area.h == 0 {
+                        return false;
+                    }
+                    *ratio = ((y - area.y) as f32 / area.h as f32).clamp(0.05, 0.95);
+                } else {
+                    if area.w == 0 {
+                        return false;
+                    }
+                    *ratio = ((x - area.x) as f32 / area.w as f32).clamp(0.05, 0.95);
+                }
+                return true;
+            }
+            if *vertical {
+                let (top, bottom) = split_two(area.h, *ratio);
+                let dy = area.y + top;
+                return Self::resize_n(
+                    first,
+                    i + 1,
+                    index,
+                    x,
+                    y,
+                    Rect {
+                        y: area.y,
+                        h: top,
+                        ..area
+                    },
+                ) || Self::resize_n(
+                    second,
+                    i + 1,
+                    index,
+                    x,
+                    y,
+                    Rect {
+                        y: dy + DIVIDER_PX,
+                        h: bottom.saturating_sub(DIVIDER_PX),
+                        ..area
+                    },
+                );
+            }
+            let (left, right) = split_two(area.w, *ratio);
+            let dx = area.x + left;
+            return Self::resize_n(
+                first,
+                i + 1,
+                index,
+                x,
+                y,
+                Rect {
+                    x: area.x,
+                    w: left,
+                    ..area
+                },
+            ) || Self::resize_n(
+                second,
+                i + 1,
+                index,
+                x,
+                y,
+                Rect {
+                    x: dx + DIVIDER_PX,
+                    w: right.saturating_sub(DIVIDER_PX),
+                    ..area
+                },
+            );
+        }
+        false
+    }
+}
+
 /// Direction for keyboard pane-focus movement (alt+arrows).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusDir {

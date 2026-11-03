@@ -51,6 +51,8 @@ pub struct Berth {
     mouse: PhysicalPosition<f64>,
     /// True while left button held over a pane.
     dragging: bool,
+    /// DFS index of the split whose divider is being dragged (Some = dragging).
+    divider_drag: Option<usize>,
     /// Pane currently receiving keys / selection events.
     focused_pane: PaneId,
     /// OSC title per pane (empty until the shell sets one; falls back to tab label).
@@ -760,7 +762,23 @@ impl ApplicationHandler<PaneEvent> for Berth {
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::CursorMoved { position, .. } => {
                 self.mouse = position;
-                if self.dragging
+                if self.divider_drag.is_some() {
+                    let x = position.x.max(0.0) as u32;
+                    let y = position.y.max(0.0) as u32;
+                    let area = self.content_rect();
+                    let idx = self.divider_drag.unwrap_or(0);
+                    let mut resized = false;
+                    if let Some(tab) = self.layout.active_tab_mut() {
+                        resized = tab.resize_index(idx, x, y, area);
+                    }
+                    if resized {
+                        self.sync_size();
+                    }
+                    dlog_app!("drag move ({x},{y}) resized={resized}");
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                } else if self.dragging
                     && let Some((id, row, col)) = self.pane_at_mouse()
                 {
                     if let Some(pane) = self.panes.get(&id) {
@@ -805,16 +823,28 @@ impl ApplicationHandler<PaneEvent> for Berth {
                             self.select_tab(i);
                         }
                     } else {
-                        self.dragging = true;
-                        if let Some((id, row, col)) = self.pane_at_mouse() {
-                            self.focused_pane = id;
-                            if let Some(tab) = self.layout.active_tab_mut() {
-                                tab.focused = id;
-                            }
-                            if let Some(pane) = self.panes.get(&id) {
-                                let mut pane = pane.lock().expect("pane poisoned");
-                                let pt = term_point(&pane, row, col);
-                                pane.start_selection(pt);
+                        // Divider grab wins over pane focus/selection.
+                        let x = (self.mouse.x.max(0.0)) as u32;
+                        let y = (self.mouse.y.max(0.0)) as u32;
+                        let grab = self
+                            .layout
+                            .active_tab()
+                            .and_then(|t| t.grab_index_at(x, y, self.content_rect()));
+                        if let Some(idx) = grab {
+                            dlog_app!("divider grab #{idx} at ({x},{y})");
+                            self.divider_drag = Some(idx);
+                        } else {
+                            self.dragging = true;
+                            if let Some((id, row, col)) = self.pane_at_mouse() {
+                                self.focused_pane = id;
+                                if let Some(tab) = self.layout.active_tab_mut() {
+                                    tab.focused = id;
+                                }
+                                if let Some(pane) = self.panes.get(&id) {
+                                    let mut pane = pane.lock().expect("pane poisoned");
+                                    let pt = term_point(&pane, row, col);
+                                    pane.start_selection(pt);
+                                }
                             }
                         }
                     }
@@ -822,7 +852,10 @@ impl ApplicationHandler<PaneEvent> for Berth {
                         w.request_redraw();
                     }
                 }
-                ElementState::Released => self.dragging = false,
+                ElementState::Released => {
+                    self.dragging = false;
+                    self.divider_drag = None;
+                }
             },
             WindowEvent::MouseWheel { delta, .. } => {
                 let (_, cell_h) = self.cell_metrics();
@@ -873,6 +906,7 @@ pub fn run() -> anyhow::Result<()> {
         modifiers: ModifiersState::default(),
         mouse: PhysicalPosition::new(0.0, 0.0),
         dragging: false,
+        divider_drag: None,
         focused_pane,
         titles: HashMap::new(),
     };
