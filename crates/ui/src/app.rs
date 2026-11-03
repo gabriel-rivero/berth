@@ -9,10 +9,14 @@ use winit::{
 };
 
 pub struct Berth {
+    /// live config (hot-reloaded in M2; drives sidebar size/font).
+    #[allow(dead_code)]
     config: Config,
+    /// layout tree the renderer consumes; built empty in the scaffold.
+    #[allow(dead_code)]
     layout: Layout,
     window: Option<Window>,
-    renderer: Option<render::Renderer>,
+    renderer: Option<crate::render::Renderer>,
     // TODO(M1): pane registry: PaneId -> emulation::Pane + one reader thread each.
 }
 
@@ -21,13 +25,9 @@ impl ApplicationHandler for Berth {
         let attrs = Window::default_attributes()
             .with_title("berth")
             .with_min_inner_size(winit::dpi::LogicalSize::new(400, 200));
-        self.window = Some(
-            event_loop
-                .create_window(attrs)
-                .expect("window creation"),
-        );
+        self.window = Some(event_loop.create_window(attrs).expect("window creation"));
         if let Some(win) = &self.window {
-            self.renderer = Some(render::Renderer::new(win).expect("renderer init"));
+            self.renderer = Some(crate::render::Renderer::new(win).expect("renderer init"));
         }
     }
 
@@ -46,7 +46,7 @@ impl ApplicationHandler for Berth {
                 // and feed focused pane writer.
             }
             WindowEvent::RedrawRequested => {
-                if let (Some(r), Some(w)) = (&self.renderer, &self.window) {
+                if let (Some(r), Some(w)) = (self.renderer.as_mut(), &self.window) {
                     r.draw(w).expect("draw");
                 }
             }

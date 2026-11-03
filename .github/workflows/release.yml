@@ -1,0 +1,50 @@
+# Builds platform binaries on every v* tag (created by release-please) and attaches
+# them to the GitHub Release. Runs on linux (musl), macOS (arm + intel), windows.
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, archive: tar.gz }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, archive: tar.gz }
+          - { os: macos-14, target: aarch64-apple-darwin, archive: tar.gz }
+          - { os: macos-13, target: x86_64-apple-darwin, archive: tar.gz }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, archive: zip }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      - name: musl prereqs
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --target ${{ matrix.target }}
+      - name: package (unix)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          dir=berth-${{ matrix.target }}
+          mkdir "$dir"
+          cp target/${{ matrix.target }}/release/berth "$dir"/
+          tar czf berth-${GITHUB_REF_NAME#v}-${{ matrix.target }}.tar.gz "$dir"
+      - name: package (windows)
+        if: matrix.archive == 'zip'
+        run: |
+          $dir = "berth-${{ matrix.target }}"
+          New-Item -ItemType Directory -ErrorAction SilentlyContinue "$dir" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/berth.exe" "$dir/"
+          Compress-Archive -Path "$dir" -DestinationPath "berth-${GITHUB_REF_NAME#v}-${{ matrix.target }}.zip"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: berth-*${{ matrix.archive }}
+          generate_release_notes: true
