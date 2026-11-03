@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/gabriel-rivero/berth/compare/v0.13.0...v0.14.0) (2026-11-03)
+
+
+### Features
+
+* **ui:** rename workspaces from the sidebar ([65ad147](https://github.com/gabriel-rivero/berth/commit/65ad1474466fb8d7273e253b4ced21291176782f))
+
 ## [0.13.0](https://github.com/gabriel-rivero/berth/compare/v0.12.0...v0.13.0) (2026-11-03)
 
 
