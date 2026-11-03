@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/gabriel-rivero/berth/compare/v0.5.0...v0.6.0) (2026-11-03)
+
+
+### Features
+
+* **ui:** left sidebar with workspace switching ([a3c0e88](https://github.com/gabriel-rivero/berth/commit/a3c0e88e274a16b4ea8b22b451a24cdc0e047495))
+
 ## [0.5.0](https://github.com/gabriel-rivero/berth/compare/v0.4.0...v0.5.0) (2026-11-03)
 
 
