@@ -62,6 +62,9 @@ pub struct Berth {
     sidebar_drag: bool,
     /// Last press (time + zone) for double-click detection (tab bar / workspace bar).
     last_click: Option<(std::time::Instant, ClickZone)>,
+    /// Set on first close attempt with live shells; second close (or esc-free
+    /// timeout) actually exits.
+    confirm_exit: Option<std::time::Instant>,
     /// Live sidebar rename (workspace + buffer), active while Some.
     rename_edit: Option<RenameEdit>,
     /// Pane currently receiving keys / selection events.
@@ -213,9 +216,14 @@ impl Berth {
             .collect::<Vec<_>>();
 
         let failed = match (self.renderer.as_mut(), self.window.as_ref()) {
-            (Some(r), Some(w)) => r
-                .draw(&spans, &dividers, &tabs, &workspaces, sb_w, w)
-                .is_err(),
+            (Some(r), Some(w)) => {
+                let confirm: Option<&str> = self
+                    .confirm_exit
+                    .as_ref()
+                    .map(|_| "Live shells running — close again to quit (esc to cancel)");
+                r.draw(&spans, &dividers, &tabs, &workspaces, sb_w, confirm, w)
+                    .is_err()
+            }
             _ => false,
         };
         if failed {
@@ -669,6 +677,17 @@ impl Berth {
             "chord: logical={named:?} ctrl={ctrl} shift={shift} alt={alt} super={}",
             mods.super_key()
         );
+
+        // Quit-confirm banner: escape cancels the pending exit.
+        if self.confirm_exit.is_some() {
+            let name = chord_key_name(event);
+            if name.as_deref() == Some("escape") {
+                dlog_app!("quit confirm cancelled");
+                self.confirm_exit = None;
+                self.window.as_ref().inspect(|w| w.request_redraw());
+            }
+            return true;
+        }
 
         // Sidebar rename editor consumes keys while it is up.
         if self.rename_chord(event) {
@@ -1215,10 +1234,17 @@ impl ApplicationHandler<PaneEvent> for Berth {
             }
             WindowEvent::RedrawRequested => self.redraw(),
             WindowEvent::CloseRequested => {
-                // TODO(M2): confirm panes with live shells before exit.
-                self.window = None;
-                self.renderer = None;
-                self.panes.clear();
+                // Confirm-quit guard: first close with live shells only shows the
+                // banner; a second close (or last pane gone) really exits.
+                if !self.panes.is_empty() && self.confirm_exit.is_none() {
+                    dlog_app!("close requested -> confirm quit (shells alive)");
+                    self.confirm_exit = Some(std::time::Instant::now());
+                    self.window.as_ref().inspect(|w| w.request_redraw());
+                } else {
+                    self.window = None;
+                    self.renderer = None;
+                    self.panes.clear();
+                }
             }
             _ => {}
         }
@@ -1226,6 +1252,13 @@ impl ApplicationHandler<PaneEvent> for Berth {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.poll_config_reload();
+        // Auto-cancel a stale quit confirmation.
+        if let Some(t) = self.confirm_exit
+            && t.elapsed() >= CONFIRM_TIMEOUT
+        {
+            self.confirm_exit = None;
+            self.window.as_ref().inspect(|w| w.request_redraw());
+        }
         event_loop.set_control_flow(ControlFlow::WaitUntil(
             std::time::Instant::now() + std::time::Duration::from_millis(CONFIG_POLL_MS),
         ));
@@ -1234,6 +1267,8 @@ impl ApplicationHandler<PaneEvent> for Berth {
 
 /// Config polling interval for hot reload.
 const CONFIG_POLL_MS: u64 = 750;
+/// How long the quit-confirm banner stays up before auto-cancelling.
+const CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl Berth {
     /// Re-read config.toml when its mtime changes; font changes rebuild the
@@ -1310,6 +1345,7 @@ pub fn run() -> anyhow::Result<()> {
         divider_drag: None,
         sidebar_drag: false,
         last_click: None,
+        confirm_exit: None,
         rename_edit: None,
         focused_pane,
         titles: HashMap::new(),

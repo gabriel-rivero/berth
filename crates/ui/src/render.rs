@@ -85,6 +85,10 @@ const SIDEBAR_ENTRY_BG: [f32; 4] = [0.07, 0.07, 0.08, 1.0];
 const SIDEBAR_ENTRY_ACTIVE_BG: [f32; 4] = [0.12, 0.12, 0.14, 1.0];
 const SIDEBAR_TEXT: [f32; 4] = [0.6, 0.6, 0.62, 1.0];
 const SIDEBAR_TEXT_ACTIVE: [f32; 4] = [0.95, 0.95, 0.95, 1.0];
+/// Quit-confirm banner (bottom strip shown when closing with live shells).
+const CONFIRM_BG: [f32; 4] = [0.42, 0.30, 0.08, 1.0];
+const CONFIRM_TEXT: [f32; 4] = [0.97, 0.94, 0.86, 1.0];
+pub const CONFIRM_H: f32 = 34.0;
 
 /// Which fixed-width tab slot sits under device-px `x` (None past the last tab).
 /// `x` is sidebar-relative (the app subtracts the sidebar width first).
@@ -784,6 +788,26 @@ impl Renderer {
         sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
     }
 
+    /// Centered bottom overlay strip (quit confirmation). Drawn last so it sits
+    /// on top of panes/tabs/sidebar.
+    fn draw_confirm(&mut self, text: &str, screen_w: f32, screen_h: f32, sink: &mut QuadSink) {
+        let metrics = self.font.metrics;
+        let y0 = (screen_h - CONFIRM_H).max(0.0);
+        sink.push(0.0, y0, screen_w, screen_h, CONFIRM_BG, None);
+        let text_w = text.chars().count() as f32 * metrics.cell_w;
+        let mut pen = ((screen_w - text_w) * 0.5).max(8.0);
+        let baseline = y0 + (CONFIRM_H - metrics.cell_h) * 0.5 + metrics.ascent;
+        for c in text.chars() {
+            let Some(g) = self.rasterize(c, sink) else {
+                continue;
+            };
+            let gx = pen + g.left as f32;
+            let gy = baseline - g.top as f32;
+            sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], CONFIRM_TEXT, Some(g));
+            pen += metrics.cell_w;
+        }
+    }
+
     /// Draw the top tab strip (starting right of the sidebar): one fixed-width
     /// slot per tab, active slot brighter.
     fn draw_tab_bar(
@@ -966,6 +990,8 @@ impl Renderer {
     }
 
     /// Full frame: sidebar + tab strip + tiled panes (term + rect) + dividers.
+    /// Full frame: cell quads per pane + chrome. Drawn on RedrawRequested.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         panes: &[(&Term<TermListener>, Rect)],
@@ -973,6 +999,7 @@ impl Renderer {
         tabs: &[(&str, bool)],
         workspaces: &[(&str, bool)],
         sb_w: f32,
+        confirm: Option<&str>,
         window: &Window,
     ) -> anyhow::Result<()> {
         let phys = window.inner_size();
@@ -999,6 +1026,9 @@ impl Renderer {
         let mut sink = QuadSink::default();
         self.draw_sidebar(workspaces, sb_w, metrics, &mut sink);
         self.draw_tab_bar(tabs, metrics, sb_w, &mut sink);
+        if let Some(msg) = confirm {
+            self.draw_confirm(msg, screen_w, screen_h, &mut sink);
+        }
         let mut uploads_pending = 0usize;
         let mut quads_bg = 0usize;
         let mut quads_glyph = 0usize;
