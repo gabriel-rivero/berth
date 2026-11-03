@@ -204,7 +204,9 @@ impl Berth {
             return;
         }
         self.focused_pane = new_id;
-
+        if let Some(tab) = self.layout.active_tab_mut() {
+            tab.focused = new_id;
+        }
         // Size the new pane immediately (sync_size would only land next redraw).
         if let Some(area) = Some(self.content_rect()) {
             let rect = self.layout.active_tab().and_then(|t| {
@@ -284,6 +286,15 @@ impl Berth {
         self.sync_size();
     }
 
+    /// Move keyboard focus to `pane` (alt+arrow navigation and click focus).
+    fn focus_pane(&mut self, pane: PaneId) {
+        self.focused_pane = pane;
+        if let Some(tab) = self.layout.active_tab_mut() {
+            tab.focused = pane;
+        }
+        self.window.as_ref().inspect(|w| w.request_redraw());
+    }
+
     /// Kill the focused pane's shell; the Closed event does tree cleanup.
     fn close_focused_pane(&mut self) {
         if let Some(pane) = self.panes.get(&self.focused_pane) {
@@ -330,8 +341,8 @@ impl Berth {
         None
     }
 
-    /// Keys that act before the PTY (clipboard, scroll). None if not an app chord.
-    fn handle_chord(&mut self, event: &KeyEvent, mods: ModifiersState) {
+    /// Keys that act before the PTY. Returns true if consumed => encode_key skips it.
+    fn handle_chord(&mut self, event: &KeyEvent, mods: ModifiersState) -> bool {
         let ctrl = mods.control_key();
         let shift = mods.shift_key();
 
@@ -344,12 +355,12 @@ impl Berth {
         );
         if ctrl && shift && named == Key::Named(NamedKey::Enter) {
             self.split_focused(true);
-            return;
+            return true;
         }
         // Layout-independent: Shift+Backslash types '"' on US layouts, so bind by code.
         if ctrl && shift && event.physical_key == PhysicalKey::Code(KeyCode::Backslash) {
             self.split_focused(false);
-            return;
+            return true;
         }
         // Tab cycling: ctrl+tab next, ctrl+shift+tab prev (Firefox/konsole style).
         if event.logical_key == Key::Named(NamedKey::Tab) {
@@ -358,26 +369,45 @@ impl Berth {
             } else if ctrl {
                 self.cycle_tab(1);
             }
-            return;
+            return true;
         }
         // ctrl+shift+n new tab, ctrl+shift+w close focused pane (shell dies -> Closed
         // event -> tree cleanup; closing the last tab's root exits).
         if ctrl && shift && event.physical_key == PhysicalKey::Code(KeyCode::KeyN) {
             self.new_tab();
-            return;
+            return true;
+        }
+        // alt+arrows move pane focus within the tab (up/down/left/right).
+        if mods.alt_key() {
+            use berth_core::layout::FocusDir;
+            let dir = match named {
+                Key::Named(NamedKey::ArrowUp) => Some(FocusDir::Up),
+                Key::Named(NamedKey::ArrowDown) => Some(FocusDir::Down),
+                Key::Named(NamedKey::ArrowLeft) => Some(FocusDir::Left),
+                Key::Named(NamedKey::ArrowRight) => Some(FocusDir::Right),
+                _ => None,
+            };
+            if let Some(dir) = dir {
+                dlog_app!("alt-chord dir={dir:?}");
+                if let Some(next) = self.layout.active_tab().and_then(|t| t.neighbor_pane(dir)) {
+                    dlog_app!("alt-chord neighbor={next:?}");
+                    self.focus_pane(next);
+                }
+                return true;
+            }
         }
         if ctrl && shift && event.physical_key == PhysicalKey::Code(KeyCode::KeyW) {
             self.close_focused_pane();
-            return;
+            return true;
         }
 
         let Some(pane) = self.panes.get(&self.focused_pane).cloned() else {
-            return;
+            return false;
         };
 
         let chr = match &event.logical_key {
             Key::Character(t) => t.as_str().to_ascii_lowercase(),
-            _ => return,
+            _ => return false,
         };
 
         // Ctrl+Shift+C / Ctrl+Shift+V terminal-style copy & paste.
@@ -386,13 +416,13 @@ impl Berth {
             if let Some(text) = text {
                 self.set_clipboard(text);
             }
-            return;
+            return true;
         }
         if ctrl && chr == "v" {
             if let Some(text) = self.get_clipboard() {
                 let _ = pane.lock().expect("pane poisoned").write(text.as_bytes());
             }
-            return;
+            return true;
         }
 
         // Shift+PgUp/PgDn scroll (encoded PgUp/PgDn stays for the shell).
@@ -401,12 +431,13 @@ impl Berth {
         } else if shift && event.logical_key == Key::Named(NamedKey::PageDown) {
             alacritty_terminal::grid::Scroll::PageDown
         } else {
-            return;
+            return false;
         };
         pane.lock().expect("pane poisoned").scroll_display(scroll);
         if let Some(w) = &self.window {
             w.request_redraw();
         }
+        true
     }
 }
 
@@ -573,12 +604,13 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if event.state == ElementState::Pressed {
-                    self.handle_chord(&event, self.modifiers);
-                }
-                if let Some(bytes) = encode_key(&event, self.modifiers)
+                let consumed = event.state == ElementState::Pressed
+                    && self.handle_chord(&event, self.modifiers);
+                if !consumed
+                    && let Some(bytes) = encode_key(&event, self.modifiers)
                     && let Some(pane) = self.panes.get(&self.focused_pane)
                 {
+                    dlog_app!("kbd write: pane={:?} bytes={:?}", self.focused_pane, bytes);
                     let _ = pane.lock().expect("pane poisoned").write(&bytes);
                 }
             }

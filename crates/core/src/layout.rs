@@ -143,6 +143,32 @@ impl Tab {
         }
     }
 
+    /// Nearest pane in `dir` from the focused one (keyboard focus movement).
+    /// Geometry uses a nominal area — only ratios matter.
+    pub fn neighbor_pane(&self, dir: FocusDir) -> Option<PaneId> {
+        let area = Rect {
+            x: 0,
+            y: 0,
+            w: 1000,
+            h: 1000,
+        };
+        let rects = self.pane_rects(area);
+        let cur = rects.iter().find(|(id, _)| *id == self.focused)?.1;
+        let (cx, cy) = rect_center(cur);
+        rects
+            .iter()
+            .filter(|(_, r)| in_direction(*r, cx, cy, dir))
+            // Prefer the one least off the perpendicular axis, then nearest.
+            .min_by_key(|(_, r)| {
+                let (rx, ry) = rect_center(*r);
+                match dir {
+                    FocusDir::Left | FocusDir::Right => (abs_diff(ry, cy), abs_diff(rx, cx)),
+                    FocusDir::Up | FocusDir::Down => (abs_diff(rx, cx), abs_diff(ry, cy)),
+                }
+            })
+            .map(|(id, _)| *id)
+    }
+
     /// Replace the `target` leaf with a split hosting `new` (target keeps the
     /// first/second position it had). Returns false if `target` is not a leaf.
     pub fn split_pane(&mut self, target: PaneId, new: PaneId, vertical: bool) -> bool {
@@ -231,6 +257,34 @@ impl Tab {
                 );
             }
         }
+    }
+}
+
+/// Direction for keyboard pane-focus movement (alt+arrows).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusDir {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+fn rect_center(r: Rect) -> (u32, u32) {
+    (r.x + r.w / 2, r.y + r.h / 2)
+}
+
+fn abs_diff(a: u32, b: u32) -> u32 {
+    a.abs_diff(b)
+}
+
+/// Candidate whose center strictly sits in `dir` of the focus point.
+fn in_direction(r: Rect, cx: u32, cy: u32, dir: FocusDir) -> bool {
+    let (rx, ry) = rect_center(r);
+    match dir {
+        FocusDir::Left => rx < cx,
+        FocusDir::Right => rx > cx,
+        FocusDir::Up => ry < cy,
+        FocusDir::Down => ry > cy,
     }
 }
 
