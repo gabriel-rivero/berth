@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0](https://github.com/gabriel-rivero/berth/compare/v0.8.0...v0.9.0) (2026-11-03)
+
+
+### Features
+
+* **ui:** sidebar drag-resize + double-click to create tabs/workspaces ([bf09c12](https://github.com/gabriel-rivero/berth/commit/bf09c1228f30ac270d911713553d533e1623f541))
+
+
+### Documentation
+
+* README reflects v0.8.0 state, keybind table, remaining roadmap ([0e5891a](https://github.com/gabriel-rivero/berth/commit/0e5891acea8682695aef0fa8f6780b5dd97d375f))
+
 ## [0.8.0](https://github.com/gabriel-rivero/berth/compare/v0.7.0...v0.8.0) (2026-11-03)
 
 
