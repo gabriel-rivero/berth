@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/gabriel-rivero/berth/compare/v0.2.0...v0.3.0) (2026-11-03)
+
+
+### Features
+
+* **ui:** tab management — new tab, close pane, ctrl+tab cycling ([2aae6a5](https://github.com/gabriel-rivero/berth/commit/2aae6a5fedf1ad58352793cc7003e7929ef05eda))
+
 ## [0.2.0](https://github.com/gabriel-rivero/berth/compare/v0.1.2...v0.2.0) (2026-11-03)
 
 
