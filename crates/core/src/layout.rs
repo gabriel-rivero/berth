@@ -9,7 +9,7 @@ pub struct TabId(pub u64);
 pub struct PaneId(pub u64);
 
 /// Binary split tree for a tab's panes. `v` = stacked vertically, `h` = side by side.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SplitNode {
     Pane(PaneId),
     Split {
@@ -28,6 +28,9 @@ pub struct Rect {
     pub w: u32,
     pub h: u32,
 }
+
+/// Thickness of the divider drawn between sibling panes (px).
+pub const DIVIDER_PX: u32 = 2;
 
 #[derive(Debug, Clone)]
 pub struct Tab {
@@ -138,10 +141,46 @@ impl Tab {
         }
     }
 
-    /// Replace the `target` leaf with a split hosting `new` (which side gets `target` is
-    /// first/second order preserved). Returns false if `target` is not a leaf.
+    /// Replace the `target` leaf with a split hosting `new` (target keeps the
+    /// first/second position it had). Returns false if `target` is not a leaf.
     pub fn split_pane(&mut self, target: PaneId, new: PaneId, vertical: bool) -> bool {
         split_in(&mut self.root, target, new, vertical)
+    }
+
+    /// Remove `id` from the tree, collapsing its parent split. Returns true when
+    /// the root itself was `id` (the tab became empty).
+    pub fn remove_pane(&mut self, id: PaneId) -> bool {
+        if let SplitNode::Pane(only) = &self.root {
+            if *only == id {
+                return true;
+            }
+        }
+        remove_in(&mut self.root, id);
+        false
+    }
+
+    /// Divider quads (DIVIDER_PX thick) between sibling splits, pane coordinates.
+    pub fn dividers(&self, area: Rect) -> Vec<Rect> {
+        let mut out = Vec::new();
+        self.divider_rects(&self.root, area, &mut out);
+        out
+    }
+
+    fn divider_rects(&self, node: &SplitNode, area: Rect, out: &mut Vec<Rect>) {
+        if let SplitNode::Split { first, second, ratio, vertical } = node {
+            let ratio = ratio.clamp(0.0, 1.0);
+            if *vertical {
+                let (top, _) = split_two(area.h, ratio);
+                out.push(Rect { x: area.x, y: area.y + top, w: area.w, h: DIVIDER_PX });
+                self.divider_rects(first, area, out);
+                self.divider_rects(second, area, out);
+            } else {
+                let (left, _) = split_two(area.w, ratio);
+                out.push(Rect { x: area.x + left, y: area.y, w: DIVIDER_PX, h: area.h });
+                self.divider_rects(first, area, out);
+                self.divider_rects(second, area, out);
+            }
+        }
     }
 }
 
@@ -167,6 +206,27 @@ fn split_in(node: &mut SplitNode, target: PaneId, new: PaneId, vertical: bool) -
         }
     }
 }
+
+/// Collapse the split whose child leaf is `id` by keeping the surviving sibling.
+fn remove_in(node: &mut SplitNode, id: PaneId) -> bool {
+    let SplitNode::Split { first, second, .. } = node else {
+        return false;
+    };
+    for (child, sibling) in [(first, second), (second, first)] {
+        if let SplitNode::Pane(x) = &**child {
+            if *x == id {
+                let sib = std::mem::replace(
+                    sibling,
+                    Box::new(SplitNode::Pane(PaneId(u64::MAX))),
+                );
+                *node = *sib;
+                return true;
+            }
+        }
+    }
+    remove_in(first, id)
+}
+
 
 /// Whole-window layout: ordered workspaces (sidebar top-to-bottom) + which is active.
 #[derive(Debug, Clone, Default)]

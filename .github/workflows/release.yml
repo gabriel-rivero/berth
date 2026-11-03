@@ -34,13 +34,16 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: musl prereqs (aarch64 cross toolchain)
+        # musl.cc is flaky from GitHub runners (curl timeouts); zig cc is a
+        # reliable drop-in cross linker for the musl target via cargo-zigbuild.
         if: matrix.target == 'aarch64-unknown-linux-musl'
         run: |
-          sudo mkdir -p /opt/musl-cross
-          curl -fsSL --retry 5 https://musl.cc/aarch64-linux-musl-cross.tgz |
-            sudo tar xz -C /opt/musl-cross
-          echo "/opt/musl-cross/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
+          pip3 install --quiet ziglang cargo-zigbuild
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: cargo build --release --target ${{ matrix.target }}
+        if: matrix.target != 'aarch64-unknown-linux-musl'
+      - run: cargo zigbuild --release --target ${{ matrix.target }}
+        if: matrix.target == 'aarch64-unknown-linux-musl'
       - name: package (unix)
         if: matrix.archive == 'tar.gz'
         run: |
