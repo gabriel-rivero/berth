@@ -19,7 +19,7 @@ jobs:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, archive: tar.gz }
           - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, archive: tar.gz }
           - { os: macos-14, target: aarch64-apple-darwin, archive: tar.gz }
-          - { os: macos-13, target: x86_64-apple-darwin, archive: tar.gz }
+          - { os: macos-15-intel, target: x86_64-apple-darwin, archive: tar.gz }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, archive: zip }
     runs-on: ${{ matrix.os }}
     steps:
@@ -30,9 +30,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.target }}
-      - name: musl prereqs
-        if: contains(matrix.target, 'musl')
+      - name: musl prereqs (x86_64)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: musl prereqs (aarch64 cross toolchain)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          sudo mkdir -p /opt/musl-cross
+          curl -fsSL --retry 5 https://musl.cc/aarch64-linux-musl-cross.tgz |
+            sudo tar xz -C /opt/musl-cross
+          echo "/opt/musl-cross/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
       - run: cargo build --release --target ${{ matrix.target }}
       - name: package (unix)
         if: matrix.archive == 'tar.gz'
