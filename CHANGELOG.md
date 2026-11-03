@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/gabriel-rivero/berth/compare/v0.1.1...v0.1.2) (2026-11-03)
+
+
+### Bug Fixes
+
+* **render:** baseline-relative glyph placement, visible cursor on empty cells, Space key handling ([ae09d83](https://github.com/gabriel-rivero/berth/commit/ae09d83fd4ec6d8768085166ba640a0fc1741dac))
+
 ## [0.1.1](https://github.com/gabriel-rivero/berth/compare/v0.1.0...v0.1.1) (2026-11-03)
 
 
