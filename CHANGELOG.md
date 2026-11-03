@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.0](https://github.com/gabriel-rivero/berth/compare/v0.7.0...v0.8.0) (2026-11-03)
+
+
+### Features
+
+* **ui:** ctrl+shift+q closes the active workspace ([4ec1bd7](https://github.com/gabriel-rivero/berth/commit/4ec1bd7e7a67fe59e4694b3d9b7f4d6535d9dacc))
+* **ui:** drag splitters to resize panes ([444975c](https://github.com/gabriel-rivero/berth/commit/444975c48b6bc9c2908d8cd7072831b6c06bba1c))
+
 ## [0.7.0](https://github.com/gabriel-rivero/berth/compare/v0.6.0...v0.7.0) (2026-11-03)
 
 
