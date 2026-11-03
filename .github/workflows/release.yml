@@ -44,7 +44,7 @@ jobs:
           New-Item -ItemType Directory -ErrorAction SilentlyContinue "$dir" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/berth.exe" "$dir/"
           Compress-Archive -Path "$dir" -DestinationPath "berth-${GITHUB_REF_NAME#v}-${{ matrix.target }}.zip"
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: berth-*${{ matrix.archive }}
           generate_release_notes: true
