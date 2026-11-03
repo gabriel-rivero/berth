@@ -150,10 +150,10 @@ impl Tab {
     /// Remove `id` from the tree, collapsing its parent split. Returns true when
     /// the root itself was `id` (the tab became empty).
     pub fn remove_pane(&mut self, id: PaneId) -> bool {
-        if let SplitNode::Pane(only) = &self.root {
-            if *only == id {
-                return true;
-            }
+        if let SplitNode::Pane(only) = &self.root
+            && *only == id
+        {
+            return true;
         }
         remove_in(&mut self.root, id);
         false
@@ -167,18 +167,66 @@ impl Tab {
     }
 
     fn divider_rects(&self, node: &SplitNode, area: Rect, out: &mut Vec<Rect>) {
-        if let SplitNode::Split { first, second, ratio, vertical } = node {
+        if let SplitNode::Split {
+            first,
+            second,
+            ratio,
+            vertical,
+        } = node
+        {
             let ratio = ratio.clamp(0.0, 1.0);
             if *vertical {
-                let (top, _) = split_two(area.h, ratio);
-                out.push(Rect { x: area.x, y: area.y + top, w: area.w, h: DIVIDER_PX });
-                self.divider_rects(first, area, out);
-                self.divider_rects(second, area, out);
+                let (top, bottom) = split_two(area.h, ratio);
+                out.push(Rect {
+                    x: area.x,
+                    y: area.y + top,
+                    w: area.w,
+                    h: DIVIDER_PX,
+                });
+                self.divider_rects(
+                    first,
+                    Rect {
+                        y: area.y,
+                        h: top,
+                        ..area
+                    },
+                    out,
+                );
+                self.divider_rects(
+                    second,
+                    Rect {
+                        y: area.y + top,
+                        h: bottom.saturating_sub(DIVIDER_PX),
+                        ..area
+                    },
+                    out,
+                );
             } else {
-                let (left, _) = split_two(area.w, ratio);
-                out.push(Rect { x: area.x + left, y: area.y, w: DIVIDER_PX, h: area.h });
-                self.divider_rects(first, area, out);
-                self.divider_rects(second, area, out);
+                let (left, right) = split_two(area.w, ratio);
+                out.push(Rect {
+                    x: area.x + left,
+                    y: area.y,
+                    w: DIVIDER_PX,
+                    h: area.h,
+                });
+                self.divider_rects(
+                    first,
+                    Rect {
+                        x: area.x,
+                        w: left,
+                        ..area
+                    },
+                    out,
+                );
+                self.divider_rects(
+                    second,
+                    Rect {
+                        x: area.x + left,
+                        w: right.saturating_sub(DIVIDER_PX),
+                        ..area
+                    },
+                    out,
+                );
             }
         }
     }
@@ -212,21 +260,22 @@ fn remove_in(node: &mut SplitNode, id: PaneId) -> bool {
     let SplitNode::Split { first, second, .. } = node else {
         return false;
     };
-    for (child, sibling) in [(first, second), (second, first)] {
-        if let SplitNode::Pane(x) = &**child {
-            if *x == id {
-                let sib = std::mem::replace(
-                    sibling,
-                    Box::new(SplitNode::Pane(PaneId(u64::MAX))),
-                );
-                *node = *sib;
-                return true;
-            }
-        }
+    if let SplitNode::Pane(x) = &**first
+        && *x == id
+    {
+        let sib = std::mem::replace(second, Box::new(SplitNode::Pane(PaneId(u64::MAX))));
+        *node = *sib;
+        return true;
     }
-    remove_in(first, id)
+    if let SplitNode::Pane(x) = &**second
+        && *x == id
+    {
+        let sib = std::mem::replace(first, Box::new(SplitNode::Pane(PaneId(u64::MAX))));
+        *node = *sib;
+        return true;
+    }
+    remove_in(first, id) || remove_in(second, id)
 }
-
 
 /// Whole-window layout: ordered workspaces (sidebar top-to-bottom) + which is active.
 #[derive(Debug, Clone, Default)]

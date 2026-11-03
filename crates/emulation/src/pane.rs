@@ -7,6 +7,7 @@ use alacritty_terminal::index::{Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::{Config as TermConfig, Term};
 use alacritty_terminal::vte::ansi::Processor;
+use berth_core::layout::PaneId;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -16,9 +17,9 @@ use std::sync::mpsc::{Receiver, channel};
 #[derive(Debug, Clone)]
 pub enum PaneEvent {
     /// PTY produced bytes: pump() pending and redraw.
-    Output,
+    Output(PaneId),
     /// child process exited (or the read side broke).
-    Closed,
+    Closed(PaneId),
 }
 
 /// Callback the pane uses to wake the UI event loop.
@@ -62,8 +63,9 @@ impl Dimensions for PaneSize {
 
 impl Pane {
     /// Spawn a pane running the default user shell at 80x24 cells; `notify` is called from the
-    /// reader thread whenever fresh output lands (call `pump()` afterwards).
-    pub fn spawn(cwd: Option<&str>, notify: Notifier) -> anyhow::Result<Self> {
+    /// reader thread whenever fresh output lands (call `pump()` afterwards). Pane ids come from
+    /// `Layout::alloc_pane_id` (global counter) and tag every emitted event.
+    pub fn spawn(id: PaneId, cwd: Option<&str>, notify: Notifier) -> anyhow::Result<Self> {
         let pty_system = native_pty_system();
 
         // NOTE: rows/cols/scrollback must stay in sync with `size` below.
@@ -103,18 +105,18 @@ impl Pane {
                         Ok(0) => {
                             // EOF sentinel: drain side treats empty vec as end-of-stream.
                             let _ = tx.send(Vec::new());
-                            notify(PaneEvent::Closed);
+                            notify(PaneEvent::Closed(id));
                             break;
                         }
                         Ok(n) => {
                             if tx.send(buf[..n].to_vec()).is_err() {
                                 break; // UI dropped the pane
                             }
-                            notify(PaneEvent::Output);
+                            notify(PaneEvent::Output(id));
                         }
                         Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                         Err(_) => {
-                            notify(PaneEvent::Closed);
+                            notify(PaneEvent::Closed(id));
                             break;
                         }
                     }

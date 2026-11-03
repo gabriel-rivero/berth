@@ -9,6 +9,7 @@ use alacritty_terminal::index::{Column, Point};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Term, point_to_viewport, viewport_to_point};
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
+use berth_core::layout::Rect;
 use bytemuck::{Pod, Zeroable};
 use fontdb::{Database, Family, Query, Stretch, Style, Weight};
 use std::collections::HashMap;
@@ -52,6 +53,7 @@ const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     a: 1.0,
 };
 const CURSOR_BG: [f32; 4] = [0.85, 0.85, 0.82, 1.0];
+const DIVIDER_COLOR: [f32; 4] = [0.25, 0.25, 0.28, 1.0];
 const FG_DEFAULT: [f32; 4] = [0.847, 0.847, 0.847, 1.0];
 const BG_DEFAULT: [f32; 4] = PANEL_BG;
 const DIM_FACTOR: f32 = 0.62;
@@ -668,8 +670,13 @@ impl Renderer {
         found
     }
 
-    /// Full frame from one visible pane grid: build quads, resolve, draw.
-    pub fn draw(&mut self, term: &Term<VoidListener>, window: &Window) -> anyhow::Result<()> {
+    /// Full frame: tile `panes` (term + rect) over the window and stroke `dividers`.
+    pub fn draw(
+        &mut self,
+        panes: &[(&Term<VoidListener>, Rect)],
+        dividers: &[Rect],
+        window: &Window,
+    ) -> anyhow::Result<()> {
         let phys = window.inner_size();
         let screen_w = phys.width as f32;
         let screen_h = phys.height as f32;
@@ -683,117 +690,34 @@ impl Renderer {
         );
 
         let metrics = self.font.metrics;
-        let pane = (0.0f32, 0.0f32); // pane covers the window (M1)
-        let cols = ((screen_w - pane.0) / metrics.cell_w).floor().max(1.0) as usize;
-        let rows = ((screen_h - pane.1) / metrics.cell_h).floor().max(1.0) as usize;
+        let pane_count = panes.len();
         dlog!(
-            "draw: screen={screen_w}x{screen_h} cell={0:.1}x{1:.1} grid={cols}x{rows}",
+            "draw: screen={screen_w}x{screen_h} cell={0:.1}x{1:.1} panes={pane_count}",
             metrics.cell_w,
             metrics.cell_h,
         );
         let quad_trace = std::env::var("BERTH_TRACE").ok().as_deref() == Some("1");
 
-        let content = term.renderable_content();
-        dlog!(
-            "term grid: {}x{} display_offset={}",
-            term.grid().columns(),
-            term.grid().screen_lines(),
-            content.display_offset
-        );
-        let mut dump_rows: Vec<String> = Vec::new();
-        let mut dump_cur: Option<(usize, String)> = None; // (row, chars)
         let mut sink = QuadSink::default();
-        let cursor = point_to_viewport(content.display_offset, content.cursor.point);
-        let (mut quads_bg, mut quads_glyph) = (0usize, 0usize);
-
-        // Row-major iteration over the visible viewport cells.
-        let mut cells = content.display_iter;
-        for idx in 0..(rows * cols) {
-            let Some(indexed) = cells.next() else { break };
-            let cell = indexed.cell;
-            let row = idx / cols;
-            let col = idx % cols;
-            let px = pane.0 + col as f32 * metrics.cell_w;
-            let py = pane.1 + row as f32 * metrics.cell_h;
-
-            // bg (respect selection tint).
-            let mut is_default_bg = cell.bg == Color::Named(NamedColor::Background);
-            let mut bg = color_of(cell.bg);
-            let selected = content
-                .selection
-                .as_ref()
-                .map(|sel| {
-                    let pt =
-                        viewport_to_point(content.display_offset, Point::new(row, Column(col)));
-                    sel.contains(pt)
-                })
-                .unwrap_or(false);
-            if selected {
-                bg = blend(bg);
-                is_default_bg = false;
-            }
-            if !is_default_bg {
-                sink.push(px, py, px + metrics.cell_w, py + metrics.cell_h, bg, None);
-                quads_bg += 1;
-            }
-            if std::env::var("BERTH_DUMP").ok().as_deref() == Some("1") {
-                match &mut dump_cur {
-                    Some((r, chars)) if *r == row => {}
-                    _ => {
-                        if let Some((r, chars)) = dump_cur.take() {
-                            dump_rows.push(format!("[{r:02}] |{chars}|"));
-                        }
-                        dump_cur = Some((row, String::new()));
-                    }
-                }
-                if let Some((_, chars)) = &mut dump_cur {
-                    chars.push(cell.c);
-                }
-            }
-
-            let c = cell.c;
-            // cursor: block drawn under the glyph (shown here in inverse). Must be
-            // handled before the empty-cell skip so the block shows on blank rows.
-            let mut fg = color_of(cell.fg);
-            if selected {
-                fg = blend(fg);
-            }
-            let on_cursor = cursor
-                .map(|vp| vp.line == row && vp.column.0 == col)
-                .unwrap_or(false);
-            if on_cursor {
-                sink.push(
-                    px,
-                    py,
-                    px + metrics.cell_w,
-                    py + metrics.cell_h,
-                    CURSOR_BG,
-                    None,
-                );
-            }
-            if c == ' ' || c == '\0' || cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                continue;
-            }
-            fg = if on_cursor { BG_DEFAULT } else { fg };
-
-            if let Some(g) = self.rasterize(c, &mut sink) {
-                // swash origin = (pen_x, baseline_y), y-up: the image's top edge
-                // sits `top` px above the baseline, `left` px right of the pen.
-                let gx = px + g.left as f32;
-                let gy = py + metrics.ascent - g.top as f32;
-                sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], fg, Some(g));
-                quads_glyph += 1;
-                if quad_trace && row < 4 {
-                    dlog!(
-                        "quad [{row},{col}] '{c}' gx={gx:.2} gy={gy:.2} gx2={:.2} gy2={:.2} tex={}",
-                        gx + g.uv[2],
-                        gy + g.uv[3],
-                        if g.color { 2u32 } else { 1u32 }
-                    );
-                }
-            } else if debug_enabled() {
-                dlog!("char '{}' (U+{:04X}) has no glyph quad", c, c as u32);
-            }
+        let mut uploads_pending = 0usize;
+        let mut quads_bg = 0usize;
+        let mut quads_glyph = 0usize;
+        for (term, rect) in panes {
+            let (n_g, n_b, n_u) = self.draw_term(term, *rect, metrics, quad_trace, &mut sink);
+            quads_glyph += n_g;
+            quads_bg += n_b;
+            uploads_pending += n_u;
+        }
+        let _ = uploads_pending; // uploads are queued inside push paths below
+        for d in dividers {
+            sink.push(
+                d.x as f32,
+                d.y as f32,
+                (d.x + d.w) as f32,
+                (d.y + d.h) as f32,
+                DIVIDER_COLOR,
+                None,
+            );
         }
 
         dlog!(
@@ -803,14 +727,6 @@ impl Renderer {
             sink.uploads.len(),
             sink.verts.len()
         );
-        if !dump_rows.is_empty() {
-            if let Some((r, chars)) = dump_cur.take() {
-                dump_rows.push(format!("[{r:02}] |{chars}|"));
-            }
-            for line in &dump_rows {
-                dlog!("{line}");
-            }
-        }
 
         // Upload newly rastered glyphs.
         for u in &sink.uploads {
@@ -952,6 +868,133 @@ impl Renderer {
         }
         self.queue.present(frame);
         Ok(())
+    }
+
+    /// Emit one visible pane grid into `sink` (translated by `rect`).
+    /// Returns (glyph_quads, bg_quads, unused-upload placer).
+    fn draw_term(
+        &mut self,
+        term: &Term<VoidListener>,
+        rect: Rect,
+        metrics: Metrics,
+        quad_trace: bool,
+        sink: &mut QuadSink,
+    ) -> (usize, usize, usize) {
+        let content = term.renderable_content();
+        dlog!(
+            "term grid: {}x{} display_offset={}",
+            term.grid().columns(),
+            term.grid().screen_lines(),
+            content.display_offset
+        );
+        let mut dump_rows: Vec<String> = Vec::new();
+        let mut dump_cur: Option<(usize, String)> = None; // (row, chars)
+        let cursor = point_to_viewport(content.display_offset, content.cursor.point);
+        let mut quads_bg = 0usize;
+        let mut quads_glyph = 0usize;
+
+        let cols = (rect.w as f32 / metrics.cell_w).floor().max(1.0) as usize;
+        let rows = (rect.h as f32 / metrics.cell_h).floor().max(1.0) as usize;
+
+        // Row-major iteration over the visible viewport cells.
+        let mut cells = content.display_iter;
+        for idx in 0..(rows * cols) {
+            let Some(indexed) = cells.next() else { break };
+            let cell = indexed.cell;
+            let row = idx / cols;
+            let col = idx % cols;
+            let px = rect.x as f32 + col as f32 * metrics.cell_w;
+            let py = rect.y as f32 + row as f32 * metrics.cell_h;
+
+            // bg (respect selection tint).
+            let mut is_default_bg = cell.bg == Color::Named(NamedColor::Background);
+            let mut bg = color_of(cell.bg);
+            let selected = content
+                .selection
+                .as_ref()
+                .map(|sel| {
+                    let pt =
+                        viewport_to_point(content.display_offset, Point::new(row, Column(col)));
+                    sel.contains(pt)
+                })
+                .unwrap_or(false);
+            if selected {
+                bg = blend(bg);
+                is_default_bg = false;
+            }
+            if !is_default_bg {
+                sink.push(px, py, px + metrics.cell_w, py + metrics.cell_h, bg, None);
+                quads_bg += 1;
+            }
+            if std::env::var("BERTH_DUMP").ok().as_deref() == Some("1") {
+                match &mut dump_cur {
+                    Some((r, chars)) if *r == row => {}
+                    _ => {
+                        if let Some((r, chars)) = dump_cur.take() {
+                            dump_rows.push(format!("[{r:02}] |{chars}|"));
+                        }
+                        dump_cur = Some((row, String::new()));
+                    }
+                }
+                if let Some((_, chars)) = &mut dump_cur {
+                    chars.push(cell.c);
+                }
+            }
+
+            let c = cell.c;
+            // cursor: block drawn under the glyph (shown here in inverse). Must be
+            // handled before the empty-cell skip so the block shows on blank rows.
+            let mut fg = color_of(cell.fg);
+            if selected {
+                fg = blend(fg);
+            }
+            let on_cursor = cursor
+                .map(|vp| vp.line == row && vp.column.0 == col)
+                .unwrap_or(false);
+            if on_cursor {
+                sink.push(
+                    px,
+                    py,
+                    px + metrics.cell_w,
+                    py + metrics.cell_h,
+                    CURSOR_BG,
+                    None,
+                );
+            }
+            if c == ' ' || c == '\0' || cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                continue;
+            }
+            fg = if on_cursor { BG_DEFAULT } else { fg };
+
+            if let Some(g) = self.rasterize(c, sink) {
+                // swash origin = (pen_x, baseline_y), y-up: the image's top edge
+                // sits `top` px above the baseline, `left` px right of the pen.
+                let gx = px + g.left as f32;
+                let gy = py + metrics.ascent - g.top as f32;
+                sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], fg, Some(g));
+                quads_glyph += 1;
+                if quad_trace && row < 4 {
+                    dlog!(
+                        "quad [{row},{col}] '{c}' gx={gx:.2} gy={gy:.2} gx2={:.2} gy2={:.2} tex={}",
+                        gx + g.uv[2],
+                        gy + g.uv[3],
+                        if g.color { 2u32 } else { 1u32 }
+                    );
+                }
+            } else if debug_enabled() {
+                dlog!("char '{}' (U+{:04X}) has no glyph quad", c, c as u32);
+            }
+        }
+
+        if !dump_rows.is_empty() {
+            if let Some((r, chars)) = dump_cur.take() {
+                dump_rows.push(format!("[{r:02}] |{chars}|"));
+            }
+            for line in &dump_rows {
+                dlog!("{line}");
+            }
+        }
+        (quads_glyph, quads_bg, sink.uploads.len())
     }
 }
 
