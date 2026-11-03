@@ -157,6 +157,12 @@ impl Pane {
         matches!(self.child.try_wait(), Ok(None))
     }
 
+    /// Kill the child shell; the reader thread sees EOF and emits Closed afterwards
+    /// (tree cleanup happens on the UI side when that event lands).
+    pub fn kill(&mut self) {
+        let _ = self.child.kill();
+    }
+
     /// Shift the visible viewport (negative lines scroll up into scrollback on some terms;
     /// alacritty: positive Delta scrolls the display up, revealing earlier output).
     pub fn scroll_display(&mut self, scroll: Scroll) {

@@ -51,14 +51,15 @@ pub struct Workspace {
 }
 
 impl Tab {
-    pub fn new(id: TabId, cwd: Option<String>) -> Self {
-        let root = SplitNode::Pane(PaneId(id.0));
+    /// New tab whose single root pane is `root_pane` (ids are allocated by the caller:
+    /// TabId/PaneId spaces are independent, so `PaneId(id.0)` would collide with split panes).
+    pub fn new(id: TabId, root_pane: PaneId, cwd: Option<String>) -> Self {
         Self {
             id,
             label: "shell".to_string(),
             cwd,
-            focused: PaneId(id.0),
-            root,
+            focused: root_pane,
+            root: SplitNode::Pane(root_pane),
         }
     }
 
@@ -315,12 +316,23 @@ impl Layout {
         PaneId(max + 1)
     }
 
+    /// Next free tab id across the whole layout (panes draw from a separate id space).
+    pub fn alloc_tab_id(&self) -> TabId {
+        let mut max = 0;
+        for ws in &self.workspaces {
+            for tab in &ws.tabs {
+                max = max.max(tab.id.0);
+            }
+        }
+        TabId(max + 1)
+    }
+
     pub fn with_defaults(label: impl Into<String>) -> Self {
         Self {
             workspaces: vec![Workspace {
                 id: WorkspaceId(0),
                 label: label.into(),
-                tabs: vec![Tab::new(TabId(0), None)],
+                tabs: vec![Tab::new(TabId(0), PaneId(0), None)],
                 focused_tab: TabId(0),
             }],
         }
@@ -334,5 +346,35 @@ impl Workspace {
 
     pub fn focused_tab_mut(&mut self) -> Option<&mut Tab> {
         self.tabs.iter_mut().find(|t| t.id == self.focused_tab)
+    }
+
+    /// Move focus `delta` tabs with wrap-around; returns the new focused tab id.
+    pub fn cycle_tab(&mut self, delta: isize) -> Option<TabId> {
+        if self.tabs.is_empty() {
+            return None;
+        }
+        let len = self.tabs.len() as isize;
+        let pos = self
+            .tabs
+            .iter()
+            .position(|t| t.id == self.focused_tab)
+            .unwrap_or(0) as isize;
+        let next = self.tabs[(pos + delta).rem_euclid(len) as usize].id;
+        self.focused_tab = next;
+        Some(next)
+    }
+
+    /// Drop a tab (its panes are usually already dead); focus moves to the last
+    /// remaining tab. Returns true when removed. If none remain the focused_tab
+    /// id is left stale — callers treat an empty workspace as "exit".
+    pub fn remove_tab(&mut self, id: TabId) -> bool {
+        let Some(pos) = self.tabs.iter().position(|t| t.id == id) else {
+            return false;
+        };
+        self.tabs.remove(pos);
+        if self.focused_tab == id {
+            self.focused_tab = self.tabs.last().map_or(id, |t| t.id);
+        }
+        true
     }
 }

@@ -2,7 +2,7 @@
 //! M2: multi-pane — the layout tree (`berth-core::Layout`) decides geometry; live `Pane`s
 //! are keyed by PaneId. Renderer draws every pane at its rect; dividers between splits.
 use berth_core::config::Config;
-use berth_core::layout::{Layout, PaneId, Rect};
+use berth_core::layout::{Layout, PaneId, Rect, Tab};
 use berth_emulation::pane::{Pane, PaneEvent, TermPoint};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -215,6 +215,56 @@ impl Berth {
         self.sync_size();
     }
 
+    /// Spawn a fresh shell tab in the active workspace and focus it.
+    fn new_tab(&mut self) {
+        let (cell_w, cell_h) = self.cell_metrics();
+        if cell_w <= 0.0 || cell_h <= 0.0 {
+            return;
+        }
+        let tab_id = self.layout.alloc_tab_id();
+        let pane_id = self.layout.alloc_pane_id();
+        {
+            let Some(ws) = self.layout.active_workspace_mut() else {
+                return;
+            };
+            ws.tabs.push(Tab::new(tab_id, pane_id, None));
+            ws.focused_tab = tab_id;
+        }
+        if self.spawn_pane(pane_id, None) {
+            self.focused_pane = pane_id;
+            self.sync_size();
+        } else {
+            // keep the tree consistent when the shell could not start
+            if let Some(ws) = self.layout.active_workspace_mut() {
+                ws.remove_tab(tab_id);
+            }
+        }
+    }
+
+    /// Switch tabs with wrap-around; each tab's panes resize when focused.
+    fn cycle_tab(&mut self, delta: isize) {
+        if self
+            .layout
+            .active_workspace_mut()
+            .and_then(|ws| ws.cycle_tab(delta))
+            .is_none()
+        {
+            return;
+        }
+        if let Some(tab) = self.layout.active_tab() {
+            self.focused_pane = tab.focused;
+        }
+        self.sync_size();
+    }
+
+    /// Kill the focused pane's shell; the Closed event does tree cleanup.
+    fn close_focused_pane(&mut self) {
+        if let Some(pane) = self.panes.get(&self.focused_pane) {
+            dlog_app!("close pane {:?}", self.focused_pane);
+            pane.lock().expect("pane poisoned").kill();
+        }
+    }
+
     fn set_clipboard(&mut self, text: String) {
         if let Some(cb) = &mut self.clipboard {
             let _ = cb.set_text(text);
@@ -272,6 +322,25 @@ impl Berth {
         // Layout-independent: Shift+Backslash types '"' on US layouts, so bind by code.
         if ctrl && shift && event.physical_key == PhysicalKey::Code(KeyCode::Backslash) {
             self.split_focused(false);
+            return;
+        }
+        // Tab cycling: ctrl+tab next, ctrl+shift+tab prev (Firefox/konsole style).
+        if event.logical_key == Key::Named(NamedKey::Tab) {
+            if ctrl && shift {
+                self.cycle_tab(-1);
+            } else if ctrl {
+                self.cycle_tab(1);
+            }
+            return;
+        }
+        // ctrl+shift+n new tab, ctrl+shift+w close focused pane (shell dies -> Closed
+        // event -> tree cleanup; closing the last tab's root exits).
+        if ctrl && shift && event.physical_key == PhysicalKey::Code(KeyCode::KeyN) {
+            self.new_tab();
+            return;
+        }
+        if ctrl && shift && event.physical_key == PhysicalKey::Code(KeyCode::KeyW) {
+            self.close_focused_pane();
             return;
         }
 
@@ -433,13 +502,25 @@ impl ApplicationHandler<PaneEvent> for Berth {
             }
             PaneEvent::Closed(id) => {
                 let _ = self.panes.remove(&id);
+                // Empty tab -> drop the tab; empty workspace -> exit (M2 has a single
+                // workspace; when the sidebar lands this becomes "leave workspace").
+                let mut empty_tab = None;
                 if let Some(tab) = self.layout.active_tab_mut()
                     && tab.remove_pane(id)
                 {
-                    // last pane in the tab gone
-                    self.panes.clear();
-                    self.layout = Layout::default();
-                    event_loop.exit();
+                    empty_tab = Some(tab.id);
+                }
+                if let Some(tab_id) = empty_tab {
+                    if let Some(ws) = self.layout.active_workspace_mut() {
+                        ws.remove_tab(tab_id);
+                        if ws.tabs.is_empty() {
+                            self.panes.clear();
+                            self.layout = Layout::default();
+                            event_loop.exit();
+                            return;
+                        }
+                    }
+                    self.sync_size();
                     return;
                 }
                 if let Some(tab) = self.layout.active_tab()
