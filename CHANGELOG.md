@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/gabriel-rivero/berth/compare/v0.10.0...v0.11.0) (2026-11-03)
+
+
+### Features
+
+* **ui:** hot-reload config.toml (mtime poll, live font swap) ([9c86e60](https://github.com/gabriel-rivero/berth/commit/9c86e60e0f4f5875e77bc1a07e6c8c4daa4bf54b))
+
 ## [0.10.0](https://github.com/gabriel-rivero/berth/compare/v0.9.0...v0.10.0) (2026-11-03)
 
 
