@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/gabriel-rivero/berth/compare/v0.15.0...v0.16.0) (2026-11-03)
+
+
+### Features
+
+* **ui:** quit-confirm guard when closing with live shells ([803aa3b](https://github.com/gabriel-rivero/berth/commit/803aa3b28ed521998e19973412c830fbed0569c2))
+
 ## [0.15.0](https://github.com/gabriel-rivero/berth/compare/v0.14.0...v0.15.0) (2026-11-03)
 
 
