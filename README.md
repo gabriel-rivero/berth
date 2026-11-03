@@ -52,12 +52,28 @@ v0.11.0 — M1 done, M2 done except polish, M3 mostly done, M4 not started.
 | copy / paste selection | `ctrl+shift+c` / `ctrl+v` |
 | scroll | mouse wheel, `shift+PgUp` / `shift+PgDn` |
 
+Every chord above is user-overridable in `config.toml`:
+
+```toml
+[keybinds]
+"new-tab"   = ["ctrl+shift+t"]   # replaces the ctrl+shift+n default
+"copy"      = ["ctrl+shift+c", "cmd+c"]   # super-chords are reserved (no-op) for now
+```
+
+Action ids: `split-vertical`, `split-horizontal`, `new-tab`, `close-pane`,
+`close-tab`, `next-tab`, `prev-tab`, `new-workspace`, `close-workspace`,
+`next-workspace`, `prev-workspace`, `copy`, `paste`, `scroll-page-up`,
+`scroll-page-down`. Chord syntax is `ctrl`/`shift`/`alt` + key (`enter`,
+`tab`, `backslash`, `left/right/up/down`, `pageup/pagedown`, `home`, `end`,
+`insert`, `delete`, `escape`, `space`, `f1..f12`, or any digit/letter).
+Unknown actions or unparseable chords are reported on stderr at load.
+Changes hot-reload like the rest of the config.
+
 ### Remaining
 
-- config: user keybind config (currently compiled in)
 - sidebar: workspace/tab rename, drag tabs between workspaces, drag tabs between panes
 - polish: no window-title-based quit guard, no close-confirmation, scrolling
-  selection interplay; emoji/wide-glyph fallback fonts
+  selection interplay; wide-glyph spacing beyond the fallback chain
 - platform: keep ConPTY path honest on Windows (CI compiles but manual QA pending)
 - **M4** — plugin host (`crates/plugins`), capability-gated WASM ABI,
   example plugins

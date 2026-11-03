@@ -1,5 +1,6 @@
 //! User config: single TOML file, hot-reloadable. Loaded from `$XDG_CONFIG_HOME/berth/config.toml`
 //! (and equivalents per OS via `directories`). Defaults applied via `#[serde(default)]`.
+use crate::keybinds::Keybinds;
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -10,6 +11,8 @@ pub struct Config {
     pub font: Font,
     /// Sidebar options (width, position is left-only for now by design).
     pub sidebar: Sidebar,
+    /// Raw `action -> chords` table (compiled into bindings by the ui layer).
+    pub keybinds: Keybinds,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -2,6 +2,7 @@
 //! M3: workspaces + sidebar — the layout tree (`berth-core::Layout`) decides geometry; live
 //! `Pane`s are keyed by PaneId. Sidebar lists workspaces; tab strip + panes tile beside it.
 use berth_core::config::Config;
+use berth_core::keybinds::{Action, Chord, build_bindings};
 use berth_core::layout::{Layout, PaneId, Rect, Tab, Workspace, WorkspaceId};
 use berth_emulation::pane::{Pane, PaneEvent, TermPoint};
 use std::collections::HashMap;
@@ -65,6 +66,8 @@ pub struct Berth {
     focused_pane: PaneId,
     /// OSC title per pane (empty until the shell sets one; falls back to tab label).
     titles: HashMap<PaneId, String>,
+    /// Compiled keybind table (chord -> action); rebuilt on config reload.
+    bindings: HashMap<Chord, Action>,
 }
 
 /// Where the last mouse press landed — used for double-click-to-create.
@@ -559,62 +562,21 @@ impl Berth {
     }
 
     /// Keys that act before the PTY. Returns true if consumed => encode_key skips it.
+    /// Chord handling is table-driven (config [keybinds] -> berth_core::keybinds);
+    /// alt+arrows pane focus stays hardcoded (it is not a user-facing action set).
     fn handle_chord(&mut self, event: &KeyEvent, mods: ModifiersState) -> bool {
         let ctrl = mods.control_key();
         let shift = mods.shift_key();
+        let alt = mods.alt_key();
 
-        // Splits run prior to any pane access; fall through otherwise.
         let named = event.logical_key.clone();
         dlog_app!(
-            "chord: logical={named:?} ctrl={ctrl} shift={shift} alt={} super={}",
-            mods.alt_key(),
+            "chord: logical={named:?} ctrl={ctrl} shift={shift} alt={alt} super={}",
             mods.super_key()
         );
-        if ctrl && shift && named == Key::Named(NamedKey::Enter) {
-            self.split_focused(true);
-            return true;
-        }
-        // Layout-independent: Shift+Backslash types '"' on US layouts, so bind by code.
-        if ctrl && shift && event.physical_key == PhysicalKey::Code(KeyCode::Backslash) {
-            self.split_focused(false);
-            return true;
-        }
-        // Workspace cycling: ctrl+alt+arrow next/prev in sidebar order.
-        if ctrl && mods.alt_key() {
-            let delta = match named {
-                Key::Named(NamedKey::ArrowLeft) => Some(-1),
-                Key::Named(NamedKey::ArrowRight) => Some(1),
-                _ => None,
-            };
-            if let Some(delta) = delta {
-                dlog_app!("ws-chord delta={delta}");
-                self.cycle_workspace(delta);
-                return true;
-            }
-        }
-        // Tab cycling: ctrl+tab next, ctrl+shift+tab prev (Firefox/konsole style).
-        if event.logical_key == Key::Named(NamedKey::Tab) {
-            if ctrl && shift {
-                self.cycle_tab(-1);
-            } else if ctrl {
-                self.cycle_tab(1);
-            }
-            return true;
-        }
-        // ctrl+shift+o: new workspace (one shell tab), focus it.
-        if ctrl && shift && event.physical_key == PhysicalKey::Code(KeyCode::KeyO) {
-            dlog_app!("chord: new workspace");
-            self.new_workspace();
-            return true;
-        }
-        // ctrl+shift+w close focused pane (shell dies -> Closed
-        // event -> tree cleanup; closing the last tab's root exits).
-        if ctrl && shift && event.physical_key == PhysicalKey::Code(KeyCode::KeyN) {
-            self.new_tab();
-            return true;
-        }
-        // alt+arrows move pane focus within the tab (up/down/left/right).
-        if mods.alt_key() {
+
+        // alt+arrows move pane focus within the tab (before table lookup).
+        if alt {
             use berth_core::layout::FocusDir;
             let dir = match named {
                 Key::Named(NamedKey::ArrowUp) => Some(FocusDir::Up),
@@ -624,7 +586,6 @@ impl Berth {
                 _ => None,
             };
             if let Some(dir) = dir {
-                dlog_app!("alt-chord dir={dir:?}");
                 if let Some(next) = self.layout.active_tab().and_then(|t| t.neighbor_pane(dir)) {
                     dlog_app!("alt-chord neighbor={next:?}");
                     self.focus_pane(next);
@@ -632,56 +593,144 @@ impl Berth {
                 return true;
             }
         }
-        if ctrl && shift && event.physical_key == PhysicalKey::Code(KeyCode::KeyW) {
-            self.close_focused_pane();
-            return true;
-        }
-        // ctrl+shift+q: close the whole active workspace (all panes killed;
-        // when the last workspace empties the app exits — the Closed handler
-        // owns the cascade).
-        if ctrl && shift && event.physical_key == PhysicalKey::Code(KeyCode::KeyQ) {
-            dlog_app!("chord: close workspace");
-            self.close_workspace();
-            return true;
-        }
 
-        let Some(pane) = self.panes.get(&self.focused_pane).cloned() else {
-            return false;
-        };
-
-        let chr = match &event.logical_key {
-            Key::Character(t) => t.as_str().to_ascii_lowercase(),
-            _ => return false,
-        };
-
-        // Ctrl+Shift+C / Ctrl+Shift+V terminal-style copy & paste.
-        if ctrl && shift && chr == "c" {
-            let text = pane.lock().expect("pane poisoned").selection_text();
-            if let Some(text) = text {
-                self.set_clipboard(text);
+        // Table lookup: normalize this key event to a chord key name.
+        if let Some(key_name) = chord_key_name(event) {
+            let chord = Chord {
+                ctrl,
+                shift,
+                alt,
+                key: key_name,
+            };
+            if let Some(action) = self.bindings.get(&chord).copied() {
+                dlog_app!("chord matched {:?}: {action:?}", chord);
+                return self.run_action(action);
             }
-            return true;
         }
-        if ctrl && chr == "v" {
-            if let Some(text) = self.get_clipboard() {
-                let _ = pane.lock().expect("pane poisoned").write(text.as_bytes());
-            }
-            return true;
-        }
+        false
+    }
 
-        // Shift+PgUp/PgDn scroll (encoded PgUp/PgDn stays for the shell).
-        let scroll = if shift && event.logical_key == Key::Named(NamedKey::PageUp) {
-            alacritty_terminal::grid::Scroll::PageUp
-        } else if shift && event.logical_key == Key::Named(NamedKey::PageDown) {
-            alacritty_terminal::grid::Scroll::PageDown
-        } else {
-            return false;
-        };
-        pane.lock().expect("pane poisoned").scroll_display(scroll);
-        if let Some(w) = &self.window {
-            w.request_redraw();
+    /// Execute a configured action; true = consumed.
+    fn run_action(&mut self, action: Action) -> bool {
+        match action {
+            Action::SplitVertical => {
+                self.split_focused(true);
+                true
+            }
+            Action::SplitHorizontal => {
+                self.split_focused(false);
+                true
+            }
+            Action::NewTab => {
+                self.new_tab();
+                true
+            }
+            Action::ClosePane => {
+                self.close_focused_pane();
+                true
+            }
+            Action::CloseTab => {
+                dlog_app!("action close-tab: click-only keybind ignored");
+                false
+            }
+            Action::NextTab => {
+                self.cycle_tab(1);
+                true
+            }
+            Action::PrevTab => {
+                self.cycle_tab(-1);
+                true
+            }
+            Action::NewWorkspace => {
+                self.new_workspace();
+                true
+            }
+            Action::CloseWorkspace => {
+                self.close_workspace();
+                true
+            }
+            Action::NextWorkspace => {
+                self.cycle_workspace(1);
+                true
+            }
+            Action::PrevWorkspace => {
+                self.cycle_workspace(-1);
+                true
+            }
+            Action::Copy => {
+                let text = self
+                    .panes
+                    .get(&self.focused_pane)
+                    .and_then(|p| p.lock().expect("pane poisoned").selection_text());
+                if let Some(text) = text {
+                    self.set_clipboard(text);
+                }
+                true
+            }
+            Action::Paste => {
+                if let (Some(text), Some(pane)) =
+                    (self.get_clipboard(), self.panes.get(&self.focused_pane))
+                {
+                    let _ = pane.lock().expect("pane poisoned").write(text.as_bytes());
+                }
+                true
+            }
+            Action::ScrollPageUp | Action::ScrollPageDown => {
+                let scroll = if action == Action::ScrollPageUp {
+                    alacritty_terminal::grid::Scroll::PageUp
+                } else {
+                    alacritty_terminal::grid::Scroll::PageDown
+                };
+                if let Some(pane) = self.panes.get(&self.focused_pane) {
+                    pane.lock().expect("pane poisoned").scroll_display(scroll);
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                }
+                true
+            }
         }
-        true
+    }
+}
+
+/// Normalize a key event to the chord key-name space used in [keybinds]
+/// (lowercase word for specials, single lowercase char for text keys).
+fn chord_key_name(event: &KeyEvent) -> Option<String> {
+    // Physical backslash: shift turns '"' on US layouts, but the chord is the key.
+    if event.physical_key == PhysicalKey::Code(KeyCode::Backslash) {
+        return Some("backslash".to_string());
+    }
+    match &event.logical_key {
+        Key::Character(t) => {
+            let l = t.to_lowercase();
+            if l.chars().count() == 1 {
+                Some(l)
+            } else {
+                None
+            }
+        }
+        Key::Named(n) => Some(
+            match n {
+                NamedKey::Enter => "enter",
+                NamedKey::Tab => "tab",
+                NamedKey::Space => "space",
+                NamedKey::Escape => "escape",
+                NamedKey::Backspace => "backspace",
+                NamedKey::ArrowUp => "up",
+                NamedKey::ArrowDown => "down",
+                NamedKey::ArrowLeft => "left",
+                NamedKey::ArrowRight => "right",
+                NamedKey::PageUp => "pageup",
+                NamedKey::PageDown => "pagedown",
+                NamedKey::Home => "home",
+                NamedKey::End => "end",
+                NamedKey::Insert => "insert",
+                NamedKey::Delete => "delete",
+                _ => return None,
+            }
+            .to_string(),
+        ),
+        _ => None,
     }
 }
 
@@ -1089,6 +1138,11 @@ impl Berth {
         let font_changed = cfg.font.family != self.config.font.family
             || cfg.font.size_pt != self.config.font.size_pt;
         self.config = cfg;
+        let (bindings, warns) = build_bindings(&self.config.keybinds.0);
+        self.bindings = bindings;
+        for (id, reason) in &warns {
+            eprintln!("berth config: keybind '{id}': '{reason}'");
+        }
         dlog_app!(
             "config reload: sidebar={} width={} font=\"{}\" pt={}",
             self.config.sidebar.show,
@@ -1117,6 +1171,10 @@ pub fn run() -> anyhow::Result<()> {
     let config = Config::load()?;
     let layout = Layout::with_defaults("main");
     let focused_pane = layout.active_tab().map(|t| t.focused).unwrap_or(PaneId(0));
+    let (bindings, binds_warns) = build_bindings(&config.keybinds.0);
+    for (id, reason) in &binds_warns {
+        eprintln!("berth config: keybind '{id}': '{reason}'");
+    }
 
     let event_loop = EventLoop::<PaneEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
@@ -1136,6 +1194,7 @@ pub fn run() -> anyhow::Result<()> {
         last_click: None,
         focused_pane,
         titles: HashMap::new(),
+        bindings,
         config_mtime: Config::path()
             .and_then(|p| std::fs::metadata(&p).ok())
             .and_then(|m| m.modified().ok()),
