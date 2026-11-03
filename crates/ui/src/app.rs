@@ -401,6 +401,24 @@ impl Berth {
         }
     }
 
+    /// Kill every pane in the active workspace; the Closed events walk the tree
+    /// through the normal cleanup path (tab -> workspace -> exit when all gone).
+    fn close_workspace(&mut self) {
+        let Some(ws) = self.layout.active_workspace() else {
+            return;
+        };
+        let mut ids: Vec<PaneId> = Vec::new();
+        for tab in &ws.tabs {
+            ids.extend(tab.pane_ids_in_order());
+        }
+        dlog_app!("close workspace {:?} panes={ids:?}", ws.id);
+        for id in ids {
+            if let Some(pane) = self.panes.get(&id) {
+                pane.lock().expect("pane poisoned").kill();
+            }
+        }
+    }
+
     fn set_clipboard(&mut self, text: String) {
         if let Some(cb) = &mut self.clipboard {
             let _ = cb.set_text(text);
@@ -515,6 +533,14 @@ impl Berth {
         }
         if ctrl && shift && event.physical_key == PhysicalKey::Code(KeyCode::KeyW) {
             self.close_focused_pane();
+            return true;
+        }
+        // ctrl+shift+q: close the whole active workspace (all panes killed;
+        // when the last workspace empties the app exits — the Closed handler
+        // owns the cascade).
+        if ctrl && shift && event.physical_key == PhysicalKey::Code(KeyCode::KeyQ) {
+            dlog_app!("chord: close workspace");
+            self.close_workspace();
             return true;
         }
 
