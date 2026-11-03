@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.15.0](https://github.com/gabriel-rivero/berth/compare/v0.14.0...v0.15.0) (2026-11-03)
+
+
+### Features
+
+* **keybinds:** iTerm2-style cmd chords; fix pane colors + close buttons ([43d9198](https://github.com/gabriel-rivero/berth/commit/43d91986413ea3ce51862494be96f5780398302e))
+* **keybinds:** user-configurable keybinds in config.toml ([358ba25](https://github.com/gabriel-rivero/berth/commit/358ba25840075b4c7d413a73dfa7abcb0640d71a))
+* M1 single-pane terminal — PTY emulation, wgpu glyph renderer, input/selection/scrollback ([e9a5052](https://github.com/gabriel-rivero/berth/commit/e9a505229069c075505cd29bcba001e3e81dba86))
+* **panes:** multi-pane splits wired to the layout tree ([513dfb3](https://github.com/gabriel-rivero/berth/commit/513dfb3520294e88535b7ead05ea19a004db6564))
+* **ui:** alt+arrow pane focus navigation + fix intercepted chords leaking to PTY ([6102ea8](https://github.com/gabriel-rivero/berth/commit/6102ea86110cfe68bdc904bc7fb9e79b11477595))
+* **ui:** ctrl+shift+q closes the active workspace ([4ec1bd7](https://github.com/gabriel-rivero/berth/commit/4ec1bd7e7a67fe59e4694b3d9b7f4d6535d9dacc))
+* **ui:** drag splitters to resize panes ([444975c](https://github.com/gabriel-rivero/berth/commit/444975c48b6bc9c2908d8cd7072831b6c06bba1c))
+* **ui:** emoji/symbol fallback font chain + user font dir ([8055407](https://github.com/gabriel-rivero/berth/commit/8055407cbcf614c777ea9882497a6607f615f561))
+* **ui:** hot-reload config.toml (mtime poll, live font swap) ([9c86e60](https://github.com/gabriel-rivero/berth/commit/9c86e60e0f4f5875e77bc1a07e6c8c4daa4bf54b))
+* **ui:** left sidebar with workspace switching ([a3c0e88](https://github.com/gabriel-rivero/berth/commit/a3c0e88e274a16b4ea8b22b451a24cdc0e047495))
+* **ui:** OSC window titles ([bf89f37](https://github.com/gabriel-rivero/berth/commit/bf89f37d4563f9a19140ab8b2afba5315d5d433f))
+* **ui:** rename workspaces from the sidebar ([65ad147](https://github.com/gabriel-rivero/berth/commit/65ad1474466fb8d7273e253b4ced21291176782f))
+* **ui:** sidebar drag-resize + double-click to create tabs/workspaces ([bf09c12](https://github.com/gabriel-rivero/berth/commit/bf09c1228f30ac270d911713553d533e1623f541))
+* **ui:** tab management — new tab, close pane, ctrl+tab cycling ([2aae6a5](https://github.com/gabriel-rivero/berth/commit/2aae6a5fedf1ad58352793cc7003e7929ef05eda))
+* **ui:** tab/workspace close buttons, resize cursor affordance, macOS font fix ([08fa4f9](https://github.com/gabriel-rivero/berth/commit/08fa4f95d09fe8b540e92261a3caf0d5e752170d))
+* **ui:** visible tab strip with click-to-focus ([072f2e2](https://github.com/gabriel-rivero/berth/commit/072f2e271386627690849060526cad0b6c1f83cb))
+
+
+### Bug Fixes
+
+* build against alacritty_terminal 0.26 / portable-pty 0.9 / wgpu 30; add release-please + release builds + dependabot ([bc174f0](https://github.com/gabriel-rivero/berth/commit/bc174f0bdda6322a0eaaffde017986d800c0f049))
+* **ci:** aarch64 musl release via cargo-zigbuild (musl.cc is flaky from runners) ([93801a3](https://github.com/gabriel-rivero/berth/commit/93801a30e974a50f7313d280776c879ec9f4135d))
+* **ci:** aarch64-musl cross toolchain + Intel mac runner image ([d3e90c4](https://github.com/gabriel-rivero/berth/commit/d3e90c4ae80aedf6a34cad435e5aba2272daeef6))
+* **ci:** release-please for cargo workspace (simple type + generic version updater) ([96fdd4f](https://github.com/gabriel-rivero/berth/commit/96fdd4f2ac4047a5d1c25e2a0e0175bf011c8088))
+* **pty:** configurable backspace byte — [terminal] backspace = "del" | "bs" ([033cee5](https://github.com/gabriel-rivero/berth/commit/033cee5fc8f323307994a05f9b8e12e1da25d60d))
+* **render:** baseline-relative glyph placement, visible cursor on empty cells, Space key handling ([ae09d83](https://github.com/gabriel-rivero/berth/commit/ae09d83fd4ec6d8768085166ba640a0fc1741dac))
+* **render:** respect fontdb face index + add BERTH_DEBUG=1 render diagnostics ([9b0e436](https://github.com/gabriel-rivero/berth/commit/9b0e436c28fc500738002f8d0b7f822c44afaba9))
+
+
+### Documentation
+
+* README reflects v0.8.0 state, keybind table, remaining roadmap ([0e5891a](https://github.com/gabriel-rivero/berth/commit/0e5891acea8682695aef0fa8f6780b5dd97d375f))
+
 ## [0.14.0](https://github.com/gabriel-rivero/berth/compare/v0.13.0...v0.14.0) (2026-11-03)
 
 
