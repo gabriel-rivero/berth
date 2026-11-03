@@ -64,19 +64,50 @@ const ATLAS_H: u32 = 2048;
 pub const TAB_BAR_H: f32 = 28.0;
 const TAB_WIDTH: f32 = 140.0;
 
+/// Sidebar geometry: full-height column on the left; entries start below a
+/// header strip that aligns with the tab bar.
+pub const SIDEBAR_ENTRY_H: f32 = 32.0;
+const SIDEBAR_TOP: f32 = TAB_BAR_H;
+const SIDEBAR_PAD: f32 = 12.0;
+
 const BAR_BG: [f32; 4] = [0.03, 0.03, 0.04, 1.0];
 const TAB_BG: [f32; 4] = [0.09, 0.09, 0.1, 1.0];
 const TAB_ACTIVE_BG: [f32; 4] = [0.14, 0.14, 0.16, 1.0];
 const TAB_TEXT: [f32; 4] = [0.65, 0.65, 0.68, 1.0];
 const TAB_TEXT_ACTIVE: [f32; 4] = [0.95, 0.95, 0.95, 1.0];
 
+const SIDEBAR_BG: [f32; 4] = [0.04, 0.04, 0.05, 1.0];
+const SIDEBAR_ENTRY_BG: [f32; 4] = [0.07, 0.07, 0.08, 1.0];
+const SIDEBAR_ENTRY_ACTIVE_BG: [f32; 4] = [0.12, 0.12, 0.14, 1.0];
+const SIDEBAR_TEXT: [f32; 4] = [0.6, 0.6, 0.62, 1.0];
+const SIDEBAR_TEXT_ACTIVE: [f32; 4] = [0.95, 0.95, 0.95, 1.0];
+
 /// Which fixed-width tab slot sits under device-px `x` (None past the last tab).
+/// `x` is sidebar-relative (the app subtracts the sidebar width first).
 pub fn tab_index_at(x: f32, count: usize) -> Option<usize> {
     if count == 0 {
         return None;
     }
     let i = (x / TAB_WIDTH).floor() as usize;
     (i < count).then_some(i)
+}
+
+/// Which sidebar entry sits under device-px `y` (entries start below the header).
+pub fn workspace_index_at(y: f32, count: usize) -> Option<usize> {
+    if count == 0 || y < SIDEBAR_TOP {
+        return None;
+    }
+    let i = ((y - SIDEBAR_TOP) / SIDEBAR_ENTRY_H).floor() as usize;
+    (i < count).then_some(i)
+}
+
+/// Sidebar width in device px for the given config values.
+pub fn sidebar_width(show: bool, width_px: f32) -> f32 {
+    if show {
+        width_px.max(SIDEBAR_ENTRY_H)
+    } else {
+        0.0
+    }
 }
 
 /// xterm-style 16 color palette (0-7 dim, 8-15 bright).
@@ -627,14 +658,24 @@ impl Renderer {
         }
     }
 
-    /// Draw the top tab strip: one fixed-width slot per tab, active slot brighter.
-    fn draw_tab_bar(&mut self, tabs: &[(&str, bool)], metrics: Metrics, sink: &mut QuadSink) {
-        let bar_w = self.config.width as f32;
-        sink.push(0.0, 0.0, bar_w, TAB_BAR_H, BAR_BG, None);
+    /// Draw the top tab strip (starting right of the sidebar): one fixed-width
+    /// slot per tab, active slot brighter.
+    fn draw_tab_bar(
+        &mut self,
+        tabs: &[(&str, bool)],
+        metrics: Metrics,
+        sb_w: f32,
+        sink: &mut QuadSink,
+    ) {
+        let bar_w = self.config.width as f32 - sb_w;
+        if bar_w <= 0.0 {
+            return;
+        }
+        sink.push(sb_w, 0.0, sb_w + bar_w, TAB_BAR_H, BAR_BG, None);
         // Vertical centering: text baseline sits half a cell below the strip middle.
         let baseline = (TAB_BAR_H - metrics.cell_h) * 0.5 + metrics.ascent;
         for (i, (title, active)) in tabs.iter().enumerate() {
-            let x0 = i as f32 * TAB_WIDTH;
+            let x0 = sb_w + i as f32 * TAB_WIDTH;
             let bg = if *active { TAB_ACTIVE_BG } else { TAB_BG };
             sink.push(x0, 0.0, x0 + TAB_WIDTH, TAB_BAR_H, bg, None);
             let max_chars = (((TAB_WIDTH - 16.0) / metrics.cell_w).floor() as usize).max(1);
@@ -647,6 +688,49 @@ impl Renderer {
                 let gx = pen + g.left as f32;
                 let gy = baseline - g.top as f32;
                 let color = if *active { TAB_TEXT_ACTIVE } else { TAB_TEXT };
+                sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
+                pen += metrics.cell_w;
+            }
+        }
+    }
+
+    /// Draw the left sidebar: workspace entries, active highlighted.
+    fn draw_sidebar(
+        &mut self,
+        workspaces: &[(&str, bool)],
+        sb_w: f32,
+        metrics: Metrics,
+        sink: &mut QuadSink,
+    ) {
+        if sb_w <= 0.0 {
+            return;
+        }
+        let full_h = self.config.height as f32;
+        sink.push(0.0, 0.0, sb_w, full_h, SIDEBAR_BG, None);
+        for (i, (label, active)) in workspaces.iter().enumerate() {
+            let y0 = SIDEBAR_TOP + i as f32 * SIDEBAR_ENTRY_H;
+            let bg = if *active {
+                SIDEBAR_ENTRY_ACTIVE_BG
+            } else {
+                SIDEBAR_ENTRY_BG
+            };
+            sink.push(0.0, y0, sb_w, y0 + SIDEBAR_ENTRY_H, bg, None);
+            let baseline = (SIDEBAR_ENTRY_H - metrics.cell_h) * 0.5 + metrics.ascent;
+            let baseline = y0 + baseline;
+            let max_chars = (((sb_w - 2.0 * SIDEBAR_PAD) / metrics.cell_w).floor() as usize).max(1);
+            let text: String = label.chars().take(max_chars).collect();
+            let mut pen = SIDEBAR_PAD;
+            for c in text.chars() {
+                let Some(g) = self.rasterize(c, sink) else {
+                    continue;
+                };
+                let gx = pen + g.left as f32;
+                let gy = baseline - g.top as f32;
+                let color = if *active {
+                    SIDEBAR_TEXT_ACTIVE
+                } else {
+                    SIDEBAR_TEXT
+                };
                 sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
                 pen += metrics.cell_w;
             }
@@ -715,12 +799,14 @@ impl Renderer {
         found
     }
 
-    /// Full frame: tab strip + tiled panes (term + rect) + dividers.
+    /// Full frame: sidebar + tab strip + tiled panes (term + rect) + dividers.
     pub fn draw(
         &mut self,
         panes: &[(&Term<VoidListener>, Rect)],
         dividers: &[Rect],
         tabs: &[(&str, bool)],
+        workspaces: &[(&str, bool)],
+        sb_w: f32,
         window: &Window,
     ) -> anyhow::Result<()> {
         let phys = window.inner_size();
@@ -745,7 +831,8 @@ impl Renderer {
         let quad_trace = std::env::var("BERTH_TRACE").ok().as_deref() == Some("1");
 
         let mut sink = QuadSink::default();
-        self.draw_tab_bar(tabs, metrics, &mut sink);
+        self.draw_sidebar(workspaces, sb_w, metrics, &mut sink);
+        self.draw_tab_bar(tabs, metrics, sb_w, &mut sink);
         let mut uploads_pending = 0usize;
         let mut quads_bg = 0usize;
         let mut quads_glyph = 0usize;

@@ -1,7 +1,7 @@
 //! Layout tree: Workspaces -> Tabs -> Pane splits. The sidebar renders `Layout::workspaces` order;
 //! pane content lives in `berth-emulation::Pane`, keyed by `PaneId` (no UI deps here).
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct WorkspaceId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TabId(pub u64);
@@ -337,15 +337,42 @@ fn remove_in(node: &mut SplitNode, id: PaneId) -> bool {
 #[derive(Debug, Clone, Default)]
 pub struct Layout {
     pub workspaces: Vec<Workspace>,
+    /// The focused workspace's id (sidebar click / keybinds change this).
+    pub active: WorkspaceId,
 }
 
 impl Layout {
     pub fn active_workspace(&self) -> Option<&Workspace> {
-        self.workspaces.first()
+        self.workspaces.iter().find(|ws| ws.id == self.active)
     }
 
     pub fn active_workspace_mut(&mut self) -> Option<&mut Workspace> {
-        self.workspaces.first_mut()
+        self.workspaces.iter_mut().find(|ws| ws.id == self.active)
+    }
+
+    /// Next free workspace id.
+    pub fn alloc_workspace_id(&self) -> WorkspaceId {
+        let mut max = 0;
+        for ws in &self.workspaces {
+            max = max.max(ws.id.0);
+        }
+        WorkspaceId(max + 1)
+    }
+
+    /// Move workspace focus `delta` entries with wrap-around (sidebar order).
+    pub fn cycle_workspace(&mut self, delta: isize) -> Option<WorkspaceId> {
+        let len = self.workspaces.len() as isize;
+        if len == 0 {
+            return None;
+        }
+        let pos = self
+            .workspaces
+            .iter()
+            .position(|ws| ws.id == self.active)
+            .unwrap_or(0) as isize;
+        let next = self.workspaces[(pos + delta).rem_euclid(len) as usize].id;
+        self.active = next;
+        Some(next)
     }
 
     /// Active tab of the active workspace.
@@ -382,6 +409,22 @@ impl Layout {
         TabId(max + 1)
     }
 
+    /// Drop a workspace; focus falls to the last remaining one. Returns false if absent.
+    pub fn remove_workspace(&mut self, id: WorkspaceId) -> bool {
+        let Some(pos) = self.workspaces.iter().position(|ws| ws.id == id) else {
+            return false;
+        };
+        self.workspaces.remove(pos);
+        if self.active == id {
+            self.active = self
+                .workspaces
+                .last()
+                .map(|ws| ws.id)
+                .unwrap_or(WorkspaceId(u64::MAX));
+        }
+        true
+    }
+
     pub fn with_defaults(label: impl Into<String>) -> Self {
         Self {
             workspaces: vec![Workspace {
@@ -390,6 +433,7 @@ impl Layout {
                 tabs: vec![Tab::new(TabId(0), PaneId(0), None)],
                 focused_tab: TabId(0),
             }],
+            active: WorkspaceId(0),
         }
     }
 }

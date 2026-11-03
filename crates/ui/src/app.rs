@@ -1,8 +1,8 @@
 //! Window/eventloop: winit 0.30 ApplicationHandler + keyboard/clipboard/selection wiring.
-//! M2: multi-pane — the layout tree (`berth-core::Layout`) decides geometry; live `Pane`s
-//! are keyed by PaneId. Renderer draws every pane at its rect; dividers between splits.
+//! M3: workspaces + sidebar — the layout tree (`berth-core::Layout`) decides geometry; live
+//! `Pane`s are keyed by PaneId. Sidebar lists workspaces; tab strip + panes tile beside it.
 use berth_core::config::Config;
-use berth_core::layout::{Layout, PaneId, Rect, Tab};
+use berth_core::layout::{Layout, PaneId, Rect, Tab, Workspace, WorkspaceId};
 use berth_emulation::pane::{Pane, PaneEvent, TermPoint};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -15,7 +15,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use crate::render::{Renderer, TAB_BAR_H, tab_index_at};
+use crate::render::{Renderer, TAB_BAR_H, sidebar_width, tab_index_at, workspace_index_at};
 
 /// How many lines one wheel tick moves.
 const WHEEL_LINES_PER_TICK: i32 = 3;
@@ -36,11 +36,9 @@ fn term_point(pane: &Pane, row: usize, col: usize) -> TermPoint {
 }
 
 pub struct Berth {
-    /// live config (hot-reload lands with the sidebar in M3).
-    #[allow(dead_code)]
+    /// live config (sidebar on/off + width; hot reload is a TODO).
     config: Config,
-    /// layout tree: geometry + focus; sidebar consumes it in M3.
-    #[allow(dead_code)]
+    /// layout tree: geometry + focus; sidebar lists layout.workspaces.
     layout: Layout,
     window: Option<Window>,
     renderer: Option<Renderer>,
@@ -65,18 +63,20 @@ impl Berth {
             .unwrap_or((8.0, 16.0))
     }
 
-    /// Window rect the layout tree tiles into: below the tab strip (sidebar cuts
-    /// this further in M3).
+    /// Window rect the layout tree tiles into: right of the sidebar, below the
+    /// tab strip.
     fn content_rect(&self) -> Rect {
         self.window
             .as_ref()
             .map(|w| w.inner_size())
             .map(|s| {
                 let bar = TAB_BAR_H as u32;
+                let sb =
+                    sidebar_width(self.config.sidebar.show, self.config.sidebar.width_px) as u32;
                 Rect {
-                    x: 0,
+                    x: sb,
                     y: bar,
-                    w: s.width,
+                    w: s.width.saturating_sub(sb),
                     h: s.height.saturating_sub(bar),
                 }
             })
@@ -133,6 +133,13 @@ impl Berth {
                     .collect()
             })
             .unwrap_or_default();
+        let workspaces: Vec<(&str, bool)> = self
+            .layout
+            .workspaces
+            .iter()
+            .map(|ws| (ws.label.as_str(), ws.id == self.layout.active))
+            .collect();
+        let sb_w = sidebar_width(self.config.sidebar.show, self.config.sidebar.width_px);
 
         let mut guards = Vec::new();
         for (id, rect) in rect_map {
@@ -148,7 +155,9 @@ impl Berth {
             .collect::<Vec<_>>();
 
         let failed = match (self.renderer.as_mut(), self.window.as_ref()) {
-            (Some(r), Some(w)) => r.draw(&spans, &dividers, &tabs, w).is_err(),
+            (Some(r), Some(w)) => r
+                .draw(&spans, &dividers, &tabs, &workspaces, sb_w, w)
+                .is_err(),
             _ => false,
         };
         if failed {
@@ -227,6 +236,69 @@ impl Berth {
                     .expect("pane poisoned")
                     .resize(cols, rows, cell_w as u16, cell_h as u16);
             }
+        }
+        self.sync_size();
+    }
+
+    /// Spawn a fresh workspace with one shell tab and focus it.
+    fn new_workspace(&mut self) {
+        let (cell_w, cell_h) = self.cell_metrics();
+        if cell_w <= 0.0 || cell_h <= 0.0 {
+            return;
+        }
+        let ws_id = self.layout.alloc_workspace_id();
+        let tab_id = self.layout.alloc_tab_id();
+        let pane_id = self.layout.alloc_pane_id();
+        let ws = Workspace {
+            id: ws_id,
+            label: format!("ws {}", ws_id.0 + 1),
+            tabs: vec![Tab::new(tab_id, pane_id, None)],
+            focused_tab: tab_id,
+        };
+        self.layout.workspaces.push(ws);
+        self.layout.active = ws_id;
+        if self.spawn_pane(pane_id, None) {
+            self.focused_pane = pane_id;
+            self.sync_size();
+        } else {
+            // keep the tree consistent when the shell could not start
+            self.layout.workspaces.pop();
+            self.layout.active = self
+                .layout
+                .workspaces
+                .last()
+                .map(|ws| ws.id)
+                .unwrap_or(WorkspaceId(0));
+            self.focused_pane = self
+                .layout
+                .active_tab()
+                .map(|t| t.focused)
+                .unwrap_or(pane_id);
+        }
+    }
+
+    /// Switch workspaces with wrap-around; the new workspace's focused pane
+    /// receives keys and its panes resize.
+    fn cycle_workspace(&mut self, delta: isize) {
+        if self.layout.cycle_workspace(delta).is_none() {
+            return;
+        }
+        if let Some(tab) = self.layout.active_tab() {
+            self.focused_pane = tab.focused;
+        }
+        self.sync_size();
+    }
+
+    /// Focus the workspace at slot `index` of the sidebar (click).
+    fn select_workspace(&mut self, index: usize) {
+        let Some(ws) = self.layout.workspaces.get(index) else {
+            return;
+        };
+        let ws_id = ws.id;
+        let pane_id = ws.focused_tab().map(|t| t.focused);
+        self.layout.active = ws_id;
+        if let Some(pane_id) = pane_id {
+            self.focused_pane = pane_id;
         }
         self.sync_size();
     }
@@ -362,6 +434,19 @@ impl Berth {
             self.split_focused(false);
             return true;
         }
+        // Workspace cycling: ctrl+alt+arrow next/prev in sidebar order.
+        if ctrl && mods.alt_key() {
+            let delta = match named {
+                Key::Named(NamedKey::ArrowLeft) => Some(-1),
+                Key::Named(NamedKey::ArrowRight) => Some(1),
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                dlog_app!("ws-chord delta={delta}");
+                self.cycle_workspace(delta);
+                return true;
+            }
+        }
         // Tab cycling: ctrl+tab next, ctrl+shift+tab prev (Firefox/konsole style).
         if event.logical_key == Key::Named(NamedKey::Tab) {
             if ctrl && shift {
@@ -371,7 +456,13 @@ impl Berth {
             }
             return true;
         }
-        // ctrl+shift+n new tab, ctrl+shift+w close focused pane (shell dies -> Closed
+        // ctrl+shift+o: new workspace (one shell tab), focus it.
+        if ctrl && shift && event.physical_key == PhysicalKey::Code(KeyCode::KeyO) {
+            dlog_app!("chord: new workspace");
+            self.new_workspace();
+            return true;
+        }
+        // ctrl+shift+w close focused pane (shell dies -> Closed
         // event -> tree cleanup; closing the last tab's root exits).
         if ctrl && shift && event.physical_key == PhysicalKey::Code(KeyCode::KeyN) {
             self.new_tab();
@@ -569,14 +660,26 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     empty_tab = Some(tab.id);
                 }
                 if let Some(tab_id) = empty_tab {
+                    let mut exit = false;
                     if let Some(ws) = self.layout.active_workspace_mut() {
                         ws.remove_tab(tab_id);
                         if ws.tabs.is_empty() {
-                            self.panes.clear();
-                            self.layout = Layout::default();
-                            event_loop.exit();
-                            return;
+                            let ws_id = ws.id;
+                            dlog_app!("workspace {ws_id:?} empty -> closing");
+                            self.layout.remove_workspace(ws_id);
+                            if self.layout.workspaces.is_empty() {
+                                exit = true;
+                            }
                         }
+                    }
+                    if exit {
+                        self.panes.clear();
+                        self.layout = Layout::default();
+                        event_loop.exit();
+                        return;
+                    }
+                    if let Some(tab) = self.layout.active_tab() {
+                        self.focused_pane = tab.focused;
                     }
                     self.sync_size();
                     return;
@@ -636,14 +739,29 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 ..
             } => match state {
                 ElementState::Pressed => {
-                    // Tab strip wins over pane selection: y above the strip picks a tab.
-                    if self.mouse.y < f64::from(TAB_BAR_H) {
+                    let sb_w =
+                        sidebar_width(self.config.sidebar.show, self.config.sidebar.width_px);
+                    dlog_app!(
+                        "mouse press at ({:?},{:?}) sb_w={sb_w} y_strip={}",
+                        self.mouse.x,
+                        self.mouse.y,
+                        TAB_BAR_H
+                    );
+                    if self.mouse.x < f64::from(sb_w) {
+                        // Sidebar click: pick the workspace entry under the cursor.
+                        let count = self.layout.workspaces.len();
+                        if let Some(i) = workspace_index_at(self.mouse.y as f32, count) {
+                            dlog_app!("sidebar click ws#{i}");
+                            self.select_workspace(i);
+                        }
+                    } else if self.mouse.y < f64::from(TAB_BAR_H) {
+                        // Tab strip wins over pane selection: y above the strip picks a tab.
                         let count = self
                             .layout
                             .active_workspace()
                             .map(|ws| ws.tabs.len())
                             .unwrap_or(0);
-                        if let Some(i) = tab_index_at(self.mouse.x as f32, count) {
+                        if let Some(i) = tab_index_at(self.mouse.x as f32 - sb_w, count) {
                             self.select_tab(i);
                         }
                     } else {
