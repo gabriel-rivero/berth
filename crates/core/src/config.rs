@@ -13,6 +13,8 @@ pub struct Config {
     pub sidebar: Sidebar,
     /// Raw `action -> chords` table (compiled into bindings by the ui layer).
     pub keybinds: Keybinds,
+    /// PTY/keyboard compatibility knobs.
+    pub terminal: Terminal,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -46,6 +48,36 @@ impl Default for Sidebar {
         Self {
             width_px: 220.0,
             show: true,
+        }
+    }
+}
+
+/// What the Backspace key sends to the PTY.
+///
+/// `del` (0x7f) is the modern default — xterm-256color's `kbs` and every
+/// current shell/readline expect it. Set `bs` (0x08) for remote hosts whose
+/// `stty erase` is `^H` (older/quirky terminfo over ssh), where DEL otherwise
+/// does nothing and the caret appears to move forward.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Backspace {
+    /// 0x7f (DEL).
+    #[default]
+    Del,
+    /// 0x08 (^H).
+    Bs,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Terminal {
+    pub backspace: Backspace,
+}
+
+impl Default for Terminal {
+    fn default() -> Self {
+        Self {
+            backspace: Backspace::Del,
         }
     }
 }

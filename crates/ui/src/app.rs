@@ -1,7 +1,7 @@
 //! Window/eventloop: winit 0.30 ApplicationHandler + keyboard/clipboard/selection wiring.
 //! M3: workspaces + sidebar — the layout tree (`berth-core::Layout`) decides geometry; live
 //! `Pane`s are keyed by PaneId. Sidebar lists workspaces; tab strip + panes tile beside it.
-use berth_core::config::Config;
+use berth_core::config::{Backspace, Config};
 use berth_core::keybinds::{Action, Chord, build_bindings};
 use berth_core::layout::{Layout, PaneId, Rect, Tab, Workspace, WorkspaceId};
 use berth_emulation::pane::{Pane, PaneEvent, TermPoint};
@@ -842,7 +842,7 @@ fn chord_key_name(event: &KeyEvent) -> Option<String> {
 }
 
 /// KeyDown -> PTY bytes (None = nothing to write).
-fn encode_key(event: &KeyEvent, mods: ModifiersState) -> Option<Vec<u8>> {
+fn encode_key(event: &KeyEvent, mods: ModifiersState, backspace: Backspace) -> Option<Vec<u8>> {
     if event.state != ElementState::Pressed {
         return None;
     }
@@ -865,7 +865,10 @@ fn encode_key(event: &KeyEvent, mods: ModifiersState) -> Option<Vec<u8>> {
         Key::Named(named) => match named {
             NamedKey::Space => Some(vec![b' ']),
             NamedKey::Enter => Some(vec![b'\r']),
-            NamedKey::Backspace => Some(vec![0x7f]),
+            NamedKey::Backspace => Some(match backspace {
+                Backspace::Del => vec![0x7f],
+                Backspace::Bs => vec![0x08],
+            }),
             NamedKey::Tab => {
                 if shift {
                     Some(b"\x1b[Z".to_vec())
@@ -1035,7 +1038,8 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 let consumed = event.state == ElementState::Pressed
                     && self.handle_chord(&event, self.modifiers);
                 if !consumed
-                    && let Some(bytes) = encode_key(&event, self.modifiers)
+                    && let Some(bytes) =
+                        encode_key(&event, self.modifiers, self.config.terminal.backspace)
                     && let Some(pane) = self.panes.get(&self.focused_pane)
                 {
                     dlog_app!("kbd write: pane={:?} bytes={:?}", self.focused_pane, bytes);
