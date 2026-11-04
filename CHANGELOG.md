@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/gabriel-rivero/berth/compare/v0.22.0...v0.23.0) (2026-11-04)
+
+
+### Features
+
+* **ui:** session persistence (berths) ([ba76998](https://github.com/gabriel-rivero/berth/commit/ba769982f9175d415db316c76162b190926a873a))
+
 ## [0.22.0](https://github.com/gabriel-rivero/berth/compare/v0.21.8...v0.22.0) (2026-11-04)
 
 
