@@ -18,9 +18,7 @@ use winit::{
     window::{Cursor, CursorIcon, Window, WindowId},
 };
 
-use crate::render::{
-    Renderer, TAB_BAR_H, TAB_WIDTH, UI_CLOSE_W, sidebar_width, tab_index_at, workspace_index_at,
-};
+use crate::render::{Chrome, Renderer, sidebar_width, tab_index_at, workspace_index_at};
 
 /// How many lines one wheel tick moves.
 const WHEEL_LINES_PER_TICK: i32 = 3;
@@ -261,15 +259,25 @@ impl Berth {
     }
 
     /// Window rect the layout tree tiles into: right of the sidebar, below the
-    /// tab strip.
+    /// tab strip. Chrome heights scale with the window's scale factor.
     fn content_rect(&self) -> Rect {
         self.window
             .as_ref()
             .map(|w| w.inner_size())
             .map(|s| {
-                let bar = TAB_BAR_H as u32;
-                let sb =
-                    sidebar_width(self.config.sidebar.show, self.config.sidebar.width_px) as u32;
+                let scale = self
+                    .window
+                    .as_ref()
+                    .map(|w| w.scale_factor())
+                    .unwrap_or(1.0);
+                let ch = Chrome::new(scale);
+                let bar = ch.tab_bar_h.round() as u32;
+                let sb = sidebar_width(
+                    self.config.sidebar.show,
+                    self.config.sidebar.width_px,
+                    scale,
+                )
+                .round() as u32;
                 Rect {
                     x: sb,
                     y: bar,
@@ -355,7 +363,20 @@ impl Berth {
                 (label, ws.id == self.layout.active)
             })
             .collect();
-        let sb_w = sidebar_width(self.config.sidebar.show, self.config.sidebar.width_px);
+        let sb_w = sidebar_width(
+            self.config.sidebar.show,
+            self.config.sidebar.width_px,
+            self.window
+                .as_ref()
+                .map(|w| w.scale_factor())
+                .unwrap_or(1.0),
+        );
+        let focus = self
+            .layout
+            .active_tab()
+            .map(|t| t.pane_rects(area))
+            .and_then(|rects| rects.into_iter().find(|(id, _)| *id == self.focused_pane))
+            .map(|(_, rect)| rect);
 
         let mut guards = Vec::new();
         for (id, rect) in rect_map {
@@ -376,8 +397,17 @@ impl Berth {
                     .confirm_exit
                     .as_ref()
                     .map(|_| "Live shells running — close again to quit (esc to cancel)");
-                r.draw(&spans, &dividers, &tabs, &workspaces, sb_w, confirm, w)
-                    .is_err()
+                r.draw(
+                    &spans,
+                    &dividers,
+                    &tabs,
+                    &workspaces,
+                    sb_w,
+                    focus,
+                    confirm,
+                    w,
+                )
+                .is_err()
             }
             _ => false,
         };
@@ -719,9 +749,16 @@ impl Berth {
         let Some(window) = &self.window else {
             return;
         };
-        let sb_w = sidebar_width(self.config.sidebar.show, self.config.sidebar.width_px);
-        let on_sidebar_edge = (self.mouse.x - f64::from(sb_w)).abs() <= SIDEBAR_EDGE_GRAB;
-        let on_divider = if self.mouse.y >= f64::from(TAB_BAR_H) && !on_sidebar_edge {
+        let scale = window.scale_factor();
+        let ch = Chrome::new(scale);
+        let sb_w = sidebar_width(
+            self.config.sidebar.show,
+            self.config.sidebar.width_px,
+            scale,
+        )
+        .round() as i32;
+        let on_sidebar_edge = (self.mouse.x - f64::from(sb_w)).abs() <= SIDEBAR_EDGE_GRAB * scale;
+        let on_divider = if self.mouse.y >= f64::from(ch.tab_bar_h) && !on_sidebar_edge {
             let x = self.mouse.x.max(0.0) as u32;
             let y = self.mouse.y.max(0.0) as u32;
             self.layout
@@ -1235,10 +1272,14 @@ impl ApplicationHandler<PaneEvent> for Berth {
             WindowEvent::CursorMoved { position, .. } => {
                 self.mouse = position;
                 if self.sidebar_drag {
-                    // Logical px by design; device px == logical * scale is ignored for now
-                    // so the value matches what content_rect()/render use for sb_w.
-                    let w = position.x.clamp(120.0, 720.0) as f32;
-                    self.config.sidebar.width_px = w;
+                    // Drag x is device px; config stores logical px (scaled at draw).
+                    let scale = self
+                        .window
+                        .as_ref()
+                        .map(|w| w.scale_factor())
+                        .unwrap_or(1.0);
+                    let w = position.x.clamp(120.0 * scale, 720.0 * scale) / scale;
+                    self.config.sidebar.width_px = w as f32;
                     dlog_app!("sidebar drag -> width {w}");
                     self.sync_size();
                     if let Some(w) = &self.window {
@@ -1279,16 +1320,26 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 ..
             } => match state {
                 ElementState::Pressed => {
-                    let sb_w =
-                        sidebar_width(self.config.sidebar.show, self.config.sidebar.width_px);
+                    let scale = self
+                        .window
+                        .as_ref()
+                        .map(|w| w.scale_factor())
+                        .unwrap_or(1.0);
+                    let ch = Chrome::new(scale);
+                    let sb_w = sidebar_width(
+                        self.config.sidebar.show,
+                        self.config.sidebar.width_px,
+                        scale,
+                    )
+                    .round() as i32;
                     let sb_w_f = f64::from(sb_w);
                     dlog_app!(
                         "mouse press at ({:?},{:?}) sb_w={sb_w} y_strip={}",
                         self.mouse.x,
                         self.mouse.y,
-                        TAB_BAR_H
+                        ch.tab_bar_h
                     );
-                    if (self.mouse.x - sb_w_f).abs() <= SIDEBAR_EDGE_GRAB {
+                    if (self.mouse.x - sb_w_f).abs() <= SIDEBAR_EDGE_GRAB * scale {
                         // Sidebar edge grab wins over entry clicks: drag to resize.
                         dlog_app!("sidebar grab");
                         self.sidebar_drag = true;
@@ -1297,8 +1348,8 @@ impl ApplicationHandler<PaneEvent> for Berth {
                         // the entry is the close button); double-click below
                         // the entries creates a workspace.
                         let count = self.layout.workspaces.len();
-                        if let Some(i) = workspace_index_at(self.mouse.y as f32, count) {
-                            if self.mouse.x >= sb_w_f - f64::from(UI_CLOSE_W) {
+                        if let Some(i) = workspace_index_at(self.mouse.y as f32, count, ch) {
+                            if self.mouse.x >= sb_w_f - f64::from(ch.close_w) {
                                 dlog_app!("sidebar close ws#{i}");
                                 self.rename_edit = None;
                                 self.close_workspace_at(i);
@@ -1316,7 +1367,7 @@ impl ApplicationHandler<PaneEvent> for Berth {
                             dlog_app!("sidebar double-click -> new workspace");
                             self.new_workspace();
                         }
-                    } else if self.mouse.y < f64::from(TAB_BAR_H) {
+                    } else if self.mouse.y < f64::from(ch.tab_bar_h) {
                         // Tab strip: the right corner of a slot closes that tab;
                         // double-click on the focused tab (or empty area) opens
                         // a new tab; any other click selects.
@@ -1329,10 +1380,10 @@ impl ApplicationHandler<PaneEvent> for Berth {
                             .layout
                             .active_workspace()
                             .and_then(|ws| ws.tabs.iter().position(|t| t.id == ws.focused_tab));
-                        let slot = tab_index_at(self.mouse.x as f32 - sb_w, count);
-                        let x_rel = self.mouse.x as f32 - sb_w;
+                        let slot = tab_index_at(self.mouse.x as f32 - sb_w as f32, count, ch.tab_w);
+                        let x_rel = self.mouse.x as f32 - sb_w as f32;
                         if let Some(i) = slot
-                            && x_rel >= i as f32 * TAB_WIDTH + (TAB_WIDTH - UI_CLOSE_W)
+                            && x_rel >= i as f32 * ch.tab_w + (ch.tab_w - ch.close_w)
                         {
                             dlog_app!("tab close slot{i}");
                             self.close_tab(i);

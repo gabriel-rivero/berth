@@ -54,6 +54,10 @@ const CLEAR_COLOR: wgpu::Color = wgpu::Color {
 };
 const CURSOR_BG: [f32; 4] = [0.85, 0.85, 0.82, 1.0];
 const DIVIDER_COLOR: [f32; 4] = [0.25, 0.25, 0.28, 1.0];
+/// Focused-pane outline (iTerm-style indicator that keyboard input follows).
+const FOCUS_OUTLINE: [f32; 4] = [0.35, 0.55, 1.0, 1.0];
+/// Outline thickness ~1.5 device px, independent of chrome scale.
+const FOCUS_OUTLINE_PX: f32 = 1.5;
 const FG_DEFAULT: [f32; 4] = [0.847, 0.847, 0.847, 1.0];
 const BG_DEFAULT: [f32; 4] = PANEL_BG;
 const DIM_FACTOR: f32 = 0.62;
@@ -71,7 +75,6 @@ pub const UI_CLOSE_W: f32 = 14.0;
 /// Sidebar geometry: full-height column on the left; entries start below a
 /// header strip that aligns with the tab bar.
 pub const SIDEBAR_ENTRY_H: f32 = 32.0;
-const SIDEBAR_TOP: f32 = TAB_BAR_H;
 const SIDEBAR_PAD: f32 = 12.0;
 
 const BAR_BG: [f32; 4] = [0.03, 0.03, 0.04, 1.0];
@@ -92,27 +95,60 @@ pub const CONFIRM_H: f32 = 34.0;
 
 /// Which fixed-width tab slot sits under device-px `x` (None past the last tab).
 /// `x` is sidebar-relative (the app subtracts the sidebar width first).
-pub fn tab_index_at(x: f32, count: usize) -> Option<usize> {
-    if count == 0 {
+/// Chrome geometry in device px, scaled by the window's scale factor
+/// (logical px × scale) so Retina/HiDPI screens get normal-size chrome.
+#[derive(Debug, Clone, Copy)]
+pub struct Chrome {
+    pub tab_bar_h: f32,
+    pub tab_w: f32,
+    pub close_w: f32,
+    pub sidebar_entry_h: f32,
+    pub sidebar_top: f32,
+    pub sidebar_pad: f32,
+    pub confirm_h: f32,
+    /// Logical-px scale the geometry was built with.
+    pub scale: f32,
+}
+
+impl Chrome {
+    pub fn new(scale: f64) -> Self {
+        let s = scale as f32;
+        Self {
+            tab_bar_h: TAB_BAR_H * s,
+            tab_w: TAB_WIDTH * s,
+            close_w: UI_CLOSE_W * s,
+            sidebar_entry_h: SIDEBAR_ENTRY_H * s,
+            sidebar_top: TAB_BAR_H * s,
+            sidebar_pad: SIDEBAR_PAD * s,
+            confirm_h: CONFIRM_H * s,
+            scale: s,
+        }
+    }
+}
+
+/// Which tab slot sits under device-px `x` (origin is the sidebar's right edge).
+pub fn tab_index_at(x: f32, count: usize, tab_w: f32) -> Option<usize> {
+    if count == 0 || x < 0.0 || tab_w <= 0.0 {
         return None;
     }
-    let i = (x / TAB_WIDTH).floor() as usize;
+    let i = (x / tab_w).floor() as usize;
     (i < count).then_some(i)
 }
 
 /// Which sidebar entry sits under device-px `y` (entries start below the header).
-pub fn workspace_index_at(y: f32, count: usize) -> Option<usize> {
-    if count == 0 || y < SIDEBAR_TOP {
+pub fn workspace_index_at(y: f32, count: usize, ch: Chrome) -> Option<usize> {
+    if count == 0 || y < ch.sidebar_top {
         return None;
     }
-    let i = ((y - SIDEBAR_TOP) / SIDEBAR_ENTRY_H).floor() as usize;
+    let i = ((y - ch.sidebar_top) / ch.sidebar_entry_h).floor() as usize;
     (i < count).then_some(i)
 }
 
-/// Sidebar width in device px for the given config values.
-pub fn sidebar_width(show: bool, width_px: f32) -> f32 {
+/// Sidebar width in device px (`width_px` is logical; device = logical * scale).
+pub fn sidebar_width(show: bool, width_px: f32, scale: f64) -> f32 {
     if show {
-        width_px.max(SIDEBAR_ENTRY_H)
+        let min = SIDEBAR_ENTRY_H * scale as f32;
+        (width_px * scale as f32).max(min)
     } else {
         0.0
     }
@@ -460,6 +496,21 @@ struct QuadSink {
 
 const QUAD_LIMIT: usize = (16 << 20) / 4 / std::mem::size_of::<Vertex>();
 
+/// 4 thin quads tracing the inside of `r` (focused-pane outline).
+fn draw_focus_outline(sink: &mut QuadSink, r: Rect, color: [f32; 4]) {
+    let t = FOCUS_OUTLINE_PX;
+    let (x0, y0) = (r.x as f32, r.y as f32);
+    let (x1, y1) = (r.x as f32 + r.w as f32, r.y as f32 + r.h as f32);
+    let (x1i, y1i) = (x1 - t, y1 - t);
+    if x1 <= x0 + 2.0 * t || y1 <= y0 + 2.0 * t {
+        return; // pane too small for an outline
+    }
+    sink.push(x0, y0, x1, y0 + t, color, None); // top
+    sink.push(x0, y1i, x1, y1, color, None); // bottom
+    sink.push(x0, y0 + t, x0 + t, y1i, color, None); // left
+    sink.push(x1i, y0 + t, x1, y1i, color, None); // right
+}
+
 impl QuadSink {
     fn push(
         &mut self,
@@ -790,13 +841,20 @@ impl Renderer {
 
     /// Centered bottom overlay strip (quit confirmation). Drawn last so it sits
     /// on top of panes/tabs/sidebar.
-    fn draw_confirm(&mut self, text: &str, screen_w: f32, screen_h: f32, sink: &mut QuadSink) {
+    fn draw_confirm(
+        &mut self,
+        text: &str,
+        screen_w: f32,
+        screen_h: f32,
+        ch: Chrome,
+        sink: &mut QuadSink,
+    ) {
         let metrics = self.font.metrics;
-        let y0 = (screen_h - CONFIRM_H).max(0.0);
+        let y0 = (screen_h - ch.confirm_h).max(0.0);
         sink.push(0.0, y0, screen_w, screen_h, CONFIRM_BG, None);
         let text_w = text.chars().count() as f32 * metrics.cell_w;
         let mut pen = ((screen_w - text_w) * 0.5).max(8.0);
-        let baseline = y0 + (CONFIRM_H - metrics.cell_h) * 0.5 + metrics.ascent;
+        let baseline = y0 + (ch.confirm_h - metrics.cell_h) * 0.5 + metrics.ascent;
         for c in text.chars() {
             let Some(g) = self.rasterize(c, sink) else {
                 continue;
@@ -814,6 +872,7 @@ impl Renderer {
         &mut self,
         tabs: &[(&str, bool)],
         metrics: Metrics,
+        ch: Chrome,
         sb_w: f32,
         sink: &mut QuadSink,
     ) {
@@ -821,17 +880,18 @@ impl Renderer {
         if bar_w <= 0.0 {
             return;
         }
-        sink.push(sb_w, 0.0, sb_w + bar_w, TAB_BAR_H, BAR_BG, None);
+        sink.push(sb_w, 0.0, sb_w + bar_w, ch.tab_bar_h, BAR_BG, None);
         // Vertical centering: text baseline sits half a cell below the strip middle.
-        let baseline = (TAB_BAR_H - metrics.cell_h) * 0.5 + metrics.ascent;
+        let baseline = (ch.tab_bar_h - metrics.cell_h) * 0.5 + metrics.ascent;
         for (i, (title, active)) in tabs.iter().enumerate() {
-            let x0 = sb_w + i as f32 * TAB_WIDTH;
+            let x0 = sb_w + i as f32 * ch.tab_w;
             let bg = if *active { TAB_ACTIVE_BG } else { TAB_BG };
-            sink.push(x0, 0.0, x0 + TAB_WIDTH, TAB_BAR_H, bg, None);
-            let max_chars =
-                (((TAB_WIDTH - UI_CLOSE_W - 16.0) / metrics.cell_w).floor() as usize).max(1);
+            sink.push(x0, 0.0, x0 + ch.tab_w, ch.tab_bar_h, bg, None);
+            let max_chars = (((ch.tab_w - ch.close_w - 16.0 * ch.scale) / metrics.cell_w).floor()
+                as usize)
+                .max(1);
             let text: String = title.chars().take(max_chars).collect();
-            let mut pen = x0 + 8.0;
+            let mut pen = x0 + 8.0 * ch.scale;
             for c in text.chars() {
                 let Some(g) = self.rasterize(c, sink) else {
                     continue;
@@ -843,8 +903,8 @@ impl Renderer {
                 pen += metrics.cell_w;
             }
             self.draw_close(
-                x0 + TAB_WIDTH - UI_CLOSE_W * 0.5,
-                TAB_BAR_H * 0.5,
+                x0 + ch.tab_w - ch.close_w * 0.5,
+                ch.tab_bar_h * 0.5,
                 metrics,
                 TAB_TEXT,
                 sink,
@@ -857,6 +917,7 @@ impl Renderer {
         &mut self,
         workspaces: &[(&str, bool)],
         sb_w: f32,
+        ch: Chrome,
         metrics: Metrics,
         sink: &mut QuadSink,
     ) {
@@ -866,20 +927,20 @@ impl Renderer {
         let full_h = self.config.height as f32;
         sink.push(0.0, 0.0, sb_w, full_h, SIDEBAR_BG, None);
         for (i, (label, active)) in workspaces.iter().enumerate() {
-            let y0 = SIDEBAR_TOP + i as f32 * SIDEBAR_ENTRY_H;
+            let y0 = ch.sidebar_top + i as f32 * ch.sidebar_entry_h;
             let bg = if *active {
                 SIDEBAR_ENTRY_ACTIVE_BG
             } else {
                 SIDEBAR_ENTRY_BG
             };
-            sink.push(0.0, y0, sb_w, y0 + SIDEBAR_ENTRY_H, bg, None);
-            let baseline = (SIDEBAR_ENTRY_H - metrics.cell_h) * 0.5 + metrics.ascent;
+            sink.push(0.0, y0, sb_w, y0 + ch.sidebar_entry_h, bg, None);
+            let baseline = (ch.sidebar_entry_h - metrics.cell_h) * 0.5 + metrics.ascent;
             let baseline = y0 + baseline;
-            let max_chars = (((sb_w - 2.0 * SIDEBAR_PAD - UI_CLOSE_W) / metrics.cell_w).floor()
+            let max_chars = (((sb_w - 2.0 * ch.sidebar_pad - ch.close_w) / metrics.cell_w).floor()
                 as usize)
                 .max(1);
             let text: String = label.chars().take(max_chars).collect();
-            let mut pen = SIDEBAR_PAD;
+            let mut pen = ch.sidebar_pad;
             for c in text.chars() {
                 let Some(g) = self.rasterize(c, sink) else {
                     continue;
@@ -895,8 +956,8 @@ impl Renderer {
                 pen += metrics.cell_w;
             }
             self.draw_close(
-                sb_w - UI_CLOSE_W * 0.5,
-                y0 + SIDEBAR_ENTRY_H * 0.5,
+                sb_w - ch.close_w * 0.5,
+                y0 + ch.sidebar_entry_h * 0.5,
                 metrics,
                 SIDEBAR_TEXT,
                 sink,
@@ -999,6 +1060,7 @@ impl Renderer {
         tabs: &[(&str, bool)],
         workspaces: &[(&str, bool)],
         sb_w: f32,
+        focus: Option<Rect>,
         confirm: Option<&str>,
         window: &Window,
     ) -> anyhow::Result<()> {
@@ -1023,11 +1085,12 @@ impl Renderer {
         );
         let quad_trace = std::env::var("BERTH_TRACE").ok().as_deref() == Some("1");
 
+        let ch = Chrome::new(window.scale_factor());
         let mut sink = QuadSink::default();
-        self.draw_sidebar(workspaces, sb_w, metrics, &mut sink);
-        self.draw_tab_bar(tabs, metrics, sb_w, &mut sink);
+        self.draw_sidebar(workspaces, sb_w, ch, metrics, &mut sink);
+        self.draw_tab_bar(tabs, metrics, ch, sb_w, &mut sink);
         if let Some(msg) = confirm {
-            self.draw_confirm(msg, screen_w, screen_h, &mut sink);
+            self.draw_confirm(msg, screen_w, screen_h, ch, &mut sink);
         }
         let mut uploads_pending = 0usize;
         let mut quads_bg = 0usize;
@@ -1048,6 +1111,9 @@ impl Renderer {
                 DIVIDER_COLOR,
                 None,
             );
+        }
+        if let Some(r) = focus {
+            draw_focus_outline(&mut sink, r, FOCUS_OUTLINE);
         }
 
         dlog!(
