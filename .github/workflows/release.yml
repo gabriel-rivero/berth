@@ -51,6 +51,13 @@ jobs:
           mkdir "$dir"
           cp target/${{ matrix.target }}/release/berth "$dir"/
           tar czf berth-${GITHUB_REF_NAME#v}-${{ matrix.target }}.tar.gz "$dir"
+      - name: attach tar.gz early (best-effort)
+        # Upload the archive before the deb/rpm steps run; later packaging
+        # failures then can't cost us the base archive (softprops re-uploads).
+        if: matrix.archive == 'tar.gz'
+        run: gh release upload "$GITHUB_REF_NAME" "berth-${GITHUB_REF_NAME#v}-${{ matrix.target }}.tar.gz" --repo gabriel-rivero/berth --clobber || true
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: package deb (linux)
         if: matrix.archive == 'tar.gz' && contains(matrix.target, 'unknown-linux-musl')
         run: |
@@ -93,54 +100,17 @@ jobs:
       - name: package rpm (linux)
         if: matrix.archive == 'tar.gz' && contains(matrix.target, 'unknown-linux-musl')
         run: |
-          sudo apt-get install -y rpm
+          cargo install --locked cargo-generate-rpm
           ver=${GITHUB_REF_NAME#v}
           case '${{ matrix.target }}' in
             x86_64-*) arch=x86_64 ;;
             aarch64-*) arch=aarch64 ;;
           esac
-          toprpm="$PWD/.rpm"
-          mkdir -p "$toprpm"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS}
-          bt="$toprpm/BUILDROOT/berth"
-          mkdir -p "$bt"/usr/bin "$bt"/usr/share/applications \
-            "$bt"/usr/share/icons/hicolor/64x64/apps \
-            "$bt"/usr/share/icons/hicolor/128x128/apps \
-            "$bt"/usr/share/icons/hicolor/256x256/apps
-          install -m 755 target/${{ matrix.target }}/release/berth "$bt"/usr/bin/berth
-          printf '%s\n' \
-            '[Desktop Entry]' \
-            'Type=Application' \
-            'Name=berth' \
-            'Exec=berth' \
-            'Icon=berth' \
-            'Categories=System;TerminalEmulator;' \
-            'Terminal=false' \
-            > "$bt"/usr/share/applications/berth.desktop
-          install -m 644 assets/berth-64.png "$bt"/usr/share/icons/hicolor/64x64/apps/berth.png
-          install -m 644 assets/berth-128.png "$bt"/usr/share/icons/hicolor/128x128/apps/berth.png
-          install -m 644 assets/berth-256.png "$bt"/usr/share/icons/hicolor/256x256/apps/berth.png
-          cat > "$toprpm/SPECS/berth.spec" <<EOF
-          Name: berth
-          Version: $ver
-          Release: 1%{?dist}
-          Summary: terminal emulator with workspaces, tabs and splits
-          License: MIT OR Apache-2.0
-          URL: https://github.com/gabriel-rivero/berth
-          BuildArch: $arch
-          %description
-          berth is a Ghostty-inspired terminal emulator with a workspace sidebar,
-          split panes, a clickable tab bar and hot-reloading TOML config. Static
-          musl build: no dependencies on the host.
-          %files
-          %attr(755,root,root) /usr/bin/berth
-          /usr/share/applications/berth.desktop
-          /usr/share/icons/hicolor/64x64/apps/berth.png
-          /usr/share/icons/hicolor/128x128/apps/berth.png
-          /usr/share/icons/hicolor/256x256/apps/berth.png
-          EOF
-          rpmbuild -bb --define "_topdir $toprpm" --buildroot "$bt" \
-            --define 'dist %{nil}' --target "$arch-linux" "$toprpm/SPECS/berth.spec"
-          mv "$toprpm"/RPMS/$arch/berth-*.rpm .
+          # Unknown-arch rpm builds fail on rpmbuild (missing platform macros for
+          # aarch64 on Ubuntu); cargo-generate-rpm writes the rpm directly, and
+          # --target both rewrites assets to target/<triple>/release/ and sets arch.
+          cargo generate-rpm -p crates/app --target ${{ matrix.target }} \
+            -o "berth-${ver}-${arch}.rpm"
 
       - name: package .app bundle (macOS)
         # A raw Unix binary launched from Finder opens a Terminal.app window first

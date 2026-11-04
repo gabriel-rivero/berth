@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=berth
+GenericName=Terminal emulator
+Comment=A Ghostty-like cross-platform terminal with a left tab sidebar and workspaces
+Exec=/usr/bin/berth
+Icon=berth
+Terminal=false
+Categories=System;TerminalEmulator;Utility;
+Keywords=terminal;shell;workspace;

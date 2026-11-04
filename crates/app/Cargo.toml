@@ -20,3 +20,16 @@ anyhow.workspace = true
 
 [build-dependencies]
 winresource.workspace = true
+
+# RPM packaging via cargo-generate-rpm (`cargo generate-rpm -p crates/app --target <triple>`
+# from the workspace root; --target rewrites target/release/ to target/<triple>/release/).
+[package.metadata.generate-rpm]
+summary = "A Ghostty-like cross-platform terminal with a left tab sidebar and workspaces"
+auto-req = "no"
+assets = [
+    { source = "target/release/berth", dest = "/usr/bin/berth", mode = "755" },
+    { source = "packaging/berth.desktop", dest = "/usr/share/applications/berth.desktop", mode = "644" },
+    { source = "packaging/icons/*/apps/berth.png", dest = "/usr/share/icons/hicolor/", mode = "644" },
+    { source = "LICENSE-MIT", dest = "/usr/share/licenses/berth/LICENSE-MIT", mode = "644", doc = true },
+    { source = "LICENSE-APACHE", dest = "/usr/share/licenses/berth/LICENSE-APACHE", mode = "644", doc = true },
+]
