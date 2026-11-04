@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0](https://github.com/gabriel-rivero/berth/compare/v0.21.8...v0.22.0) (2026-11-04)
+
+
+### Features
+
+* **ui:** sidebar toggle keybind, + buttons, workspace close-confirm, plugin enabled flags ([0536b91](https://github.com/gabriel-rivero/berth/commit/0536b910d4a701576f31faf408a848c166945227))
+
 ## [0.21.8](https://github.com/gabriel-rivero/berth/compare/v0.21.7...v0.21.8) (2026-11-04)
 
 
