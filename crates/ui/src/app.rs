@@ -130,6 +130,8 @@ pub struct Berth {
     zoomed: Option<PaneId>,
     /// OSC title per pane (empty until the shell sets one; falls back to tab label).
     titles: HashMap<PaneId, String>,
+    /// OSC 7 cwd per pane (only shells with an integration hook report).
+    cwds: HashMap<PaneId, String>,
     /// Compiled keybind table (chord -> action); rebuilt on config reload.
     bindings: HashMap<Chord, Action>,
     /// WASM plugins (tier-1 layout ABI), synced each tick.
@@ -483,6 +485,15 @@ impl Berth {
         }
     }
 
+    /// Best-known cwd for a new child shell: the focused pane's OSC 7 report
+    /// (when the shell integrates), else the owning tab's cwd, else None.
+    fn focused_cwd(&self) -> Option<String> {
+        self.cwds
+            .get(&self.focused_pane)
+            .cloned()
+            .or_else(|| self.layout.active_tab().and_then(|t| t.cwd.clone()))
+    }
+
     /// Split the focused pane: `vertical` = stacked top/bottom, else side by side.
     fn split_focused(&mut self, vertical: bool) {
         let (cell_w, cell_h) = self.cell_metrics();
@@ -490,10 +501,10 @@ impl Berth {
             return;
         }
         let new_id = self.layout.alloc_pane_id();
-        let Some((target, cwd)) = self.layout.active_tab().map(|t| (t.focused, t.cwd.clone()))
-        else {
+        let Some(target) = self.layout.active_tab().map(|t| t.focused) else {
             return;
         };
+        let cwd = self.focused_cwd();
         if !self
             .layout
             .active_tab_mut()
@@ -544,15 +555,16 @@ impl Berth {
         let ws_id = self.layout.alloc_workspace_id();
         let tab_id = self.layout.alloc_tab_id();
         let pane_id = self.layout.alloc_pane_id();
+        let cwd = self.focused_cwd();
         let ws = Workspace {
             id: ws_id,
             label: format!("ws {}", ws_id.0 + 1),
-            tabs: vec![Tab::new(tab_id, pane_id, None)],
+            tabs: vec![Tab::new(tab_id, pane_id, cwd.clone())],
             focused_tab: tab_id,
         };
         self.layout.workspaces.push(ws);
         self.layout.active = ws_id;
-        if self.spawn_pane(pane_id, None) {
+        if self.spawn_pane(pane_id, cwd.as_deref()) {
             self.focused_pane = pane_id;
             self.sync_size();
         } else {
@@ -693,14 +705,15 @@ impl Berth {
         }
         let tab_id = self.layout.alloc_tab_id();
         let pane_id = self.layout.alloc_pane_id();
+        let cwd = self.focused_cwd();
         {
             let Some(ws) = self.layout.active_workspace_mut() else {
                 return;
             };
-            ws.tabs.push(Tab::new(tab_id, pane_id, None));
+            ws.tabs.push(Tab::new(tab_id, pane_id, cwd.clone()));
             ws.focused_tab = tab_id;
         }
-        if self.spawn_pane(pane_id, None) {
+        if self.spawn_pane(pane_id, cwd.as_deref()) {
             self.focused_pane = pane_id;
             self.sync_size();
         } else {
@@ -1380,6 +1393,20 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 if let Some(w) = self.window.as_ref() {
                     w.request_redraw();
                 }
+            }
+            PaneEvent::Cwd(id, path) => {
+                self.cwds.insert(id, path.clone());
+                // Write back into the owning tab so saved sessions restore in place.
+                let mut owner: Option<WorkspaceId> = None;
+                for ws in &mut self.layout.workspaces {
+                    for tab in &mut ws.tabs {
+                        if tab.pane_ids_in_order().contains(&id) {
+                            tab.cwd = Some(path.clone());
+                            owner = Some(ws.id);
+                        }
+                    }
+                }
+                dlog_app!("osc cwd pane={:?} ws={owner:?} path={path:?}", id);
             }
             PaneEvent::PtyWrite(id, bytes) => {
                 dlog_app!("pty write reply {:?}: {} b", id, bytes.len());
@@ -2126,6 +2153,7 @@ pub fn run() -> anyhow::Result<()> {
         focused_pane,
         zoomed: None,
         titles: HashMap::new(),
+        cwds: HashMap::new(),
         bindings,
         plugins,
         exiting: false,

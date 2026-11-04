@@ -24,6 +24,9 @@ pub enum PaneEvent {
     Title(PaneId, String),
     /// OSC 112 or ESC c cleared the title.
     TitleReset(PaneId),
+    /// OSC 7 cwd report from the shell (file://host/path, percent-decoded abs path).
+    /// Only emitted by shells with an integration hook (precmd/PROMPT_COMMAND).
+    Cwd(PaneId, String),
     /// Terminal-query reply the parser generated (DSR cursor report, DA1, ...)
     /// that must be written back to the PTY.
     PtyWrite(PaneId, Vec<u8>),
@@ -188,6 +191,9 @@ impl Pane {
                 let mut reader = reader;
                 let mut buf = [0u8; 8192];
                 let mut first = true;
+                // OSC 7 (cwd report) extractor state: carries a trailing partial
+                // `\x1b]7;...` fragment across chunk boundaries.
+                let mut osc_tail: Vec<u8> = Vec::new();
                 notify(PaneEvent::Log("pty: reader started".into()));
                 loop {
                     match reader.read(&mut buf) {
@@ -205,6 +211,9 @@ impl Pane {
                                     &buf[..n.min(24)]
                                 )));
                                 first = false;
+                            }
+                            if let Some(cwd) = extract_osc7(&buf[..n], &mut osc_tail) {
+                                notify(PaneEvent::Cwd(id, cwd));
                             }
                             if tx.send(buf[..n].to_vec()).is_err() {
                                 break; // UI dropped the pane
@@ -331,5 +340,95 @@ impl Pane {
             scrollback: self.size.scrollback,
         });
         Ok(())
+    }
+}
+
+/// Scan raw PTY bytes for complete OSC 7 sequences (`\x1b]7;file://host/path` ST/BEL)
+/// and return the percent-decoded absolute path. `tail` carries a trailing partial
+/// fragment across chunks (bounded to the previous chunk's length).
+fn extract_osc7(chunk: &[u8], tail: &mut Vec<u8>) -> Option<String> {
+    let mut data: Vec<u8> = std::mem::take(tail);
+    data.extend_from_slice(chunk);
+    *tail = Vec::new();
+
+    let mut result: Option<String> = None;
+    let mut i = 0;
+    while i < data.len() {
+        if data[i] != 0x1b || data.get(i + 1) != Some(&b']') {
+            i += 1;
+            continue;
+        }
+        // Find the terminator (BEL or ESC-backslash) from i+2.
+        let end = (i + 2..data.len())
+            .find(|&j| data[j] == 0x07 || (data[j] == 0x1b && data.get(j + 1) == Some(&b'\\')));
+        let Some(end) = end else {
+            // Incomplete sequence: carry it for the next chunk (cap so garbage
+            // output can't grow it unboundedly).
+            *tail = data[i.min(data.len().saturating_sub(4096))..].to_vec();
+            return result;
+        };
+        let payload = &data[i + 2..end];
+        i = if data[end] == 0x1b { end + 2 } else { end + 1 };
+        if payload.starts_with(b"7;")
+            && let Some(path) = osc7_path(std::str::from_utf8(payload).ok()?)
+        {
+            result = Some(path);
+        }
+    }
+    // No dangling fragment: nothing to carry.
+    result
+}
+
+/// `7;file://host/path` -> absolute OS path (host ignored; minimal percent-decode).
+fn osc7_path(payload: &str) -> Option<String> {
+    let rest = payload.strip_prefix("7;")?.trim_end();
+    let after = rest.strip_prefix("file://")?;
+    // The path begins at the first '/' (authority = host component before it).
+    let path_raw = &after[after.find('/')?..];
+    if !path_raw.starts_with('/') {
+        return None;
+    }
+    let bytes = path_raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut k = 0;
+    while k < bytes.len() {
+        if bytes[k] == b'%' && k + 2 < bytes.len() {
+            let hex = (bytes[k + 1], bytes[k + 2]);
+            if let Ok(b) = u8::from_str_radix(std::str::from_utf8(&[hex.0, hex.1]).ok()?, 16) {
+                out.push(b);
+                k += 3;
+                continue;
+            }
+        }
+        out.push(bytes[k]);
+        k += 1;
+    }
+    String::from_utf8(out).ok()
+}
+
+#[cfg(test)]
+mod osc7_tests {
+    use super::*;
+
+    #[test]
+    fn osc7_bel_esc_split_and_mismatch() {
+        let mut tail = Vec::new();
+        //BEL-terminated, percent-decoded
+        assert_eq!(
+            extract_osc7(b"junk\x1b]7;file://host/tmp/na%20me\x07tail", &mut tail),
+            Some("/tmp/na me".into())
+        );
+        assert!(tail.is_empty());
+        //Sequence split across chunks (tail carry)
+        let seq = b"\x1b]7;file://h/tmp/x\x07";
+        assert_eq!(extract_osc7(&seq[..5], &mut tail), None);
+        assert_eq!(extract_osc7(&seq[5..], &mut tail), Some("/tmp/x".into()));
+        //ESC-backslash terminator
+        assert_eq!(
+            extract_osc7(b"\x1b]7;file://h/tmp/y\x1b\\", &mut tail),
+            Some("/tmp/y".into())
+        );
+        //Non-OSC-7 payload ignored
+        assert_eq!(extract_osc7(b"\x1b]2;title\x07", &mut tail), None);
     }
 }
