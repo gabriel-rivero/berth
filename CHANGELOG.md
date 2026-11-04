@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.2](https://github.com/gabriel-rivero/berth/compare/v0.21.1...v0.21.2) (2026-11-04)
+
+
+### Bug Fixes
+
+* **emu:** pty lifecycle diagnostics ([f48ef23](https://github.com/gabriel-rivero/berth/commit/f48ef23be75d46f740225fc4cde40e4ac609b843))
+
 ## [0.21.1](https://github.com/gabriel-rivero/berth/compare/v0.21.0...v0.21.1) (2026-11-04)
 
 
