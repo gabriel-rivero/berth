@@ -989,7 +989,21 @@ impl Berth {
                 if let (Some(text), Some(pane)) =
                     (self.get_clipboard(), self.panes.get(&self.focused_pane))
                 {
-                    let _ = pane.lock().expect("pane poisoned").write(text.as_bytes());
+                    // Bracketed paste (DECSET 2004): delimit so the app never
+                    // executes pasted lines as if typed.
+                    let payload = {
+                        let mode = pane.lock().expect("pane poisoned").term_mode();
+                        if mode.contains(TermMode::BRACKETED_PASTE) {
+                            let mut p = Vec::with_capacity(text.len() + 8);
+                            p.extend_from_slice(b"\x1b[200~");
+                            p.extend_from_slice(text.as_bytes());
+                            p.extend_from_slice(b"\x1b[201~");
+                            p
+                        } else {
+                            text.as_bytes().to_vec()
+                        }
+                    };
+                    let _ = pane.lock().expect("pane poisoned").write(&payload);
                 }
                 true
             }
@@ -1438,6 +1452,17 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     // Release a captured mouse even when press+release straddle
                     // panes: apps track buttons, not clicks.
                     let _ = self.forward_mouse_button(0, false, self.modifiers);
+                    // Copy-on-select: a finished drag with a live selection goes
+                    // straight to the clipboard (iTerm2/Alacritty parity).
+                    if self.config.terminal.copy_on_select {
+                        let text = self
+                            .panes
+                            .get(&self.focused_pane)
+                            .and_then(|pane| pane.lock().expect("pane poisoned").selection_text());
+                        if let Some(text) = text {
+                            self.set_clipboard(text);
+                        }
+                    }
                     self.update_cursor();
                 }
             },

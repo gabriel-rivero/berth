@@ -72,12 +72,15 @@ pub enum Backspace {
 #[serde(default, deny_unknown_fields)]
 pub struct Terminal {
     pub backspace: Backspace,
+    /// Selection goes to the clipboard when the drag ends (iTerm2/Alacritty parity).
+    pub copy_on_select: bool,
 }
 
 impl Default for Terminal {
     fn default() -> Self {
         Self {
             backspace: Backspace::Del,
+            copy_on_select: true,
         }
     }
 }

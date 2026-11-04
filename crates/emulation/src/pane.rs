@@ -9,9 +9,9 @@ use alacritty_terminal::term::{Config as TermConfig, Term, TermMode};
 use alacritty_terminal::vte::ansi::Processor;
 use berth_core::layout::PaneId;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 /// Events the pane pushes to the UI loop (extend incrementally: titles, exit status, OSC cwd...).
 #[derive(Debug, Clone)]
@@ -61,7 +61,8 @@ pub struct Pane {
     /// PTY output queued by the reader thread (empty vec = EOF sentinel).
     pending: Receiver<Vec<u8>>,
     master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    /// Outgoing PTY-input channel; the writer thread drains it (keeps the UI thread free).
+    writer_jobs: Sender<Vec<u8>>,
     child: Box<dyn Child + Send>,
     /// geometry currently applied to the grid (kept so resize can rebuild it).
     size: PaneSize,
@@ -121,6 +122,21 @@ impl Pane {
         let writer = master.take_writer()?;
         let reader = master.try_clone_reader()?;
 
+        // Writer thread: PTY input jobs (keeps write_all/flush off the UI thread —
+        // a stalled child must never block the event loop).
+        let (wtx, wrx) = channel::<Vec<u8>>();
+        std::thread::Builder::new()
+            .name("berth-pane-writer".into())
+            .spawn(move || {
+                let mut writer = writer;
+                for bytes in wrx {
+                    if let Err(_e) = writer.write_all(&bytes).and_then(|_| writer.flush()) {
+                        // Child is gone or wedged; UI will observe Closed via the reader.
+                        break;
+                    }
+                }
+            })?;
+
         let size = PaneSize {
             cols: 80,
             rows: 24,
@@ -167,8 +183,8 @@ impl Pane {
             term,
             parser: Processor::new(),
             pending: rx,
+            writer_jobs: wtx,
             master,
-            writer,
             child,
             size,
         })
@@ -240,9 +256,11 @@ impl Pane {
         *self.term.mode()
     }
 
+    /// Queue input for the pane's writer thread (non-blocking).
     pub fn write(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
-        self.writer.write_all(bytes)?;
-        self.writer.flush()?;
+        self.writer_jobs
+            .send(bytes.to_vec())
+            .map_err(|_| anyhow::anyhow!("writer gone (pane closed)"))?;
         Ok(())
     }
 

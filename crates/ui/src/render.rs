@@ -526,14 +526,18 @@ struct Vertex {
     tex: u32,
 }
 
-/// Quad accumulator for one frame.
+/// Per-frame quad accumulator; `dropped` counts budget refusals (logged once).
 #[derive(Default)]
 struct QuadSink {
     verts: Vec<Vertex>,
     uploads: Vec<Upload>,
+    /// Quads refused this frame due to the budget (total, not per cell).
+    dropped: usize,
 }
 
-const QUAD_LIMIT: usize = (16 << 20) / 4 / std::mem::size_of::<Vertex>();
+/// Vertex budget: 32 MiB buffer / headroom / vertex size; 1 in 4 verts reserved
+/// for chrome (tab bar, sidebar, outlines) so a full grid never starves chrome.
+const QUAD_LIMIT: usize = (24 << 20) / std::mem::size_of::<Vertex>();
 
 /// 4 thin quads tracing the inside of `r` (focused-pane outline).
 fn draw_focus_outline(sink: &mut QuadSink, r: Rect, color: [f32; 4]) {
@@ -561,7 +565,15 @@ impl QuadSink {
         glyph: Option<GlyphRef>,
     ) {
         if self.verts.len() + 6 > QUAD_LIMIT {
-            return; // grid larger than M1 budget; drop excess quads
+            if self.dropped == 0 {
+                // Loud, once per frame: silent cell drops were a release bug.
+                dlog!(
+                    "quad budget exhausted at {} verts (grid too dense); dropping rest",
+                    self.verts.len()
+                );
+            }
+            self.dropped += 1;
+            return;
         }
         let [r, g, b, a] = color;
         let (u0, v0, u1, v1, tex) = match glyph {
@@ -746,7 +758,7 @@ impl Renderer {
             label: Some("berth-shader"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
         });
-        let quad_capacity = 16 << 20;
+        let quad_capacity = 24 << 20;
         let quad_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("berth-quads"),
             size: quad_capacity,
