@@ -21,6 +21,9 @@ cargo build --release
 
 ## Status
 
+Events and full tracking: **[docs/ROADMAP.md](docs/ROADMAP.md)** (includes the
+Nov 2026 external review's findings and their status).
+
 v0.11.0 — M1 done, M2 done except polish, M3 mostly done, M4 not started.
 
 ### Shipped
