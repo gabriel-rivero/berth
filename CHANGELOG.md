@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/gabriel-rivero/berth/compare/v0.19.0...v0.20.0) (2026-11-04)
+
+
+### Features
+
+* **ui:** drag tabs between workspaces via the sidebar ([77eb43a](https://github.com/gabriel-rivero/berth/commit/77eb43a5e70c9af9a0eef548a18762bfb3feaa14))
+
 ## [0.19.0](https://github.com/gabriel-rivero/berth/compare/v0.18.2...v0.19.0) (2026-11-04)
 
 
