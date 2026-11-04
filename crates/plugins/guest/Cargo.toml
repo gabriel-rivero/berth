@@ -1,0 +1,17 @@
+[package]
+name = "berth-plugin-guest"
+description = "berth demo plugin: auto-namer for workspaces (wasm32-wasip2 guest)"
+publish = false
+edition = "2024"
+version = "0.1.0"
+
+[dependencies]
+# NOTE: async feature off on purpose — it drags wasi:io imports into the
+# component, which the host would then have to implement (we host without WASI).
+wit-bindgen = { version = "0.63.0", default-features = false, features = ["macros", "realloc"] }
+
+# guest builds separately (wasm32-wasip2), so it opts out of the host workspace.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]

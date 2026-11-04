@@ -85,8 +85,20 @@ reported on stderr at load. Changes hot-reload like the rest of the config.
 - advanced TUIs: kitty keyboard protocol probe/responses (TERM=xterm-256color
   + COLORTERM=truecolor already cover the common palette cases)
 - platform: keep ConPTY path honest on Windows (CI compiles but manual QA pending)
-- **M4** — plugin host (`crates/plugins`), capability-gated WASM ABI,
-  example plugins
+- **M4** — plugin host (`crates/plugins`, slice 1 shipped, growing): fuel
+  limits + capability gating + error surfacing; pane-output taps; keybind
+  presets via plugins
+
+### Plugins (slice 1)
+
+Drop `.wasm` components into `~/.config/berth/plugins/` (Windows/macOS:
+the `berth/config dir` per OS). Plugins use the WIT world `berth:plugin`
+(`crates/plugins/wit/berth-plugin.wit`): they receive a workspace/tab
+snapshot (`get-workspaces`/`get-tabs` via the exported `on-layout-change`
+callback) and may queue workspace renames with `set-workspace-label`.
+Broken plugins log and are skipped. Demo guest: `crates/plugins/guest`
+(auto-namer: `ws 2` → `ws-02`), compiled with
+`cargo build -p berth-plugin-guest --release --target wasm32-wasip2`.
 
 ### macOS notes
 

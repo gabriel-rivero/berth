@@ -1,0 +1,2 @@
+cargo:rustc-link-lib=static=wit_bindgen_cabi_wasip3_0_63_0
+cargo:rustc-link-search=native=/home/grivero/projects/terminal/crates/plugins/guest/target/wasm32-wasip2/release/build/wit-bindgen-6350a67afc26e864/out

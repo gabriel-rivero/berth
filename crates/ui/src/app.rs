@@ -5,6 +5,7 @@ use berth_core::config::{Backspace, Config};
 use berth_core::keybinds::{Action, Chord, build_bindings};
 use berth_core::layout::{Layout, PaneId, Rect, Tab, Workspace, WorkspaceId};
 use berth_emulation::pane::{Pane, PaneEvent, TermPoint};
+use berth_plugins::{LoadedPlugin, WorkspaceRename, plugin_engine};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use winit::{
@@ -73,6 +74,8 @@ pub struct Berth {
     titles: HashMap<PaneId, String>,
     /// Compiled keybind table (chord -> action); rebuilt on config reload.
     bindings: HashMap<Chord, Action>,
+    /// Loaded wasm plugins (tier-1 layout ABI), synced each tick.
+    plugins: Vec<LoadedPlugin>,
 }
 
 /// Where the last mouse press landed — used for double-click-to-create.
@@ -1252,6 +1255,7 @@ impl ApplicationHandler<PaneEvent> for Berth {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.poll_config_reload();
+        self.tick_plugins();
         // Auto-cancel a stale quit confirmation.
         if let Some(t) = self.confirm_exit
             && t.elapsed() >= CONFIRM_TIMEOUT
@@ -1312,6 +1316,61 @@ impl Berth {
             }
         }
     }
+
+    /// Push the current layout snapshot into every plugin and apply the
+    /// renames they queue up. Runs on each wait tick (~750 ms).
+    fn tick_plugins(&mut self) {
+        if self.plugins.is_empty() {
+            return;
+        }
+        let active_ws = self.layout.active;
+        let workspaces: Vec<_> = self
+            .layout
+            .workspaces
+            .iter()
+            .map(|ws| berth_plugins::berth::plugin::host::WorkspaceInfo {
+                id: ws.id.0,
+                label: ws.label.clone(),
+                active: ws.id == active_ws,
+            })
+            .collect();
+        let tabs: Vec<_> = self
+            .layout
+            .workspaces
+            .iter()
+            .flat_map(|ws| {
+                ws.tabs
+                    .iter()
+                    .map(move |t| berth_plugins::berth::plugin::host::TabInfo {
+                        id: t.id.0,
+                        workspace_id: ws.id.0,
+                        label: t.label.clone(),
+                        active: ws.id == active_ws && t.id == ws.focused_tab,
+                    })
+            })
+            .collect();
+
+        let mut renames: Vec<WorkspaceRename> = Vec::new();
+        for plugin in &mut self.plugins {
+            renames.extend(plugin.sync(workspaces.clone(), tabs.clone()));
+        }
+        let mut changed = false;
+        for r in renames {
+            if self.rename_edit.as_ref().is_some_and(|e| e.ws.0 == r.id) {
+                continue; // user is typing a label for this workspace: theirs wins
+            }
+            if let Some(ws) = self.layout.workspaces.iter_mut().find(|ws| ws.id.0 == r.id)
+                && ws.label != r.label
+            {
+                dlog_app!("plugin rename ws {}: '{}'", r.id, r.label);
+                ws.label = r.label;
+                changed = true;
+            }
+        }
+        if changed {
+            self.window.as_ref().inspect(|w| w.request_redraw());
+        }
+    }
 }
 
 /// App config dir (berth/), shared with Config::path()'s origin. None when the
@@ -1331,6 +1390,19 @@ pub fn run() -> anyhow::Result<()> {
 
     let event_loop = EventLoop::<PaneEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
+
+    // Plugin host: load every *.wasm under the config dir's plugins/ folder.
+    let mut plugins = Vec::new();
+    if let Some(dir) = config_dir() {
+        let engine = plugin_engine()?;
+        plugins = berth_plugins::load_plugins(&engine, &dir.join("plugins"), &mut |msg| {
+            eprintln!("berth plugins: {msg}");
+        });
+        if !plugins.is_empty() {
+            eprintln!("berth plugins: {} loaded", plugins.len());
+        }
+    }
+
     let mut app = Berth {
         config,
         layout,
@@ -1350,6 +1422,7 @@ pub fn run() -> anyhow::Result<()> {
         focused_pane,
         titles: HashMap::new(),
         bindings,
+        plugins,
         config_mtime: Config::path()
             .and_then(|p| std::fs::metadata(&p).ok())
             .and_then(|m| m.modified().ok()),

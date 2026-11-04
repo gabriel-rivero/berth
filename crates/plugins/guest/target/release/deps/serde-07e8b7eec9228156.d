@@ -1,0 +1,14 @@
+/home/grivero/projects/terminal/crates/plugins/guest/target/release/deps/serde-07e8b7eec9228156.d: /home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /home/grivero/projects/terminal/crates/plugins/guest/target/release/build/serde-92e63ec528c2bd87/out/private.rs
+
+/home/grivero/projects/terminal/crates/plugins/guest/target/release/deps/libserde-07e8b7eec9228156.rlib: /home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /home/grivero/projects/terminal/crates/plugins/guest/target/release/build/serde-92e63ec528c2bd87/out/private.rs
+
+/home/grivero/projects/terminal/crates/plugins/guest/target/release/deps/libserde-07e8b7eec9228156.rmeta: /home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /home/grivero/projects/terminal/crates/plugins/guest/target/release/build/serde-92e63ec528c2bd87/out/private.rs
+
+/home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs:
+/home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs:
+/home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs:
+/home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs:
+/home/grivero/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs:
+/home/grivero/projects/terminal/crates/plugins/guest/target/release/build/serde-92e63ec528c2bd87/out/private.rs:
+
+# env-dep:OUT_DIR=/home/grivero/projects/terminal/crates/plugins/guest/target/release/build/serde-92e63ec528c2bd87/out

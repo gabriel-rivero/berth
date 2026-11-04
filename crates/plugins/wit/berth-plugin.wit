@@ -1,0 +1,34 @@
+package berth:plugin@0.1.0;
+
+/// Everything a plugin can read or do on the layout (tier 1: layout commands).
+/// Host state is a read-only snapshot during `on-layout-change`; writes go
+/// through explicit setters which the app applies after the callback returns.
+interface host {
+    record workspace-info {
+        id: u64,
+        label: string,
+        active: bool,
+    }
+
+    record tab-info {
+        id: u64,
+        workspace-id: u64,
+        label: string,
+        active: bool,
+    }
+
+    get-workspaces: func() -> list<workspace-info>;
+    get-tabs: func() -> list<tab-info>;
+
+    /// Queue a workspace rename; applied by the host after the callback returns
+    /// (this way plugins cannot observe torn state mid-guest-call).
+    set-workspace-label: func(id: u64, label: string);
+}
+
+world plugin {
+    import host;
+
+    /// Guest entry point, called by the host after every layout mutation batch.
+    /// Guests may call `host` getters/setters from inside this function.
+    export on-layout-change: func();
+}

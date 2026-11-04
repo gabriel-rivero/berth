@@ -16,6 +16,7 @@ alacritty_terminal.workspace = true
 winit.workspace = true
 wgpu.workspace = true
 pollster = "1.0"
+berth-plugins = { path = "../plugins" }
 anyhow.workspace = true
 swash = "0.2.10"
 fontdb = "0.24.0"
