@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.6](https://github.com/gabriel-rivero/berth/compare/v0.21.5...v0.21.6) (2026-11-04)
+
+
+### Bug Fixes
+
+* **ui:** chrome input precedence, tab-drag threshold, focus-pane + close-tab actions ([10627f2](https://github.com/gabriel-rivero/berth/commit/10627f294c6521a6153fb3baa187d114cbb502d6))
+
 ## [0.21.5](https://github.com/gabriel-rivero/berth/compare/v0.21.4...v0.21.5) (2026-11-04)
 
 
