@@ -42,7 +42,23 @@ v0.11.0 — M1 done, M2 done except polish, M3 mostly done, M4 not started.
   `cmd+u` sidebar toggle, `+` buttons on tab strip and sidebar,
   confirm banner before closing a multi-pane workspace ✕ cascade,
   session persistence: workspaces/tabs/splits are snapshotted every ~4s
-  and on exit (`berths.json`) and restored — with fresh shells — on relaunch
+  and on exit (`berths.json`) and restored — with fresh shells — on relaunch,
+  OSC 7 cwd tracking: new tabs/splits/workspaces start in the focused pane's
+  directory (works with shell-integration-aware shells; see below)
+
+### Shell integration (optional)
+
+Emit OSC 7 to give berth the real cwd for new panes and saved sessions — add
+to your rc file:
+
+```sh
+# zsh
+autoload -Uz add-zsh-hook
+report_cwd() { printf '\e]7;file://%s%s\a' "$(hostname)" "$PWD" }
+add-zsh-hook precmd report_cwd
+```
+
+(bash: append the same `printf` to a `PS1` via `PROMPT_COMMAND`.)
 
 ### Keybinds
 

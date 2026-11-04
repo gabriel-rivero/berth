@@ -47,7 +47,7 @@ Three pillars for "1.0":
 | S2 | DECCKM application cursor keys ignored | **[open]** (`term.mode().application_cursor` → `ESC O A…`) |
 | S2 | Ctrl+digit (2..8) sends nothing | **[open]** — NUL/ESC/FS/GS/RS/US/DEL table |
 | S2 | Bold/italic/underline/strikethrough not rendered | **[open]** — second faces + underline quads; synth-bold fallback |
-| S2 | New tab/split/workspace loses cwd (`Tab.cwd` dead) | **[open]** — forward OSC 7 from TermListener → per-pane cwd → spawn cwd; also `basename(cwd)` tab labels |
+| S2 | New tab/split/workspace loses cwd (`Tab.cwd` dead) | **[done 0.24.0]** — OSC 7 extracted from raw PTY bytes in the reader thread (cross-chunk, BEL + ESC\, percent-decode; unit-test covering split carry) → per-pane cwd pool → `Tab.cwd` write-back → new tab/split/workspace inherit the focused pane's cwd. Leftover: `basename(cwd)` tab labels + shell-integration docs/plugins. |
 | S2 | Close pane/tab/workspace kills live jobs without confirm | **[open]** — extend window-close banner to live-shell closes; single-pane escape hatch. *(qwen U-4: also covers the ✕ cascade — closing the last tab of the last workspace exits the app instantly, `app.rs:1275-1281`, with no banner)* |
 | S2 | No IME handling (`WindowEvent::Ime`) | **[open]** — CJK input blocker |
 | S2 | Tab/sidebar overflow past ~6/25 entries unreachable | **[open]** — shrink-to-fit + ellipsis + chevrons/scroll |
@@ -85,7 +85,7 @@ Three pillars for "1.0":
 - **[open]** **Tab reordering** *(qwen U-8)*: drag only moves tabs *between* workspaces; strip slot order is immutable (README "re-orderable" oversells).
 - **[open]** **Discoverable chrome buttons** *(qwen U-9/U-7/U-10)*: tab-strip trailing `+`, sidebar-header `+ ws` (header double-click secretly creates workspaces today — make it visible), right-click context menus (tab: close/rename/close-others/move-to-ws; entry: rename/close; pane: copy/paste/split/zoom), wheel-over-strip cycles tabs / wheel-over-sidebar cycles workspaces.
 - **[open]** Per-workspace `[workspaces.<id>]` config: cwd, env, command, color/icon; auto-name from git basename core-side.
-- **[done 0.23.0]** Session persistence ("berths"): layout tree (workspaces/tabs/splits + labels) snapshotted to `config_dir/berths.json` every ~4s and on exit; relaunched restores the tree and re-spawns a fresh shell per pane. Leftover roadmap item: per-pane cwd via OSC 7 + per-workspace command/env.
+- **[done 0.23.0]** Session persistence ("berths"): layout tree (workspaces/tabs/splits + labels) snapshotted to `config_dir/berths.json` every ~4s and on exit; relaunched restores the tree and re-spawns a fresh shell per pane. New tab/split/workspace cwd now inherited from the focused pane's OSC 7 (see S2 row).
 - **[open]** Quick switcher (`cmd+p`) over workspaces/tabs.
 - **[open]** Activity badges: output-since-last-look + child-exited dots on sidebar entries/tabs (event stream already carries PaneId) — *the* cmux wedge, done open-source.
 - **[open]** Keyboard split-resize (`alt+shift+arrows` → ratio ±5%).
@@ -108,7 +108,7 @@ Safety/pipeline, in risk order:
 ## Table stakes still missing (review §4a, priority order)
 
 Mouse reporting **[done]** · bracketed paste/copy-on-select **[done]** ·
-**[open]**: bold/italic faces; OSC 7 cwd; scrollback search (`ctrl+shift+f`
+**[open]**: bold/italic faces; scrollback search (`ctrl+shift+f`
 overlay, incremental highlight via a second Selection); **word/line selection
 (double/triple-click — qwen BUGS-9)**; clickable links (OSC 8 +
 regex, `cmd+click`); cursor shapes/blink + `WindowEvent::Focused`; fullscreen +
