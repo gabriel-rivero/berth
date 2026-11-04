@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1](https://github.com/gabriel-rivero/berth/compare/v0.17.0...v0.17.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* **ui:** exit event loop on close, wheel-to-hovered-pane, DPR font swap, flaky roundtrip test ([a5187cb](https://github.com/gabriel-rivero/berth/commit/a5187cbea00d9e15582e002335a9840845d0e347))
+
 ## [0.17.0](https://github.com/gabriel-rivero/berth/compare/v0.16.0...v0.17.0) (2026-11-04)
 
 
