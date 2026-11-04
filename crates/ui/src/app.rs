@@ -120,6 +120,8 @@ pub struct Berth {
     rename_edit: Option<RenameEdit>,
     /// Pane currently receiving keys / selection events.
     focused_pane: PaneId,
+    /// Zoomed pane (tmux-style: occupies the full content rect until toggled).
+    zoomed: Option<PaneId>,
     /// OSC title per pane (empty until the shell sets one; falls back to tab label).
     titles: HashMap<PaneId, String>,
     /// Compiled keybind table (chord -> action); rebuilt on config reload.
@@ -291,6 +293,19 @@ impl Berth {
     }
 
     /// Propagate window size -> renderer surface + every pane grid.
+    /// Geometry of the visible panes: zoomed shows only the zoomed pane full-bleed.
+    fn current_rects(&self, area: Rect) -> (Vec<(PaneId, Rect)>, Vec<Rect>) {
+        let Some(tab) = self.layout.active_tab() else {
+            return (Vec::new(), Vec::new());
+        };
+        if let Some(zid) = self.zoomed
+            && tab.pane_ids_in_order().contains(&zid)
+        {
+            return (vec![(zid, area)], Vec::new());
+        }
+        (tab.pane_rects(area), tab.dividers(area))
+    }
+
     fn sync_size(&mut self) {
         if self.window.is_some() {
             self.sync_window_title();
@@ -306,7 +321,8 @@ impl Berth {
             return;
         }
         let area = self.content_rect();
-        let rects = self.layout.active_tab().map(|t| t.pane_rects(area));
+        let (rects, _) = self.current_rects(area);
+        let rects = Some(rects);
         if let Some(rects) = rects {
             for (id, rect) in rects {
                 let Some(pane) = self.panes.get(&id) else {
@@ -328,11 +344,8 @@ impl Berth {
     /// Pump every pane and redraw the whole layout.
     fn redraw(&mut self) {
         let area = self.content_rect();
-        let Some(tab) = self.layout.active_tab() else {
-            return;
-        };
-        let rect_map: HashMap<PaneId, Rect> = tab.pane_rects(area).into_iter().collect();
-        let dividers = tab.dividers(area);
+        let (rect_list, dividers) = self.current_rects(area);
+        let rect_map: HashMap<PaneId, Rect> = rect_list.into_iter().collect();
         let self_titles = &self.titles;
         let tabs: Vec<(&str, bool)> = self
             .layout
@@ -373,12 +386,7 @@ impl Berth {
                 .map(|w| w.scale_factor())
                 .unwrap_or(1.0),
         );
-        let focus = self
-            .layout
-            .active_tab()
-            .map(|t| t.pane_rects(area))
-            .and_then(|rects| rects.into_iter().find(|(id, _)| *id == self.focused_pane))
-            .map(|(_, rect)| rect);
+        let focus = rect_map.get(&self.focused_pane).copied();
 
         let mut guards = Vec::new();
         for (id, rect) in rect_map {
@@ -953,6 +961,17 @@ impl Berth {
                 dlog_app!("action close-tab: click-only keybind ignored");
                 false
             }
+            Action::ZoomPane => {
+                self.zoomed = if self.zoomed == Some(self.focused_pane) {
+                    dlog_app!("zoom-pane: unzoom");
+                    None
+                } else {
+                    dlog_app!("zoom-pane: zoom {:?}", self.focused_pane);
+                    Some(self.focused_pane)
+                };
+                self.sync_size();
+                true
+            }
             Action::NextTab => {
                 self.cycle_tab(1);
                 true
@@ -1215,6 +1234,9 @@ impl ApplicationHandler<PaneEvent> for Berth {
             }
             PaneEvent::Closed(id) => {
                 let _ = self.panes.remove(&id);
+                if self.zoomed == Some(id) {
+                    self.zoomed = None;
+                }
                 // The pane may belong to any tab of any workspace (close buttons
                 // and close_workspace act on non-focused trees too), so walk all
                 // of them: drop the pane from its tab, the tab when empty, the
@@ -1781,6 +1803,7 @@ pub fn run() -> anyhow::Result<()> {
         confirm_exit: None,
         rename_edit: None,
         focused_pane,
+        zoomed: None,
         titles: HashMap::new(),
         bindings,
         plugins,

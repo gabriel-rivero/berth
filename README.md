@@ -50,6 +50,7 @@ Defaults follow iTerm2 (`cmd`/super chords work on all platforms); legacy
 | cycle workspaces | `ctrl+alt+←` / `ctrl+alt+→` |
 | cycle tabs | `cmd+]` / `cmd+[` (`ctrl+tab`, +shift for prev) |
 | close focused pane | `cmd+w` (`ctrl+shift+w`) |
+| zoom focused pane (tmux-style) | `cmd+shift+Enter` |
 | close any tab / workspace | `✕` button in the tab slot / sidebar entry |
 | resize sidebar | drag its right edge (hover shows ⟷ cursor) |
 | pane focus | `alt+arrows` |
@@ -67,8 +68,8 @@ defaults for that action:
 
 Action ids: `split-vertical`, `split-horizontal`, `new-tab`, `close-pane`,
 `close-tab`, `next-tab`, `prev-tab`, `new-workspace`, `close-workspace`,
-`next-workspace`, `prev-workspace`, `copy`, `paste`, `scroll-page-up`,
-`scroll-page-down`. Chord syntax is modifier tokens (`ctrl`/`control`,
+`next-workspace`, `prev-workspace`, `zoom-pane`, `copy`, `paste`,
+`scroll-page-up`, `scroll-page-down`. Chord syntax is modifier tokens (`ctrl`/`control`,
 `shift`, `alt`/`option`, `super`/`cmd`/`win`) joined with `+` plus the key
 (`enter`, `tab`, `backslash`, `[`, `]`, `left/right/up/down`,
 `pageup/pagedown`, `home`, `end`, `insert`, `delete`, `escape`, `space`,

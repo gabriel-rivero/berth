@@ -25,6 +25,7 @@ pub enum Action {
     Paste,
     ScrollPageUp,
     ScrollPageDown,
+    ZoomPane,
 }
 
 impl Action {
@@ -46,6 +47,7 @@ impl Action {
             Action::Paste => "paste",
             Action::ScrollPageUp => "scroll-page-up",
             Action::ScrollPageDown => "scroll-page-down",
+            Action::ZoomPane => "zoom-pane",
         }
     }
 
@@ -66,6 +68,7 @@ impl Action {
             "paste" => Action::Paste,
             "scroll-page-up" => Action::ScrollPageUp,
             "scroll-page-down" => Action::ScrollPageDown,
+            "zoom-pane" => Action::ZoomPane,
             _ => return None,
         })
     }
@@ -91,6 +94,8 @@ impl Action {
             (Action::CloseWorkspace, &["ctrl+shift+q"]),
             (Action::NextWorkspace, &["ctrl+alt+right"]),
             (Action::PrevWorkspace, &["ctrl+alt+left"]),
+            // iTerm2's zoom-pane chord; Linux/Windows ctrl alias stays free for users.
+            (Action::ZoomPane, &["cmd+shift+enter"]),
         ]
     }
 }
