@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.21.3](https://github.com/gabriel-rivero/berth/compare/v0.21.2...v0.21.3) (2026-11-04)
+
+
+### Bug Fixes
+
+* **emu:** forward parser query replies (PtyWrite) back to the PTY ([f138548](https://github.com/gabriel-rivero/berth/commit/f13854894c4a98bacbee344b6e5f5f2453e0e2a8))
+
+
+### Documentation
+
+* committed roadmap distilled from the external review ([4a6e68f](https://github.com/gabriel-rivero/berth/commit/4a6e68fa60038ac10d4e434dca5870ef64955a82))
+
 ## [0.21.2](https://github.com/gabriel-rivero/berth/compare/v0.21.1...v0.21.2) (2026-11-04)
 
 
