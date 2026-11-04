@@ -139,7 +139,7 @@ jobs:
           /usr/share/icons/hicolor/256x256/apps/berth.png
           EOF
           rpmbuild -bb --define "_topdir $toprpm" --buildroot "$bt" \
-            --define 'dist %{nil}' "$toprpm/SPECS/berth.spec"
+            --define 'dist %{nil}' --target "$arch-linux" "$toprpm/SPECS/berth.spec"
           mv "$toprpm"/RPMS/$arch/berth-*.rpm .
 
       - name: package .app bundle (macOS)
