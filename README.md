@@ -130,8 +130,10 @@ selection prefers Menlo / SF Mono / Monaco over the generic `monospace`
 ## Releases
 
 Tags `vX.Y.Z` are cut by release-please from conventional commits; the release
-workflow attaches 5 archives: linux x64/aarch64 (musl static, the aarch64 via
-cargo-zigbuild), macOS aarch64/x64, Windows x64 zip.
+workflow attaches: linux x64/aarch64 binaries (`tar.gz`, musl static, the
+aarch64 via cargo-zigbuild) plus `deb`/`rpm` packages for both arches (binary
+at `/usr/bin/berth`, desktop entry + hicolor icons, no runtime dependencies),
+macOS aarch64/x64 (`tar.gz` + signed `.app` bundles), Windows x64 zip.
 
 ## License
 

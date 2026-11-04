@@ -51,6 +51,97 @@ jobs:
           mkdir "$dir"
           cp target/${{ matrix.target }}/release/berth "$dir"/
           tar czf berth-${GITHUB_REF_NAME#v}-${{ matrix.target }}.tar.gz "$dir"
+      - name: package deb (linux)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          ver=${GITHUB_REF_NAME#v}
+          case '${{ matrix.target }}' in
+            x86_64-*) arch=amd64 ;;
+            aarch64-*) arch=arm64 ;;
+          esac
+          root=berth_${ver}_${arch}
+          mkdir -p "$root"/DEBIAN "$root"/usr/bin "$root"/usr/share/applications \
+            "$root"/usr/share/icons/hicolor/64x64/apps \
+            "$root"/usr/share/icons/hicolor/128x128/apps \
+            "$root"/usr/share/icons/hicolor/256x256/apps
+          install -m 755 target/${{ matrix.target }}/release/berth "$root"/usr/bin/berth
+          printf '%s\n' \
+            'Package: berth' \
+            "Version: $ver" \
+            'Section: utils' \
+            'Priority: optional' \
+            "Architecture: $arch" \
+            'Maintainer: Gabriel Rivero <gabriel-rivero@users.noreply.github.com>' \
+            'Description: terminal emulator with workspaces, tabs and splits' \
+            ' berth is a Ghostty-inspired terminal emulator with a workspace' \
+            ' sidebar, split panes, a clickable tab bar and hot-reloading TOML' \
+            ' config. Static musl build: no dependencies on the host.' \
+            > "$root"/DEBIAN/control
+          printf '%s\n' \
+            '[Desktop Entry]' \
+            'Type=Application' \
+            'Name=berth' \
+            'Exec=berth' \
+            'Icon=berth' \
+            'Categories=System;TerminalEmulator;' \
+            'Terminal=false' \
+            > "$root"/usr/share/applications/berth.desktop
+          install -m 644 assets/berth-64.png "$root"/usr/share/icons/hicolor/64x64/apps/berth.png
+          install -m 644 assets/berth-128.png "$root"/usr/share/icons/hicolor/128x128/apps/berth.png
+          install -m 644 assets/berth-256.png "$root"/usr/share/icons/hicolor/256x256/apps/berth.png
+          dpkg-deb --root-owner-group --build "$root"
+      - name: package rpm (linux)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          sudo apt-get install -y rpm
+          ver=${GITHUB_REF_NAME#v}
+          case '${{ matrix.target }}' in
+            x86_64-*) arch=x86_64 ;;
+            aarch64-*) arch=aarch64 ;;
+          esac
+          toprpm="$PWD/.rpm"
+          mkdir -p "$toprpm"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS}
+          bt="$toprpm/BUILDROOT/berth"
+          mkdir -p "$bt"/usr/bin "$bt"/usr/share/applications \
+            "$bt"/usr/share/icons/hicolor/64x64/apps \
+            "$bt"/usr/share/icons/hicolor/128x128/apps \
+            "$bt"/usr/share/icons/hicolor/256x256/apps
+          install -m 755 target/${{ matrix.target }}/release/berth "$bt"/usr/bin/berth
+          printf '%s\n' \
+            '[Desktop Entry]' \
+            'Type=Application' \
+            'Name=berth' \
+            'Exec=berth' \
+            'Icon=berth' \
+            'Categories=System;TerminalEmulator;' \
+            'Terminal=false' \
+            > "$bt"/usr/share/applications/berth.desktop
+          install -m 644 assets/berth-64.png "$bt"/usr/share/icons/hicolor/64x64/apps/berth.png
+          install -m 644 assets/berth-128.png "$bt"/usr/share/icons/hicolor/128x128/apps/berth.png
+          install -m 644 assets/berth-256.png "$bt"/usr/share/icons/hicolor/256x256/apps/berth.png
+          cat > "$toprpm/SPECS/berth.spec" <<EOF
+          Name: berth
+          Version: $ver
+          Release: 1%{?dist}
+          Summary: terminal emulator with workspaces, tabs and splits
+          License: MIT OR Apache-2.0
+          URL: https://github.com/gabriel-rivero/berth
+          BuildArch: $arch
+          %description
+          berth is a Ghostty-inspired terminal emulator with a workspace sidebar,
+          split panes, a clickable tab bar and hot-reloading TOML config. Static
+          musl build: no dependencies on the host.
+          %files
+          %attr(755,root,root) /usr/bin/berth
+          /usr/share/applications/berth.desktop
+          /usr/share/icons/hicolor/64x64/apps/berth.png
+          /usr/share/icons/hicolor/128x128/apps/berth.png
+          /usr/share/icons/hicolor/256x256/apps/berth.png
+          EOF
+          rpmbuild -bb --define "_topdir $toprpm" --buildroot "$bt" \
+            --define 'dist %{nil}' "$toprpm/SPECS/berth.spec"
+          mv "$toprpm"/RPMS/$arch/berth-*.rpm .
+
       - name: package .app bundle (macOS)
         # A raw Unix binary launched from Finder opens a Terminal.app window first
         # (the reported behavior); a Berth.app bundle launches clean without a
@@ -94,4 +185,6 @@ jobs:
           files: |
             berth-*${{ matrix.archive }}
             berth-*.app.zip
+            berth_*.deb
+            berth-*.rpm
           generate_release_notes: true
