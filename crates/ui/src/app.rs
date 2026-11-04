@@ -23,10 +23,10 @@ use crate::render::{Chrome, Renderer, sidebar_width, tab_index_at, workspace_ind
 /// How many lines one wheel tick moves.
 const WHEEL_LINES_PER_TICK: i32 = 3;
 
-/// App-side diagnostics, same env gate as render::dlog.
+/// App-side diagnostics, same env gate + sink as render::dlog.
 macro_rules! dlog_app {
     ($($arg:tt)*) => {
-        if crate::render::debug_enabled() { eprintln!($($arg)*); }
+        if crate::render::debug_enabled() { crate::render::dlog_emit(&format!($($arg)*)); }
     };
 }
 
@@ -433,7 +433,7 @@ impl Berth {
                 true
             }
             Err(e) => {
-                eprintln!("pane spawn failed: {e}");
+                crate::render::dlog_emit(&format!("pane spawn failed: {e}"));
                 false
             }
         }
@@ -1547,7 +1547,7 @@ impl Berth {
         }
         self.config_mtime = Some(mtime);
         let Ok(cfg) = Config::load() else {
-            eprintln!("config reload: parse failed, keeping previous config");
+            crate::render::dlog_emit("config reload: parse failed, keeping previous config");
             return;
         };
         let font_changed = cfg.font.family != self.config.font.family
@@ -1556,7 +1556,7 @@ impl Berth {
         let (bindings, warns) = build_bindings(&self.config.keybinds.0);
         self.bindings = bindings;
         for (id, reason) in &warns {
-            eprintln!("berth config: keybind '{id}': '{reason}'");
+            crate::render::dlog_emit(&format!("berth config: keybind '{id}': '{reason}'"));
         }
         dlog_app!(
             "config reload: sidebar={} width={} font=\"{}\" pt={}",
@@ -1570,7 +1570,9 @@ impl Berth {
             let size_px = self.config.font.size_pt * 1.333_333 * window.scale_factor() as f32;
             match renderer.set_font(&self.config.font.family, size_px) {
                 Ok(()) => self.sync_size(),
-                Err(e) => eprintln!("config reload: font swap failed: {e}"),
+                Err(e) => {
+                    crate::render::dlog_emit(&format!("config reload: font swap failed: {e}"))
+                }
             }
         }
     }
@@ -1643,7 +1645,7 @@ pub fn run() -> anyhow::Result<()> {
     let focused_pane = layout.active_tab().map(|t| t.focused).unwrap_or(PaneId(0));
     let (bindings, binds_warns) = build_bindings(&config.keybinds.0);
     for (id, reason) in &binds_warns {
-        eprintln!("berth config: keybind '{id}': '{reason}'");
+        crate::render::dlog_emit(&format!("berth config: keybind '{id}': '{reason}'"));
     }
 
     let event_loop = EventLoop::<PaneEvent>::with_user_event().build()?;
@@ -1654,10 +1656,10 @@ pub fn run() -> anyhow::Result<()> {
     if let Some(dir) = config_dir() {
         let engine = plugin_engine()?;
         plugins = berth_plugins::load_plugins(&engine, &dir.join("plugins"), &mut |msg| {
-            eprintln!("berth plugins: {msg}");
+            crate::render::dlog_emit(&format!("berth plugins: {msg}"));
         });
         if !plugins.is_empty() {
-            eprintln!("berth plugins: {} loaded", plugins.len());
+            crate::render::dlog_emit(&format!("berth plugins: {} loaded", plugins.len()));
         }
     }
 

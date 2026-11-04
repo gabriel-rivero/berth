@@ -21,15 +21,54 @@ use wgpu::{
 };
 use winit::window::Window;
 
-/// One-line stdout diagnostics, enabled with BERTH_DEBUG=1 (cross-platform font/render triage).
+/// One-line diagnostics, enabled with BERTH_DEBUG=1 (cross-platform font/render triage).
+/// Output goes to stderr AND `config_dir/berth.log` — the file is the only sink that
+/// survives GUI launches on Windows (windows-subsystem builds have no console).
 pub fn debug_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("BERTH_DEBUG").ok().as_deref() == Some("1"))
 }
 
+static DLOG_FILE: std::sync::OnceLock<std::sync::Mutex<Option<std::fs::File>>> =
+    std::sync::OnceLock::new();
+
+/// Append one diagnostic line to `config_dir/berth.log` and (best-effort) stderr.
+/// stderr writes never panic: GUI-subsystem processes may have no valid stderr.
+pub fn dlog_emit(line: &str) {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let stamp = START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f32();
+    let full = format!("[+{stamp:.1}s] {line}");
+    {
+        let m = DLOG_FILE.get_or_init(|| std::sync::Mutex::new(None));
+        let mut slot = match m.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        if slot.is_none() {
+            *slot = crate::app::config_dir().and_then(|dir| {
+                std::fs::create_dir_all(&dir).ok()?;
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(dir.join("berth.log"))
+                    .ok()
+            });
+        }
+        if let Some(f) = slot.as_mut() {
+            use std::io::Write;
+            let _ = writeln!(f, "{full}");
+        }
+    }
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr().lock(), "{full}");
+}
+
 macro_rules! dlog {
     ($($arg:tt)*) => {
-        if debug_enabled() { eprintln!($($arg)*); }
+        if debug_enabled() { dlog_emit(&format!($($arg)*)); }
     };
 }
 
