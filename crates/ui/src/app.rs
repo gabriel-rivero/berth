@@ -1,6 +1,7 @@
 //! Window/eventloop: winit 0.30 ApplicationHandler + keyboard/clipboard/selection wiring.
 //! M3: workspaces + sidebar — the layout tree (`berth-core::Layout`) decides geometry; live
 //! `Pane`s are keyed by PaneId. Sidebar lists workspaces; tab strip + panes tile beside it.
+use alacritty_terminal::term::TermMode;
 use berth_core::config::{Backspace, Config};
 use berth_core::keybinds::{Action, Chord, build_bindings};
 use berth_core::layout::{Layout, PaneId, Rect, Tab, Workspace, WorkspaceId};
@@ -37,6 +38,55 @@ fn term_point(pane: &Pane, row: usize, col: usize) -> TermPoint {
         pane.term().renderable_content().display_offset,
         alacritty_terminal::index::Point::new(row, alacritty_terminal::index::Column(col)),
     )
+}
+
+/// Encode one mouse event per the pane's active reporting modes.
+///
+/// SGR (1006): `CSI < {code+mods} ; {x} ; {y} M|m`. Legacy X10 (1000): bytes
+/// `\x1b[M` + button/coords offset by 32 (1-based, capped at 223). Returns None
+/// when the pane is not capturing mouse events.
+fn mouse_event_bytes(
+    mode: alacritty_terminal::term::TermMode,
+    code: u8,
+    row: usize,
+    col: usize,
+    pressed: bool,
+) -> Option<Vec<u8>> {
+    use alacritty_terminal::term::TermMode;
+    if !mode
+        .intersects(TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION)
+    {
+        return None;
+    }
+    let (x, y) = (col + 1, row + 1);
+    if mode.contains(TermMode::SGR_MOUSE) {
+        // SGR carries modifier bits in the button field; the caller encodes
+        // those into `code` before calling this.
+        let action = if pressed { 'M' } else { 'm' };
+        Some(format!("\x1b[{code};{x};{y}{action}").into_bytes())
+    } else if x <= 223 && y <= 223 {
+        // X10 release always reports "no button" (3); modifier bits are X10
+        // extensions, so plain 3 keeps this compatible.
+        let b = if pressed { 32 + code } else { 32 + 3 };
+        Some(vec![0x1b, b'[', b'M', b, 32 + x as u8, 32 + y as u8])
+    } else {
+        None
+    }
+}
+
+/// SGR mouse modifier bits (shift handled by callers as a selection bypass).
+fn mouse_mod_bits(mods: ModifiersState) -> u8 {
+    let mut bits = 0;
+    if mods.shift_key() {
+        bits |= 4;
+    }
+    if mods.alt_key() {
+        bits |= 8;
+    }
+    if mods.control_key() {
+        bits |= 16;
+    }
+    bits
 }
 
 pub struct Berth {
@@ -101,8 +151,108 @@ struct RenameEdit {
 const DOUBLE_CLICK_MS: u128 = 500;
 /// px slack around the sidebar's right edge for the resize grab.
 const SIDEBAR_EDGE_GRAB: f64 = 4.0;
+/// Upper bound of wheel clicks forwarded per event (flood guard).
+const MAX_WHEEL_CLICKS: u32 = 16;
 
 impl Berth {
+    /// Forward a mouse press/release to the hovered pane when it captured the
+    /// mouse (DECSET 1000/1002/1003; SGR 1006 preferred, legacy X10 fallback).
+    /// Returns true when the event was consumed by the pane. Shift+click always
+    /// bypasses reporting so users can still select inside TUI apps.
+    fn forward_mouse_button(&mut self, code: u8, pressed: bool, mods: ModifiersState) -> bool {
+        if mods.shift_key() {
+            return false;
+        }
+        let Some((id, row, col)) = self.pane_at_mouse() else {
+            return false;
+        };
+        let Some(pane) = self.panes.get(&id) else {
+            return false;
+        };
+        let bytes = {
+            let guard = pane.lock().expect("pane poisoned");
+            mouse_event_bytes(
+                guard.term_mode(),
+                code | mouse_mod_bits(mods),
+                row,
+                col,
+                pressed,
+            )
+        };
+        let Some(bytes) = bytes else {
+            return false;
+        };
+        if pressed {
+            self.focused_pane = id;
+            if let Some(tab) = self.layout.active_tab_mut() {
+                tab.focused = id;
+            }
+        }
+        let _ = pane.lock().expect("pane poisoned").write(&bytes);
+        dlog_app!(
+            "mouse forward btn={code} pressed={pressed} pane={id:?} at [{row},{col}] bytes={:?}",
+            String::from_utf8_lossy(&bytes)
+        );
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+        true
+    }
+
+    /// Forward the wheel to the hovered pane as button 64/65 clicks when the
+    /// pane reports mouse events, or as arrow-key presses under alternate-scroll
+    /// (xterm 1007 semantics). Returns true when consumed; otherwise the wheel
+    /// scrolls the pane's own viewport.
+    fn forward_mouse_wheel(&mut self, up: bool, clicks: u32, mods: ModifiersState) -> bool {
+        if mods.shift_key() {
+            return false;
+        }
+        let Some((id, row, col)) = self.pane_at_mouse() else {
+            return false;
+        };
+        let Some(pane) = self.panes.get(&id) else {
+            return false;
+        };
+        let clicks = clicks.min(MAX_WHEEL_CLICKS);
+        let bytes = {
+            let guard = pane.lock().expect("pane poisoned");
+            let mode = guard.term_mode();
+            let wheel_code = (if up { 64u8 } else { 65u8 }) | mouse_mod_bits(mods);
+            if mode.intersects(TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_DRAG) {
+                Some(
+                    (0..clicks)
+                        .flat_map(move |_| {
+                            mouse_event_bytes(mode, wheel_code, row, col, true)
+                                .into_iter()
+                                .flatten()
+                                .chain(
+                                    mouse_event_bytes(mode, wheel_code, row, col, false)
+                                        .into_iter()
+                                        .flatten(),
+                                )
+                                .collect::<Vec<u8>>()
+                        })
+                        .collect::<Vec<u8>>(),
+                )
+            } else if mode.contains(TermMode::ALTERNATE_SCROLL) {
+                // xterm alternate-scroll: the wheel becomes arrow keys.
+                let seq: &[u8] = if up { b"\x1b[A" } else { b"\x1b[B" };
+                Some(seq.repeat(clicks as usize))
+            } else {
+                None
+            }
+        };
+        let Some(bytes) = bytes.filter(|b| !b.is_empty()) else {
+            return false;
+        };
+        let _ = pane.lock().expect("pane poisoned").write(&bytes);
+        dlog_app!(
+            "wheel forward up={up} clicks={clicks} pane={id:?} bytes={}",
+            bytes.len()
+        );
+        true
+    }
+
     fn cell_metrics(&self) -> (f32, f32) {
         self.renderer
             .as_ref()
@@ -1195,27 +1345,33 @@ impl ApplicationHandler<PaneEvent> for Berth {
                             self.select_tab(i);
                         }
                     } else {
-                        // Divider grab wins over pane focus/selection.
-                        let x = (self.mouse.x.max(0.0)) as u32;
-                        let y = (self.mouse.y.max(0.0)) as u32;
-                        let grab = self
-                            .layout
-                            .active_tab()
-                            .and_then(|t| t.grab_index_at(x, y, self.content_rect()));
-                        if let Some((idx, vertical)) = grab {
-                            dlog_app!("divider grab #{idx} vertical={vertical} at ({x},{y})");
-                            self.divider_drag = Some((idx, vertical));
+                        // A TUI app that captured the mouse (1000/1002/1006)
+                        // receives the press instead of pane selection.
+                        if self.forward_mouse_button(0, true, self.modifiers) {
+                            dlog_app!("press forwarded to pane");
                         } else {
-                            self.dragging = true;
-                            if let Some((id, row, col)) = self.pane_at_mouse() {
-                                self.focused_pane = id;
-                                if let Some(tab) = self.layout.active_tab_mut() {
-                                    tab.focused = id;
-                                }
-                                if let Some(pane) = self.panes.get(&id) {
-                                    let mut pane = pane.lock().expect("pane poisoned");
-                                    let pt = term_point(&pane, row, col);
-                                    pane.start_selection(pt);
+                            // Divider grab wins over pane focus/selection.
+                            let x = (self.mouse.x.max(0.0)) as u32;
+                            let y = (self.mouse.y.max(0.0)) as u32;
+                            let grab = self
+                                .layout
+                                .active_tab()
+                                .and_then(|t| t.grab_index_at(x, y, self.content_rect()));
+                            if let Some((idx, vertical)) = grab {
+                                dlog_app!("divider grab #{idx} vertical={vertical} at ({x},{y})");
+                                self.divider_drag = Some((idx, vertical));
+                            } else {
+                                self.dragging = true;
+                                if let Some((id, row, col)) = self.pane_at_mouse() {
+                                    self.focused_pane = id;
+                                    if let Some(tab) = self.layout.active_tab_mut() {
+                                        tab.focused = id;
+                                    }
+                                    if let Some(pane) = self.panes.get(&id) {
+                                        let mut pane = pane.lock().expect("pane poisoned");
+                                        let pt = term_point(&pane, row, col);
+                                        pane.start_selection(pt);
+                                    }
                                 }
                             }
                         }
@@ -1228,24 +1384,51 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     self.dragging = false;
                     self.divider_drag = None;
                     self.sidebar_drag = false;
+                    // Release a captured mouse even when press+release straddle
+                    // panes: apps track buttons, not clicks.
+                    let _ = self.forward_mouse_button(0, false, self.modifiers);
                     self.update_cursor();
                 }
             },
+            WindowEvent::MouseInput { state, button, .. } => {
+                // Middle/right clicks go to capturing TUI apps (2=right, 1=middle).
+                // The Left arm above owns selection/focus semantics.
+                let code = match button {
+                    MouseButton::Middle => 1u8,
+                    MouseButton::Right => 2u8,
+                    _ => 0,
+                };
+                if code != 0 {
+                    match state {
+                        ElementState::Pressed => {
+                            let _ = self.forward_mouse_button(code, true, self.modifiers);
+                        }
+                        ElementState::Released => {
+                            let _ = self.forward_mouse_button(code, false, self.modifiers);
+                        }
+                    }
+                    self.update_cursor();
+                }
+            }
             WindowEvent::MouseWheel { delta, .. } => {
                 let (_, cell_h) = self.cell_metrics();
                 let lines = match delta {
                     MouseScrollDelta::LineDelta(_, y) => (y * WHEEL_LINES_PER_TICK as f32) as i32,
                     MouseScrollDelta::PixelDelta(pos) => (pos.y / cell_h as f64).round() as i32,
                 };
-                if lines != 0
-                    && let Some((id, _, _)) = self.pane_at_mouse()
-                    && let Some(pane) = self.panes.get(&id)
-                {
+                if lines != 0 {
                     // Wheel follows the hovered pane, not the focused one
                     // (matches macOS Terminal / iTerm2 behavior).
-                    pane.lock()
-                        .expect("pane poisoned")
-                        .scroll_display(alacritty_terminal::grid::Scroll::Delta(lines));
+                    let forwarded =
+                        self.forward_mouse_wheel(lines > 0, lines.unsigned_abs(), self.modifiers);
+                    if !forwarded
+                        && let Some((id, _, _)) = self.pane_at_mouse()
+                        && let Some(pane) = self.panes.get(&id)
+                    {
+                        pane.lock()
+                            .expect("pane poisoned")
+                            .scroll_display(alacritty_terminal::grid::Scroll::Delta(lines));
+                    }
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }

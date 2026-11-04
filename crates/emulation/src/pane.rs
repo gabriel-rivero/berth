@@ -5,7 +5,7 @@ use alacritty_terminal::event::EventListener;
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
-use alacritty_terminal::term::{Config as TermConfig, Term};
+use alacritty_terminal::term::{Config as TermConfig, Term, TermMode};
 use alacritty_terminal::vte::ansi::Processor;
 use berth_core::layout::PaneId;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -236,6 +236,10 @@ impl Pane {
     }
 
     /// Raw stdin path: UTF-8 key input etc. goes straight to the shell.
+    pub fn term_mode(&self) -> TermMode {
+        *self.term.mode()
+    }
+
     pub fn write(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
         self.writer.write_all(bytes)?;
         self.writer.flush()?;
