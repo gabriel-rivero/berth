@@ -799,10 +799,36 @@ impl Berth {
             } else {
                 CursorIcon::EwResize
             }
+        } else if self.hover_chrome() {
+            CursorIcon::Pointer
         } else {
             CursorIcon::Default
         };
         window.set_cursor(Cursor::Icon(icon));
+    }
+
+    /// True when the pointer is over interactive chrome (workspace rows, tab
+    /// slots, close buttons) so the cursor suggests clickability.
+    fn hover_chrome(&self) -> bool {
+        let Some(window) = &self.window else {
+            return false;
+        };
+        let ch = Chrome::new(window.scale_factor());
+        let sb_w = sidebar_width(
+            self.config.sidebar.show,
+            self.config.sidebar.width_px,
+            window.scale_factor(),
+        );
+        let (x, y) = (self.mouse.x, self.mouse.y);
+        // Sidebar: everything up to the right edge is a row/close/empty target.
+        if self.config.sidebar.show && x < f64::from(sb_w) {
+            return true;
+        }
+        // Tab strip: slots extend right up to the bar's full width.
+        if y < f64::from(ch.tab_bar_h) {
+            return true;
+        }
+        false
     }
 
     /// Kill every pane of the tab at slot `index` of the active workspace; the
@@ -1239,7 +1265,13 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 if let Some(pane) = self.panes.get(&id) {
                     pane.lock().expect("pane poisoned").pump();
                 }
-                self.redraw();
+                // Coalesce: request_redraw lets the event loop batch bursts of
+                // output into one RedrawRequested per loop pass (a fast-emitting
+                // PTY would otherwise present one frame per chunk — the UI
+                // visibly stalls under `seq 1 3000`-style floods).
+                if let Some(w) = self.window.as_ref() {
+                    w.request_redraw();
+                }
             }
             PaneEvent::PtyWrite(id, bytes) => {
                 dlog_app!("pty write reply {:?}: {} b", id, bytes.len());
@@ -1616,8 +1648,46 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 }
             },
             WindowEvent::MouseInput { state, button, .. } => {
-                // Middle/right clicks go to capturing TUI apps (2=right, 1=middle).
-                // The Left arm above owns selection/focus semantics.
+                // Middle-click closes the chrome item under the pointer (iTerm2
+                // style); other middle/right clicks go to capturing TUI apps
+                // (2=right, 1=middle). The Left arm owns selection semantics.
+                if button == MouseButton::Middle && state == ElementState::Pressed {
+                    let scale = self
+                        .window
+                        .as_ref()
+                        .map(|w| w.scale_factor())
+                        .unwrap_or(1.0);
+                    let ch = Chrome::new(scale);
+                    let sb_w = sidebar_width(
+                        self.config.sidebar.show,
+                        self.config.sidebar.width_px,
+                        scale,
+                    ) as i32;
+                    let (x, y) = (self.mouse.x as i32, self.mouse.y as i32);
+                    if self.config.sidebar.show && x < sb_w && y >= ch.tab_bar_h as i32 {
+                        let count = self.layout.workspaces.len();
+                        if let Some(i) =
+                            workspace_index_at(y as f32, count, ch).filter(|_| count > 1)
+                        {
+                            dlog_app!("middle click -> close workspace #{i}");
+                            self.close_workspace_at(i);
+                        }
+                        return;
+                    }
+                    if y < ch.tab_bar_h as i32 {
+                        let count = self
+                            .layout
+                            .active_workspace()
+                            .map(|w| w.tabs.len())
+                            .unwrap_or(0);
+                        if let Some(i) = tab_index_at((x - sb_w).max(0) as f32, count, ch.tab_w) {
+                            dlog_app!("middle click -> close tab slot{i}");
+                            self.close_tab(i);
+                        }
+                        return;
+                    }
+                    // Not over chrome: fall through to TUI forwarding below.
+                }
                 let code = match button {
                     MouseButton::Middle => 1u8,
                     MouseButton::Right => 2u8,

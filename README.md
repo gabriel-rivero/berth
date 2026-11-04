@@ -33,6 +33,7 @@ v0.11.0 — M1 done, M2 done except polish, M3 mostly done, M4 not started.
 - **M2** — splits (`ctrl+shift+Enter` vertical, `ctrl+shift+\` horizontal),
   draggable splitters, tabs (`ctrl+shift+n`, `ctrl+tab` / `ctrl+shift+tab`
   cycle), visible tab strip with click-to-focus, close pane (`ctrl+shift+w`),
+  middle-click closes tabs/workspaces,
   pane focus with `alt+arrows`, OSC window/tab titles
 - **M3** — left sidebar with workspaces (`ctrl+shift+o` new,
   `ctrl+shift+q` close, `ctrl+alt+←/→` cycle, click entries), auto
