@@ -52,7 +52,7 @@ jobs:
           cp target/${{ matrix.target }}/release/berth "$dir"/
           tar czf berth-${GITHUB_REF_NAME#v}-${{ matrix.target }}.tar.gz "$dir"
       - name: package deb (linux)
-        if: matrix.archive == 'tar.gz'
+        if: matrix.archive == 'tar.gz' && contains(matrix.target, 'unknown-linux-musl')
         run: |
           ver=${GITHUB_REF_NAME#v}
           case '${{ matrix.target }}' in
@@ -91,7 +91,7 @@ jobs:
           install -m 644 assets/berth-256.png "$root"/usr/share/icons/hicolor/256x256/apps/berth.png
           dpkg-deb --root-owner-group --build "$root"
       - name: package rpm (linux)
-        if: matrix.archive == 'tar.gz'
+        if: matrix.archive == 'tar.gz' && contains(matrix.target, 'unknown-linux-musl')
         run: |
           sudo apt-get install -y rpm
           ver=${GITHUB_REF_NAME#v}
