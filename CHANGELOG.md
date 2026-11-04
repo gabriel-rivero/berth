@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/gabriel-rivero/berth/compare/v0.17.1...v0.18.0) (2026-11-04)
+
+
+### Features
+
+* **terminal:** mouse reporting (SGR 1006 + X10 1000 + alternate scroll) ([c1a19e2](https://github.com/gabriel-rivero/berth/commit/c1a19e2f2582bd9ce478e43b68f404f455d9adc8))
+
 ## [0.17.1](https://github.com/gabriel-rivero/berth/compare/v0.17.0...v0.17.1) (2026-11-04)
 
 
