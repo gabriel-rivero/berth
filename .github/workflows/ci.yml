@@ -42,5 +42,5 @@ jobs:
       - if: matrix.os == 'ubuntu-latest'
         run: |
           rustup target add wasm32-wasip2
-          cargo build -p berth-plugin-guest --release --target wasm32-wasip2
+          cargo build --manifest-path crates/plugins/guest/Cargo.toml --release --target wasm32-wasip2
       - run: cargo test --workspace
