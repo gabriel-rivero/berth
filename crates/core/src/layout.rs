@@ -650,4 +650,43 @@ impl Workspace {
         }
         true
     }
+
+    /// Insert a tab (moved from another workspace) and focus it in this workspace.
+    pub fn insert_tab(&mut self, tab: Tab) {
+        self.focused_tab = tab.id;
+        self.tabs.push(tab);
+    }
+}
+
+impl Layout {
+    /// Move a tab from whichever workspace holds it to the given one; the target
+    /// workspace becomes active and the moved tab/focused pane become focused.
+    /// Returns the origin workspace id when it is left empty (caller may drop it).
+    pub fn move_tab_to(&mut self, tab_id: TabId, to_ws: WorkspaceId) -> Option<WorkspaceId> {
+        let mut tab = None;
+        let mut empty_origin = None;
+        for ws in &mut self.workspaces {
+            if let Some(pos) = ws.tabs.iter().position(|t| t.id == tab_id) {
+                if ws.focused_tab == tab_id {
+                    ws.focused_tab = ws
+                        .tabs
+                        .iter()
+                        .rev()
+                        .find(|t| t.id != tab_id)
+                        .map_or(TabId(u64::MAX), |t| t.id);
+                }
+                tab = Some(ws.tabs.remove(pos));
+                if ws.tabs.is_empty() && ws.id != to_ws {
+                    empty_origin = Some(ws.id);
+                }
+                break;
+            }
+        }
+        let tab = tab?;
+        if let Some(ws) = self.workspaces.iter_mut().find(|w| w.id == to_ws) {
+            ws.insert_tab(tab);
+            self.active = to_ws;
+        }
+        empty_origin
+    }
 }

@@ -4,7 +4,7 @@
 use alacritty_terminal::term::TermMode;
 use berth_core::config::{Backspace, Config};
 use berth_core::keybinds::{Action, Chord, build_bindings};
-use berth_core::layout::{Layout, PaneId, Rect, Tab, Workspace, WorkspaceId};
+use berth_core::layout::{Layout, PaneId, Rect, Tab, TabId, Workspace, WorkspaceId};
 use berth_emulation::pane::{Pane, PaneEvent, TermPoint};
 use berth_plugins::{LoadedPlugin, WorkspaceRename, plugin_engine};
 use std::collections::HashMap;
@@ -109,6 +109,8 @@ pub struct Berth {
     divider_drag: Option<(usize, bool)>,
     /// True while dragging the sidebar's right edge to resize it.
     sidebar_drag: bool,
+    /// Some(tab) while a tab is being dragged (release over sidebar moves it).
+    tab_drag: Option<TabId>,
     /// Last press (time + zone) for double-click detection (tab bar / workspace bar).
     last_click: Option<(std::time::Instant, ClickZone)>,
     /// Set on first close attempt with live shells; second close (or esc-free
@@ -1308,6 +1310,63 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }
+                } else if let Some(tab_id) = self.tab_drag {
+                    // Dragging a tab over the sidebar moves it to the hovered workspace.
+                    dlog_app!(
+                        "tab-drag move at ({},{}) sh={}",
+                        self.mouse.x,
+                        self.mouse.y,
+                        self.config.sidebar.show
+                    );
+                    let scale = self
+                        .window
+                        .as_ref()
+                        .map(|w| w.scale_factor())
+                        .unwrap_or(1.0);
+                    let ch = crate::render::Chrome::new(scale);
+                    let sb_w = crate::render::sidebar_width(
+                        self.config.sidebar.show,
+                        self.config.sidebar.width_px,
+                        scale,
+                    );
+                    let over_sidebar = self.config.sidebar.show
+                        && self.layout.workspaces.len() > 1
+                        && self.mouse.x < sb_w as f64;
+                    if over_sidebar {
+                        let ws_count = self.layout.workspaces.len();
+                        let idx = workspace_index_at(self.mouse.y as f32, ws_count, ch);
+                        if let Some(ws) = idx
+                            .and_then(|i| self.layout.workspaces.get(i))
+                            .map(|w| w.id)
+                        {
+                            let holder = self
+                                .layout
+                                .workspaces
+                                .iter()
+                                .find(|w| w.tabs.iter().any(|t| t.id == tab_id))
+                                .map(|w| w.id);
+                            if holder != Some(ws) {
+                                dlog_app!("tab drag -> ws {:?}", ws);
+                                let empty = self.layout.move_tab_to(tab_id, ws);
+                                if let Some(empty) = empty {
+                                    self.layout.remove_workspace(empty);
+                                }
+                            }
+                            if let Some(id) = self
+                                .layout
+                                .active_workspace()
+                                .and_then(|w| w.focused_tab())
+                                .map(|t| t.focused)
+                            {
+                                self.focused_pane = id;
+                            }
+                            self.sync_size();
+                            if let Some(w) = &self.window {
+                                w.request_redraw();
+                            }
+                        }
+                        return;
+                    }
                 } else if let Some((idx, _vertical)) = self.divider_drag {
                     let x = position.x.max(0.0) as u32;
                     let y = position.y.max(0.0) as u32;
@@ -1417,6 +1476,12 @@ impl ApplicationHandler<PaneEvent> for Berth {
                             self.new_tab();
                         } else if let Some(i) = slot {
                             self.select_tab(i);
+                            if let Some(tab) =
+                                self.layout.active_workspace().and_then(|ws| ws.tabs.get(i))
+                            {
+                                dlog_app!("tab drag begin slot{i} tab {:?}", tab.id);
+                                self.tab_drag = Some(tab.id);
+                            }
                         }
                     } else {
                         // A TUI app that captured the mouse (1000/1002/1006)
@@ -1458,6 +1523,7 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     self.dragging = false;
                     self.divider_drag = None;
                     self.sidebar_drag = false;
+                    self.tab_drag = None;
                     // Release a captured mouse even when press+release straddle
                     // panes: apps track buttons, not clicks.
                     let _ = self.forward_mouse_button(0, false, self.modifiers);
@@ -1710,6 +1776,7 @@ pub fn run() -> anyhow::Result<()> {
         dragging: false,
         divider_drag: None,
         sidebar_drag: false,
+        tab_drag: None,
         last_click: None,
         confirm_exit: None,
         rename_edit: None,
