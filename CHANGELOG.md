@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.8](https://github.com/gabriel-rivero/berth/compare/v0.21.7...v0.21.8) (2026-11-04)
+
+
+### Performance
+
+* **ui:** coalesce PTY-output redraws; feat(ui): middle-click close + pointer cursor ([abcb1ab](https://github.com/gabriel-rivero/berth/commit/abcb1abb7844f3da897b47123566ef850a95bd5f))
+
 ## [0.21.7](https://github.com/gabriel-rivero/berth/compare/v0.21.6...v0.21.7) (2026-11-04)
 
 
