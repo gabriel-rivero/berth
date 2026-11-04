@@ -1762,6 +1762,16 @@ pub fn config_dir() -> Option<std::path::PathBuf> {
 }
 
 pub fn run() -> anyhow::Result<()> {
+    // First log line always announces where the log lives (Windows triage),
+    // and a panic hook turns invisible GUI panics into log lines.
+    crate::render::dlog_emit(&format!("log: config_dir={:?}", crate::app::config_dir()));
+    {
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            crate::render::dlog_emit(&format!("panic: {info}"));
+            default_hook(info);
+        }));
+    }
     let config = Config::load()?;
     let layout = Layout::with_defaults("main");
     let focused_pane = layout.active_tab().map(|t| t.focused).unwrap_or(PaneId(0));

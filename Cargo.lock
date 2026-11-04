@@ -211,7 +211,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "berth"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "berth-core",
@@ -221,7 +221,7 @@ dependencies = [
 
 [[package]]
 name = "berth-core"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "directories",
@@ -232,7 +232,7 @@ dependencies = [
 
 [[package]]
 name = "berth-emulation"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -242,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "berth-plugins"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "wasmtime",
@@ -251,7 +251,7 @@ dependencies = [
 
 [[package]]
 name = "berth-ui"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",

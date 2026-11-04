@@ -48,14 +48,18 @@ pub fn dlog_emit(line: &str) {
             Err(_) => return,
         };
         if slot.is_none() {
-            *slot = crate::app::config_dir().and_then(|dir| {
-                std::fs::create_dir_all(&dir).ok()?;
-                std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(dir.join("berth.log"))
-                    .ok()
-            });
+            // Primary: real config dir; fallback: OS temp dir (a broken/odd
+            // AppData must never leave us log-less on Windows).
+            *slot = crate::app::config_dir()
+                .or_else(|| Some(std::env::temp_dir().join("berth")))
+                .and_then(|dir| {
+                    std::fs::create_dir_all(&dir).ok()?;
+                    std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(dir.join("berth.log"))
+                        .ok()
+                });
         }
         if let Some(f) = slot.as_mut() {
             use std::io::Write;
