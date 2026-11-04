@@ -24,6 +24,9 @@ pub enum PaneEvent {
     Title(PaneId, String),
     /// OSC 112 or ESC c cleared the title.
     TitleReset(PaneId),
+    /// Lifecycle log line (spawn/reader/writer state) for triage; goes to the
+    /// app log file unconditionally (BERTH_DEBUG not required).
+    Log(String),
 }
 
 /// Callback the pane uses to wake the UI event loop.
@@ -97,6 +100,16 @@ impl Pane {
     /// reader thread whenever fresh output lands (call `pump()` afterwards). Pane ids come from
     /// `Layout::alloc_pane_id` (global counter) and tag every emitted event.
     pub fn spawn(id: PaneId, cwd: Option<&str>, notify: Notifier) -> anyhow::Result<Self> {
+        match Self::spawn_inner(id, cwd, &notify) {
+            Ok(pane) => Ok(pane),
+            Err(e) => {
+                notify(PaneEvent::Log(format!("pty: spawn FAILED: {e:#}")));
+                Err(e)
+            }
+        }
+    }
+
+    fn spawn_inner(id: PaneId, cwd: Option<&str>, notify: &Notifier) -> anyhow::Result<Self> {
         let pty_system = native_pty_system();
 
         // NOTE: rows/cols/scrollback must stay in sync with `size` below.
@@ -121,6 +134,16 @@ impl Pane {
         let child = pair.slave.spawn_command(cmd)?;
         let writer = master.take_writer()?;
         let reader = master.try_clone_reader()?;
+        // SAFETY-reference: notify is an Arc — clone into the thread body below so
+        // borrows never escape this fn (E0521: spawn_inner takes &Notifier but
+        // threads need 'static).
+        let notify = notify.clone();
+        notify(PaneEvent::Log(format!(
+            "pty: spawned child (pid {:?}), {}x{}",
+            child.process_id(),
+            80,
+            24
+        )));
 
         // Writer thread: PTY input jobs (keeps write_all/flush off the UI thread —
         // a stalled child must never block the event loop).
@@ -156,22 +179,33 @@ impl Pane {
                 let notify = notify;
                 let mut reader = reader;
                 let mut buf = [0u8; 8192];
+                let mut first = true;
+                notify(PaneEvent::Log("pty: reader started".into()));
                 loop {
                     match reader.read(&mut buf) {
                         Ok(0) => {
+                            notify(PaneEvent::Log("pty: reader eof".into()));
                             // EOF sentinel: drain side treats empty vec as end-of-stream.
                             let _ = tx.send(Vec::new());
                             notify(PaneEvent::Closed(id));
                             break;
                         }
                         Ok(n) => {
+                            if first {
+                                notify(PaneEvent::Log(format!(
+                                    "pty: first output {n} bytes: {:02x?}",
+                                    &buf[..n.min(24)]
+                                )));
+                                first = false;
+                            }
                             if tx.send(buf[..n].to_vec()).is_err() {
                                 break; // UI dropped the pane
                             }
                             notify(PaneEvent::Output(id));
                         }
                         Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                        Err(_) => {
+                        Err(e) => {
+                            notify(PaneEvent::Log(format!("pty: reader error: {e}")));
                             notify(PaneEvent::Closed(id));
                             break;
                         }

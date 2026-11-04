@@ -1210,6 +1210,9 @@ impl ApplicationHandler<PaneEvent> for Berth {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: PaneEvent) {
         match event {
+            PaneEvent::Log(msg) => {
+                crate::render::dlog_emit(&format!("emulation: {msg}"));
+            }
             PaneEvent::Output(id) => {
                 if let Some(pane) = self.panes.get(&id) {
                     pane.lock().expect("pane poisoned").pump();
