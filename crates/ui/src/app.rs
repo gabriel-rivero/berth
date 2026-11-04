@@ -74,8 +74,10 @@ pub struct Berth {
     titles: HashMap<PaneId, String>,
     /// Compiled keybind table (chord -> action); rebuilt on config reload.
     bindings: HashMap<Chord, Action>,
-    /// Loaded wasm plugins (tier-1 layout ABI), synced each tick.
+    /// WASM plugins (tier-1 layout ABI), synced each tick.
     plugins: Vec<LoadedPlugin>,
+    /// Set when the app decided to exit; about_to_wait stops the loop.
+    exiting: bool,
 }
 
 /// Where the last mouse press landed — used for double-click-to-create.
@@ -1056,6 +1058,17 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     self.sync_size();
                 }
             }
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                // Device-px cell size must follow the (possibly live) DPR change.
+                if let Some(renderer) = &mut self.renderer {
+                    let size_px = self.config.font.size_pt * 1.333_333 * scale_factor as f32;
+                    // Font rebuild failure keeps the old strike (visible but
+                    // stale-size chrome) instead of dropping the renderer.
+                    if renderer.set_font(&self.config.font.family, size_px).is_ok() {
+                        self.sync_size();
+                    }
+                }
+            }
             WindowEvent::KeyboardInput { event, .. } => {
                 let consumed = event.state == ElementState::Pressed
                     && self.handle_chord(&event, self.modifiers);
@@ -1225,8 +1238,11 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     MouseScrollDelta::PixelDelta(pos) => (pos.y / cell_h as f64).round() as i32,
                 };
                 if lines != 0
-                    && let Some(pane) = self.panes.get(&self.focused_pane)
+                    && let Some((id, _, _)) = self.pane_at_mouse()
+                    && let Some(pane) = self.panes.get(&id)
                 {
+                    // Wheel follows the hovered pane, not the focused one
+                    // (matches macOS Terminal / iTerm2 behavior).
                     pane.lock()
                         .expect("pane poisoned")
                         .scroll_display(alacritty_terminal::grid::Scroll::Delta(lines));
@@ -1244,6 +1260,9 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     self.confirm_exit = Some(std::time::Instant::now());
                     self.window.as_ref().inspect(|w| w.request_redraw());
                 } else {
+                    // Real exit: stop the event loop (setting window to None alone
+                    // leaves run_app polling forever — zombie process risk).
+                    self.exiting = true;
                     self.window = None;
                     self.renderer = None;
                     self.panes.clear();
@@ -1254,6 +1273,11 @@ impl ApplicationHandler<PaneEvent> for Berth {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Exit stops everything else (also drains the poll timers).
+        if self.exiting {
+            event_loop.exit();
+            return;
+        }
         self.poll_config_reload();
         self.tick_plugins();
         // Auto-cancel a stale quit confirmation.
@@ -1423,6 +1447,7 @@ pub fn run() -> anyhow::Result<()> {
         titles: HashMap::new(),
         bindings,
         plugins,
+        exiting: false,
         config_mtime: Config::path()
             .and_then(|p| std::fs::metadata(&p).ok())
             .and_then(|m| m.modified().ok()),

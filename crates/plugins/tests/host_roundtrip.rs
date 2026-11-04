@@ -46,7 +46,9 @@ fn auto_namer_renames_default_labels_only() {
     }];
 
     let renames = plugin.sync(workspaces, tabs);
-    let names: Vec<(u64, String)> = renames.into_iter().map(|r| (r.id, r.label)).collect();
+    let mut names: Vec<(u64, String)> = renames.into_iter().map(|r| (r.id, r.label)).collect();
+    // Plugin-internal pending-rename ordering isn't stable; compare as a set.
+    names.sort();
     assert_eq!(
         names,
         vec![(1, "ws-01".to_string()), (7, "ws-07".to_string())]
