@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.1](https://github.com/gabriel-rivero/berth/compare/v0.21.0...v0.21.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* **logging:** fallback log dir + startup path announcement + panic hook ([54a701f](https://github.com/gabriel-rivero/berth/commit/54a701f90e4dbe41292ba9b08f2e345c03ffa6f6))
+
 ## [0.21.0](https://github.com/gabriel-rivero/berth/compare/v0.20.0...v0.21.0) (2026-11-04)
 
 
