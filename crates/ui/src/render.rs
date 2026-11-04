@@ -115,6 +115,9 @@ pub const TAB_WIDTH: f32 = 140.0;
 /// sidebar entries (shared by renderer and input).
 pub const UI_CLOSE_W: f32 = 14.0;
 
+/// Width of the `+` (new tab / new workspace) buttons.
+pub const UI_PLUS_W: f32 = 26.0;
+
 /// Sidebar geometry: full-height column on the left; entries start below a
 /// header strip that aligns with the tab bar.
 pub const SIDEBAR_ENTRY_H: f32 = 32.0;
@@ -145,6 +148,8 @@ pub struct Chrome {
     pub tab_bar_h: f32,
     pub tab_w: f32,
     pub close_w: f32,
+    /// Width of the `+` buttons (tab strip + sidebar).
+    pub plus_w: f32,
     pub sidebar_entry_h: f32,
     pub sidebar_top: f32,
     pub sidebar_pad: f32,
@@ -160,6 +165,7 @@ impl Chrome {
             tab_bar_h: TAB_BAR_H * s,
             tab_w: TAB_WIDTH * s,
             close_w: UI_CLOSE_W * s,
+            plus_w: UI_PLUS_W * s,
             sidebar_entry_h: SIDEBAR_ENTRY_H * s,
             sidebar_top: TAB_BAR_H * s,
             sidebar_pad: SIDEBAR_PAD * s,
@@ -922,7 +928,7 @@ impl Renderer {
     }
 
     /// Draw the top tab strip (starting right of the sidebar): one fixed-width
-    /// slot per tab, active slot brighter.
+    /// slot per tab, active slot brighter, plus a `+` button to the right.
     fn draw_tab_bar(
         &mut self,
         tabs: &[(&str, bool)],
@@ -959,6 +965,18 @@ impl Renderer {
             }
             self.draw_close(
                 x0 + ch.tab_w - ch.close_w * 0.5,
+                ch.tab_bar_h * 0.5,
+                metrics,
+                TAB_TEXT,
+                sink,
+            );
+        }
+        // `+` new-tab button when the strip has room for it.
+        let plus_x = sb_w + tabs.len() as f32 * ch.tab_w;
+        if plus_x + ch.plus_w <= sb_w + bar_w {
+            self.draw_char_c(
+                '+',
+                plus_x + ch.plus_w * 0.5,
                 ch.tab_bar_h * 0.5,
                 metrics,
                 TAB_TEXT,
@@ -1018,6 +1036,36 @@ impl Renderer {
                 sink,
             );
         }
+        // `+` new-workspace button: one free row band below the last entry.
+        let plus_y = ch.sidebar_top + workspaces.len() as f32 * ch.sidebar_entry_h;
+        if plus_y + ch.sidebar_entry_h <= full_h {
+            self.draw_char_c(
+                '+',
+                ch.sidebar_pad + ch.close_w * 0.5,
+                plus_y + ch.sidebar_entry_h * 0.5,
+                metrics,
+                SIDEBAR_TEXT,
+                sink,
+            );
+        }
+    }
+
+    /// Draw `c` ink-box-centered at (cx, cy) — the button-glyph path ('+').
+    fn draw_char_c(
+        &mut self,
+        c: char,
+        cx: f32,
+        cy: f32,
+        _metrics: Metrics,
+        color: [f32; 4],
+        sink: &mut QuadSink,
+    ) {
+        let Some(g) = self.rasterize(c, sink) else {
+            return;
+        };
+        let gx = cx - g.uv[2] * 0.5;
+        let gy = cy - g.uv[3] * 0.5;
+        sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
     }
 
     /// Rasterize `c` (cached) from the primary font or fallbacks; queues the atlas upload on first use.

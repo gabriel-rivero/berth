@@ -2,6 +2,7 @@
 //! (and equivalents per OS via `directories`). Defaults applied via `#[serde(default)]`.
 use crate::keybinds::Keybinds;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -13,6 +14,8 @@ pub struct Config {
     pub sidebar: Sidebar,
     /// Raw `action -> chords` table (compiled into bindings by the ui layer).
     pub keybinds: Keybinds,
+    /// Per-plugin enabled flags keyed by plugin file stem ("auto-namer" = false).
+    pub plugins: Plugins,
     /// PTY/keyboard compatibility knobs.
     pub terminal: Terminal,
 }
@@ -82,6 +85,29 @@ impl Default for Terminal {
             backspace: Backspace::Del,
             copy_on_select: true,
         }
+    }
+}
+
+/// Per-plugin enable flags, keyed by plugin file stem:
+///
+/// ```toml
+/// [plugins]
+/// "auto-namer" = false
+/// ```
+///
+/// Absent entries count as enabled.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(transparent)]
+pub struct Plugins(pub HashMap<String, bool>);
+
+impl Plugins {
+    /// Stems marked disabled.
+    pub fn disabled(&self) -> Vec<&str> {
+        self.0
+            .iter()
+            .filter(|(_, on)| !**on)
+            .map(|(k, _)| k.as_str())
+            .collect()
     }
 }
 

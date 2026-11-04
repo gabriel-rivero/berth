@@ -38,7 +38,9 @@ v0.11.0 — M1 done, M2 done except polish, M3 mostly done, M4 not started.
 - **M3** — left sidebar with workspaces (`ctrl+shift+o` new,
   `ctrl+shift+q` close, `ctrl+alt+←/→` cycle, click entries), auto
   `ws N` labels, per-workspace tabs, hot-reload of `config.toml`
-  (mtime polling, every change incl. font swaps applies live)
+  (mtime polling, every change incl. font swaps applies live),
+  `cmd+u` sidebar toggle, `+` buttons on tab strip and sidebar,
+  confirm banner before closing a multi-pane workspace ✕ cascade
 
 ### Keybinds
 
@@ -74,6 +76,7 @@ defaults for that action:
 Action ids: `split-vertical`, `split-horizontal`, `new-tab`, `close-pane`,
 `close-tab`, `next-tab`, `prev-tab`, `new-workspace`, `close-workspace`,
 `next-workspace`, `prev-workspace`, `zoom-pane`, `focus-pane-up`, `focus-pane-down`,
+`toggle-sidebar`,
 `focus-pane-left`, `focus-pane-right`, `copy`, `paste`,
 `scroll-page-up`, `scroll-page-down`. Chord syntax is modifier tokens (`ctrl`/`control`,
 `shift`, `alt`/`option`, `super`/`cmd`/`win`) joined with `+` plus the key

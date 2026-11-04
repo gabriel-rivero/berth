@@ -113,9 +113,15 @@ pub struct WorkspaceRename {
     pub label: String,
 }
 
-/// Discover + instantiate every `*.wasm` plugin in `dir`. Broken plugins are
-/// reported and skipped, never fatal.
-pub fn load_plugins(engine: &Engine, dir: &Path, log: &mut dyn FnMut(String)) -> Vec<LoadedPlugin> {
+/// Discover + instantiate every enabled `*.wasm` plugin in `dir`. Broken
+/// plugins are reported and skipped, never fatal. `disabled` holds file stems
+/// switched off in `[plugins]` config.
+pub fn load_plugins(
+    engine: &Engine,
+    dir: &Path,
+    disabled: &[&str],
+    log: &mut dyn FnMut(String),
+) -> Vec<LoadedPlugin> {
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return out;
@@ -126,6 +132,14 @@ pub fn load_plugins(engine: &Engine, dir: &Path, log: &mut dyn FnMut(String)) ->
         .collect();
     paths.sort();
     for path in paths {
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        if disabled.contains(&stem) {
+            log(format!("plugin {stem} disabled by config, skipping"));
+            continue;
+        }
         match LoadedPlugin::load(engine, &path) {
             Ok(plugin) => out.push(plugin),
             Err(e) => log(format!("plugin {} failed to load: {e}", path.display())),

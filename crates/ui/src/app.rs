@@ -119,6 +119,8 @@ pub struct Berth {
     /// Set on first close attempt with live shells; second close (or esc-free
     /// timeout) actually exits.
     confirm_exit: Option<std::time::Instant>,
+    /// Armed workspace-close confirm banner (id + armed time).
+    confirm_ws: Option<(WorkspaceId, std::time::Instant)>,
     /// Live sidebar rename (workspace + buffer), active while Some.
     rename_edit: Option<RenameEdit>,
     /// Pane currently receiving keys / selection events.
@@ -407,24 +409,43 @@ impl Berth {
             .map(|(g, r)| (g.term(), *r))
             .collect::<Vec<_>>();
 
+        // Confirm banner (quit, or workspace-close cascade): owned text first so
+        // the renderer match below doesn't borrow self twice.
+        let confirm: Option<String> = if self.confirm_exit.is_some() {
+            Some("Live shells running — close again to quit (esc to cancel)".to_string())
+        } else if let Some((id, _)) = self.confirm_ws {
+            let ws = self.layout.workspaces.iter().find(|w| w.id == id);
+            let panes = ws
+                .map(|w| {
+                    w.tabs
+                        .iter()
+                        .map(|t| t.pane_ids_in_order().len())
+                        .sum::<usize>()
+                })
+                .unwrap_or(0);
+            ws.map(|w| {
+                format!(
+                    "Close '{}' ({} live panes) — press ✕ again (esc to cancel)",
+                    w.label, panes
+                )
+            })
+        } else {
+            None
+        };
+
         let failed = match (self.renderer.as_mut(), self.window.as_ref()) {
-            (Some(r), Some(w)) => {
-                let confirm: Option<&str> = self
-                    .confirm_exit
-                    .as_ref()
-                    .map(|_| "Live shells running — close again to quit (esc to cancel)");
-                r.draw(
+            (Some(r), Some(w)) => r
+                .draw(
                     &spans,
                     &dividers,
                     &tabs,
                     &workspaces,
                     sb_w,
                     focus,
-                    confirm,
+                    confirm.as_deref(),
                     w,
                 )
-                .is_err()
-            }
+                .is_err(),
             _ => false,
         };
         if failed {
@@ -850,6 +871,38 @@ impl Berth {
         }
     }
 
+    /// ✕ / middle-click on a workspace entry. Multi-pane workspaces arm a
+    /// confirm banner — a second press within CONFIRM_TIMEOUT commits; single
+    /// pane entries close right away.
+    fn confirm_workspace_close(&mut self, index: usize) {
+        let Some(ws) = self.layout.workspaces.get(index) else {
+            return;
+        };
+        let ws_id = ws.id;
+        let pane_count = ws
+            .tabs
+            .iter()
+            .map(|t| t.pane_ids_in_order().len())
+            .sum::<usize>();
+        if pane_count <= 1 {
+            self.confirm_ws = None;
+            self.close_workspace_at(index);
+            return;
+        }
+        if let Some((id, _)) = self.confirm_ws
+            && id == ws_id
+        {
+            dlog_app!("workspace close confirm -> commit ws#{index} panes={pane_count}");
+            self.confirm_ws = None;
+            self.close_workspace_at(index);
+            return;
+        }
+        dlog_app!("workspace close confirm armed ws#{index} panes={pane_count}");
+        self.rename_edit = None;
+        self.confirm_ws = Some((ws_id, std::time::Instant::now()));
+        self.window.as_ref().inspect(|w| w.request_redraw());
+    }
+
     /// Kill every pane of the workspace at sidebar slot `index`; the Closed
     /// cascade empties its tabs, then drops the workspace.
     fn close_workspace_at(&mut self, index: usize) {
@@ -931,6 +984,17 @@ impl Berth {
             return true;
         }
 
+        // Workspace-close confirm banner: escape cancels the pending close.
+        if self.confirm_ws.is_some() {
+            let name = chord_key_name(event);
+            if name.as_deref() == Some("escape") {
+                dlog_app!("workspace close confirm cancelled");
+                self.confirm_ws = None;
+                self.window.as_ref().inspect(|w| w.request_redraw());
+            }
+            return true;
+        }
+
         // Sidebar rename editor consumes keys while it is up.
         if self.rename_chord(event) {
             return true;
@@ -1006,7 +1070,18 @@ impl Berth {
             Action::FocusPaneUp
             | Action::FocusPaneDown
             | Action::FocusPaneLeft
-            | Action::FocusPaneRight => {
+            | Action::FocusPaneRight
+            | Action::ToggleSidebar => {
+                if action == Action::ToggleSidebar {
+                    self.config.sidebar.show = !self.config.sidebar.show;
+                    dlog_app!(
+                        "toggle-sidebar: show={} width={}",
+                        self.config.sidebar.show,
+                        self.config.sidebar.width_px
+                    );
+                    self.sync_size();
+                    return true;
+                }
                 use berth_core::layout::FocusDir;
                 let dir = match action {
                     Action::FocusPaneUp => FocusDir::Up,
@@ -1297,6 +1372,8 @@ impl ApplicationHandler<PaneEvent> for Berth {
             }
             PaneEvent::Closed(id) => {
                 let _ = self.panes.remove(&id);
+                // Prune the OSC title so a future PaneId reuse can't inherit it.
+                self.titles.remove(&id);
                 if self.zoomed == Some(id) {
                     self.zoomed = None;
                 }
@@ -1528,13 +1605,14 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     if self.mouse.x < sb_w_f {
                         // Sidebar click: entries select or close (right edge of
                         // the entry is the close button); double-click below
-                        // the entries creates a workspace.
+                        // the entries creates a workspace; `+` row below the
+                        // last entry creates one with a single click.
                         let count = self.layout.workspaces.len();
                         if let Some(i) = workspace_index_at(self.mouse.y as f32, count, ch) {
                             if self.mouse.x >= sb_w_f - f64::from(ch.close_w) {
                                 dlog_app!("sidebar close ws#{i}");
                                 self.rename_edit = None;
-                                self.close_workspace_at(i);
+                                self.confirm_workspace_close(i);
                             } else {
                                 dlog_app!("sidebar click ws#{i}");
                                 if self.double_click(ClickZone::SidebarEntry(i)) {
@@ -1545,9 +1623,18 @@ impl ApplicationHandler<PaneEvent> for Berth {
                                     self.select_workspace(i);
                                 }
                             }
-                        } else if self.double_click(ClickZone::SidebarEmpty) {
-                            dlog_app!("sidebar double-click -> new workspace");
-                            self.new_workspace();
+                        } else {
+                            let plus_y =
+                                f64::from(ch.sidebar_top + count as f32 * ch.sidebar_entry_h);
+                            if self.mouse.y >= plus_y
+                                && self.mouse.y < plus_y + f64::from(ch.sidebar_entry_h)
+                            {
+                                dlog_app!("sidebar plus -> new workspace");
+                                self.new_workspace();
+                            } else if self.double_click(ClickZone::SidebarEmpty) {
+                                dlog_app!("sidebar double-click -> new workspace");
+                                self.new_workspace();
+                            }
                         }
                     } else if self.mouse.y < f64::from(ch.tab_bar_h) {
                         // Tab strip: the right corner of a slot closes that tab;
@@ -1569,6 +1656,12 @@ impl ApplicationHandler<PaneEvent> for Berth {
                         {
                             dlog_app!("tab close slot{i}");
                             self.close_tab(i);
+                        } else if x_rel >= count as f32 * ch.tab_w
+                            && x_rel < count as f32 * ch.tab_w + ch.plus_w
+                        {
+                            // `+` button right after the last tab slot.
+                            dlog_app!("tab bar plus -> new tab");
+                            self.new_tab();
                         } else if self.double_click(ClickZone::TabBar)
                             && (slot.is_none() || focused_idx.is_none_or(|f| slot == Some(f)))
                         {
@@ -1670,7 +1763,8 @@ impl ApplicationHandler<PaneEvent> for Berth {
                             workspace_index_at(y as f32, count, ch).filter(|_| count > 1)
                         {
                             dlog_app!("middle click -> close workspace #{i}");
-                            self.close_workspace_at(i);
+                            let index = i;
+                            self.confirm_workspace_close(index);
                         }
                         return;
                     }
@@ -1763,6 +1857,13 @@ impl ApplicationHandler<PaneEvent> for Berth {
             && t.elapsed() >= CONFIRM_TIMEOUT
         {
             self.confirm_exit = None;
+            self.window.as_ref().inspect(|w| w.request_redraw());
+        }
+        // Auto-cancel a stale workspace-close confirmation.
+        if let Some((_, t)) = self.confirm_ws
+            && t.elapsed() >= CONFIRM_TIMEOUT
+        {
+            self.confirm_ws = None;
             self.window.as_ref().inspect(|w| w.request_redraw());
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(
@@ -1905,13 +2006,19 @@ pub fn run() -> anyhow::Result<()> {
     let event_loop = EventLoop::<PaneEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
 
-    // Plugin host: load every *.wasm under the config dir's plugins/ folder.
+    // Plugin host: load every enabled *.wasm under the config dir's plugins/ folder.
     let mut plugins = Vec::new();
+    let plugin_disabled = config.plugins.disabled();
     if let Some(dir) = config_dir() {
         let engine = plugin_engine()?;
-        plugins = berth_plugins::load_plugins(&engine, &dir.join("plugins"), &mut |msg| {
-            crate::render::dlog_emit(&format!("berth plugins: {msg}"));
-        });
+        plugins = berth_plugins::load_plugins(
+            &engine,
+            &dir.join("plugins"),
+            &plugin_disabled,
+            &mut |msg| {
+                crate::render::dlog_emit(&format!("berth plugins: {msg}"));
+            },
+        );
         if !plugins.is_empty() {
             crate::render::dlog_emit(&format!("berth plugins: {} loaded", plugins.len()));
         }
@@ -1934,6 +2041,7 @@ pub fn run() -> anyhow::Result<()> {
         tab_drag_origin: (0.0, 0.0),
         last_click: None,
         confirm_exit: None,
+        confirm_ws: None,
         rename_edit: None,
         focused_pane,
         zoomed: None,

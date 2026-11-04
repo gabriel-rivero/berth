@@ -81,7 +81,7 @@ Three pillars for "1.0":
 
 - **[done]** Tab drag between workspaces (sidebar as drop target; empty origin ws dies).
 - **[open]** Drag panes between tabs.
-- **[open]** **Sidebar show/hide affordance** *(user-reported; qwen U-1)*: `toggle-sidebar` keybind action + chevron button in the sidebar header — today only `config.toml [sidebar].show` + hot-reload.
+- **[open]** **Sidebar show/hide affordance** *(user-reported; qwen U-1)*: `toggle-sidebar` keybind action + chevron button in the sidebar header — today only `config.toml [sidebar].show` + hot-reload. **[done 0.21.9]** toggle-sidebar action (defaults cmd+u / ctrl+shift+u) + plus buttons; chevron header still [open].
 - **[open]** **Tab reordering** *(qwen U-8)*: drag only moves tabs *between* workspaces; strip slot order is immutable (README "re-orderable" oversells).
 - **[open]** **Discoverable chrome buttons** *(qwen U-9/U-7/U-10)*: tab-strip trailing `+`, sidebar-header `+ ws` (header double-click secretly creates workspaces today — make it visible), right-click context menus (tab: close/rename/close-others/move-to-ws; entry: rename/close; pane: copy/paste/split/zoom), wheel-over-strip cycles tabs / wheel-over-sidebar cycles workspaces.
 - **[open]** Per-workspace `[workspaces.<id>]` config: cwd, env, command, color/icon; auto-name from git basename core-side.
@@ -103,7 +103,7 @@ Safety/pipeline, in risk order:
 5. **[open]** Lifecycle/versioning: host-version advertisement, WIT semver policy, single-source WIT (guest copy will drift).
 6. **[open]** Tier 2 shape: `set-tab-label`, `badge(target, text, color)` (pairs with core activity badges), `register-command` → quick switcher, notifications. Tier 3 observability: rate-limited PTY output taps, OSC event stream. Tier 4 control: spawn/move/`send-text` (the `berth` CLI/IPC = cmux `send` equivalent).
 7. **[open]** Document the supported std surface for wasm32-wasip2 guests (rustc shim imports WASI at link time) or move tier-2 guests to `wasm32-unknown-unknown` + bindgen-only.
-8. **[open]** **Plugin manager UX** *(user-reported "no plugin enable/disable interface" — CONFIRMED; qwen U-6)*: `load_plugins` loads every `*.wasm` at startup with no manifest, no per-plugin toggles, no in-app error visibility, and **no rescan on config hot-reload** (`app.rs:1795-1805`, `plugins/lib.rs:118-135`). Staging: `[[plugin]] name/enabled` config flags (cheap, pairs with item 3's manifest) → list view with load status/errors → hot (re)scan.
+8. **[open]** **Plugin manager UX** *(user-reported "no plugin enable/disable interface" — CONFIRMED; qwen U-6)*: `load_plugins` loads every `*.wasm` at startup with no manifest, no per-plugin toggles, no in-app error visibility, and **no rescan on config hot-reload** (`app.rs:1795-1805`, `plugins/lib.rs:118-135`). Staging: `[[plugin]] name/enabled` config flags (cheap, pairs with item 3's manifest) **[done 0.21.9]** [plugins] per-plugin enabled flags + file-stem skip → list view with load status/errors → hot (re)scan.
 
 ## Table stakes still missing (review §4a, priority order)
 
@@ -147,4 +147,4 @@ tab/workspace context (qwen U-12).
 
 1. **Chrome-input correctness PR** *(S, ~200 lines)* **[done 0.21.6]** — BUGS-1: alt+arrows now `focus-pane-{up,down,left,right}` actions via the table (hardcoded intercept deleted; `ctrl+alt+←/→` workspace cycling verified reachable); BUGS-2: press precedence sidebar(✕ first) → tab strip → edge band (only below strip) → pane, same guard in cursor icons; BUGS-4: 6px tab-drag threshold; BUGS-7: `close-tab` implemented with last-tab guard. Xvfb-verified end-to-end. §7 CI hit-test smokes remain [open] (folded into the hover/affordance PR).
 2. **Perceived-perf + affordance PR** *(S/M)* — BUGS-3 (coalesce redraws: dirty flag + `request_redraw`) + BUGS-6 (hover highlight + Pointer cursor via the shared zone fn) + BUGS-5 (middle-click close). Three of the six user reports answered; makes the perf story match the Ghostty competitive note.
-3. **Chrome affordances PR** *(S-M)* — U-1 (`toggle-sidebar` action + header chevron) + U-9 (`+` buttons) + U-4 (confirm banner for ✕ cascades incl. last-tab-exits-app) + BUGS-10/11 nits. Then start plugin-platform item 8 staging (`[[plugin]] enabled` flags) alongside safety items 1-2.
+3. **Chrome affordances PR** *(S-M)* — U-1 (`toggle-sidebar` action + header chevron) + U-9 (`+` buttons) + U-4 (confirm banner for ✕ cascades incl. last-tab-exits-app) **[done 0.21.9]** (ws close-confirm banner + titles pruning; last-tab guard shipped 0.21.6) + BUGS-10/11 nits. Then start plugin-platform item 8 staging (`[[plugin]] enabled` flags) alongside safety items 1-2.
