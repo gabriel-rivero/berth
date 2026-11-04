@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/gabriel-rivero/berth/compare/v0.23.0...v0.24.0) (2026-11-04)
+
+
+### Features
+
+* **emu:** OSC 7 cwd tracking (shell integration) ([c97cd2e](https://github.com/gabriel-rivero/berth/commit/c97cd2eecce22420696ad3f658f1a0f688576b93))
+
 ## [0.23.0](https://github.com/gabriel-rivero/berth/compare/v0.22.0...v0.23.0) (2026-11-04)
 
 
