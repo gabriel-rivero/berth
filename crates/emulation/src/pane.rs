@@ -24,6 +24,9 @@ pub enum PaneEvent {
     Title(PaneId, String),
     /// OSC 112 or ESC c cleared the title.
     TitleReset(PaneId),
+    /// Terminal-query reply the parser generated (DSR cursor report, DA1, ...)
+    /// that must be written back to the PTY.
+    PtyWrite(PaneId, Vec<u8>),
     /// Lifecycle log line (spawn/reader/writer state) for triage; goes to the
     /// app log file unconditionally (BERTH_DEBUG not required).
     Log(String),
@@ -52,6 +55,11 @@ impl EventListener for TermListener {
             }
             alacritty_terminal::event::Event::ResetTitle => {
                 (self.notify)(PaneEvent::TitleReset(self.pane));
+            }
+            // Terminal-query replies (DSR 6n cursor report, DA1/DA2, DECRPM, ...).
+            // ConPTY's INHERIT_CURSOR gates cmd.exe startup on the 6n reply.
+            alacritty_terminal::event::Event::PtyWrite(text) => {
+                (self.notify)(PaneEvent::PtyWrite(self.pane, text.into_bytes()));
             }
             _ => {}
         }

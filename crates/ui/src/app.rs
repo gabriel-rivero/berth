@@ -1219,6 +1219,12 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 }
                 self.redraw();
             }
+            PaneEvent::PtyWrite(id, bytes) => {
+                dlog_app!("pty write reply {:?}: {} b", id, bytes.len());
+                if let Some(pane) = self.panes.get(&id) {
+                    let _ = pane.lock().expect("pane poisoned").write(&bytes);
+                }
+            }
             PaneEvent::Title(id, title) => {
                 dlog_app!("osc title pane={id:?} {title:?}");
                 self.titles.insert(id, title);
