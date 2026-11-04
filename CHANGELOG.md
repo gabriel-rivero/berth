@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.5](https://github.com/gabriel-rivero/berth/compare/v0.21.4...v0.21.5) (2026-11-04)
+
+
+### Bug Fixes
+
+* **ci:** gate deb/rpm packaging on linux targets only (was failing macOS jobs) ([ce2fdb5](https://github.com/gabriel-rivero/berth/commit/ce2fdb53125e9f2c709a13cf3474e4f4408bdfc7))
+* **ci:** rpmbuild needs explicit --target for aarch64 rpm ([3d134c0](https://github.com/gabriel-rivero/berth/commit/3d134c095d7ad0b04789866857ae67182e6d7505))
+
 ## [0.21.4](https://github.com/gabriel-rivero/berth/compare/v0.21.3...v0.21.4) (2026-11-04)
 
 
