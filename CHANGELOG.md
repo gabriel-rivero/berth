@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.2](https://github.com/gabriel-rivero/berth/compare/v0.18.1...v0.18.2) (2026-11-04)
+
+
+### Bug Fixes
+
+* **ui:** bracketed paste, copy-on-select, non-blocking PTY writes, louder quad budget ([6f7ee83](https://github.com/gabriel-rivero/berth/commit/6f7ee83a1aaf5f2732720c44240976d863e5dabd))
+
 ## [0.18.1](https://github.com/gabriel-rivero/berth/compare/v0.18.0...v0.18.1) (2026-11-04)
 
 
