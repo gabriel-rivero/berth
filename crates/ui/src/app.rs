@@ -1156,10 +1156,19 @@ fn encode_key(event: &KeyEvent, mods: ModifiersState, backspace: Backspace) -> O
     })
 }
 
+/// App icon (window icon + taskbar) decoded from the bundled 128px asset.
+fn load_window_icon() -> Option<winit::window::Icon> {
+    const ICON_PNG: &[u8] = include_bytes!("../../../assets/berth-128.png");
+    let rgba = image::load_from_memory(ICON_PNG).ok()?.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    winit::window::Icon::from_rgba(rgba.into_raw(), w, h).ok()
+}
+
 impl ApplicationHandler<PaneEvent> for Berth {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let attrs = Window::default_attributes()
             .with_title("berth")
+            .with_window_icon(load_window_icon())
             .with_min_inner_size(winit::dpi::LogicalSize::new(400.0, 200.0));
         let window = event_loop.create_window(attrs).expect("window creation");
         let font = &self.config.font;

@@ -100,6 +100,12 @@ Broken plugins log and are skipped. Demo guest: `crates/plugins/guest`
 (auto-namer: `ws 2` → `ws-02`), compiled with
 `cargo build -p berth-plugin-guest --release --target wasm32-wasip2`.
 
+### Branding
+
+App icon ships everywhere: embedded in the window (winit),
+`berth.icns` in the macOS bundle (`CFBundleIconFile`), `berth.ico` linked
+into the Windows exe (`winresource`). Source art in `assets/`.
+
 ### macOS notes
 
 The `Berth.app` bundle is ad-hoc signed, not notarized: on first launch use

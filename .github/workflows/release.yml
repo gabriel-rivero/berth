@@ -68,6 +68,7 @@ jobs:
           <dict>
             <key>CFBundleExecutable</key><string>berth</string>
             <key>CFBundleIdentifier</key><string>io.github.gabriel-rivero.berth</string>
+            <key>CFBundleIconFile</key><string>berth</string>
             <key>CFBundleName</key><string>Berth</string>
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleShortVersionString</key><string>${GITHUB_REF_NAME#v}</string>
@@ -78,6 +79,7 @@ jobs:
           EOF
           # Ad-hoc signature (no identity needed): keeps Gatekeeper from calling
           # the unsigned bundle "damaged"; users still right-click > Open once.
+          cp assets/berth.icns "$app/Resources/berth.icns"
           codesign --force --deep --sign - Berth.app
           zip -qr berth-${GITHUB_REF_NAME#v}-${{ matrix.target }}.app.zip Berth.app
       - name: package (windows)

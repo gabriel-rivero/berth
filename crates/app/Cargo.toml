@@ -17,3 +17,6 @@ path = "src/main.rs"
 berth-core = { path = "../core" }
 berth-ui = { path = "../ui" }
 anyhow.workspace = true
+
+[build-dependencies]
+winresource.workspace = true
