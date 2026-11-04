@@ -56,7 +56,8 @@ Defaults follow iTerm2 (`cmd`/super chords work on all platforms); legacy
 | zoom focused pane (tmux-style) | `cmd+shift+Enter` |
 | close any tab / workspace | `✕` button in the tab slot / sidebar entry |
 | resize sidebar | drag its right edge (hover shows ⟷ cursor) |
-| pane focus | `alt+arrows` |
+| pane focus | `alt+arrows` (`focus-pane-*` action, rebindable) |
+| drag tab to another workspace | drag a tab slot onto a sidebar entry |
 | copy / paste selection | `cmd+c` / `cmd+v` (`ctrl+shift+c` / `ctrl+v`) |
 | scroll | mouse wheel, `shift+PgUp` / `shift+PgDn`, `cmd+PgUp` / `cmd+PgDn` |
 
@@ -71,7 +72,8 @@ defaults for that action:
 
 Action ids: `split-vertical`, `split-horizontal`, `new-tab`, `close-pane`,
 `close-tab`, `next-tab`, `prev-tab`, `new-workspace`, `close-workspace`,
-`next-workspace`, `prev-workspace`, `zoom-pane`, `copy`, `paste`,
+`next-workspace`, `prev-workspace`, `zoom-pane`, `focus-pane-up`, `focus-pane-down`,
+`focus-pane-left`, `focus-pane-right`, `copy`, `paste`,
 `scroll-page-up`, `scroll-page-down`. Chord syntax is modifier tokens (`ctrl`/`control`,
 `shift`, `alt`/`option`, `super`/`cmd`/`win`) joined with `+` plus the key
 (`enter`, `tab`, `backslash`, `[`, `]`, `left/right/up/down`,

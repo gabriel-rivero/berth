@@ -26,6 +26,10 @@ pub enum Action {
     ScrollPageUp,
     ScrollPageDown,
     ZoomPane,
+    FocusPaneUp,
+    FocusPaneDown,
+    FocusPaneLeft,
+    FocusPaneRight,
 }
 
 impl Action {
@@ -48,6 +52,10 @@ impl Action {
             Action::ScrollPageUp => "scroll-page-up",
             Action::ScrollPageDown => "scroll-page-down",
             Action::ZoomPane => "zoom-pane",
+            Action::FocusPaneUp => "focus-pane-up",
+            Action::FocusPaneDown => "focus-pane-down",
+            Action::FocusPaneLeft => "focus-pane-left",
+            Action::FocusPaneRight => "focus-pane-right",
         }
     }
 
@@ -69,6 +77,10 @@ impl Action {
             "scroll-page-up" => Action::ScrollPageUp,
             "scroll-page-down" => Action::ScrollPageDown,
             "zoom-pane" => Action::ZoomPane,
+            "focus-pane-up" => Action::FocusPaneUp,
+            "focus-pane-down" => Action::FocusPaneDown,
+            "focus-pane-left" => Action::FocusPaneLeft,
+            "focus-pane-right" => Action::FocusPaneRight,
             _ => return None,
         })
     }
@@ -96,6 +108,12 @@ impl Action {
             (Action::PrevWorkspace, &["ctrl+alt+left"]),
             // iTerm2's zoom-pane chord; Linux/Windows ctrl alias stays free for users.
             (Action::ZoomPane, &["cmd+shift+enter"]),
+            // Pane focus (alt+arrows, was hardcoded before the bindings table
+            // existed and made ctrl+alt+arrows unreachable); rebindable now.
+            (Action::FocusPaneUp, &["alt+up"]),
+            (Action::FocusPaneDown, &["alt+down"]),
+            (Action::FocusPaneLeft, &["alt+left"]),
+            (Action::FocusPaneRight, &["alt+right"]),
         ]
     }
 }

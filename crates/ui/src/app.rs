@@ -111,6 +111,9 @@ pub struct Berth {
     sidebar_drag: bool,
     /// Some(tab) while a tab is being dragged (release over sidebar moves it).
     tab_drag: Option<TabId>,
+    /// Press position where the current tab drag started (device px); a drag
+    /// only engages after moving TAB_DRAG_THRESHOLD px away.
+    tab_drag_origin: (f64, f64),
     /// Last press (time + zone) for double-click detection (tab bar / workspace bar).
     last_click: Option<(std::time::Instant, ClickZone)>,
     /// Set on first close attempt with live shells; second close (or esc-free
@@ -153,6 +156,9 @@ struct RenameEdit {
 const DOUBLE_CLICK_MS: u128 = 500;
 /// px slack around the sidebar's right edge for the resize grab.
 const SIDEBAR_EDGE_GRAB: f64 = 4.0;
+/// Tab drag must move this far (logical px) before it engages — a click plus
+/// jitter must never relocate (or auto-remove) tabs/workspaces.
+const TAB_DRAG_THRESHOLD: f64 = 6.0;
 /// Upper bound of wheel clicks forwarded per event (flood guard).
 const MAX_WHEEL_CLICKS: u32 = 16;
 
@@ -678,6 +684,13 @@ impl Berth {
     }
 
     /// Switch tabs with wrap-around; each tab's panes resize when focused.
+    /// (index, tabs, only-workspace?) of the focused tab (close-tab guard).
+    fn active_tab_counts(&self) -> Option<(usize, usize, bool)> {
+        let ws = self.layout.active_workspace()?;
+        let idx = ws.tabs.iter().position(|t| t.id == ws.focused_tab)?;
+        Some((idx, ws.tabs.len(), self.layout.workspaces.len() == 1))
+    }
+
     fn cycle_tab(&mut self, delta: isize) {
         if self
             .layout
@@ -767,7 +780,8 @@ impl Berth {
             scale,
         )
         .round() as i32;
-        let on_sidebar_edge = (self.mouse.x - f64::from(sb_w)).abs() <= SIDEBAR_EDGE_GRAB * scale;
+        let on_sidebar_edge = self.mouse.y >= f64::from(ch.tab_bar_h)
+            && (self.mouse.x - f64::from(sb_w)).abs() <= SIDEBAR_EDGE_GRAB * scale;
         let on_divider = if self.mouse.y >= f64::from(ch.tab_bar_h) && !on_sidebar_edge {
             let x = self.mouse.x.max(0.0) as u32;
             let y = self.mouse.y.max(0.0) as u32;
@@ -896,25 +910,6 @@ impl Berth {
             return true;
         }
 
-        // alt+arrows move pane focus within the tab (before table lookup).
-        if alt {
-            use berth_core::layout::FocusDir;
-            let dir = match named {
-                Key::Named(NamedKey::ArrowUp) => Some(FocusDir::Up),
-                Key::Named(NamedKey::ArrowDown) => Some(FocusDir::Down),
-                Key::Named(NamedKey::ArrowLeft) => Some(FocusDir::Left),
-                Key::Named(NamedKey::ArrowRight) => Some(FocusDir::Right),
-                _ => None,
-            };
-            if let Some(dir) = dir {
-                if let Some(next) = self.layout.active_tab().and_then(|t| t.neighbor_pane(dir)) {
-                    dlog_app!("alt-chord neighbor={next:?}");
-                    self.focus_pane(next);
-                }
-                return true;
-            }
-        }
-
         // Table lookup: normalize this key event to a chord key name.
         if let Some(key_name) = chord_key_name(event) {
             let chord = Chord {
@@ -958,8 +953,18 @@ impl Berth {
                 true
             }
             Action::CloseTab => {
-                dlog_app!("action close-tab: click-only keybind ignored");
-                false
+                // Keyboard close of the focused tab; refuses to exit the app
+                // (a single remaining tab is closed with the ✕ / quit instead).
+                let counts = self.active_tab_counts();
+                if let Some((idx, tabs, ws_last)) = counts
+                    && (tabs > 1 || !ws_last)
+                {
+                    dlog_app!("action close-tab: idx={idx}");
+                    self.close_tab(idx);
+                } else {
+                    dlog_app!("action close-tab: last tab -> ignored");
+                }
+                true
             }
             Action::ZoomPane => {
                 self.zoomed = if self.zoomed == Some(self.focused_pane) {
@@ -970,6 +975,23 @@ impl Berth {
                     Some(self.focused_pane)
                 };
                 self.sync_size();
+                true
+            }
+            Action::FocusPaneUp
+            | Action::FocusPaneDown
+            | Action::FocusPaneLeft
+            | Action::FocusPaneRight => {
+                use berth_core::layout::FocusDir;
+                let dir = match action {
+                    Action::FocusPaneUp => FocusDir::Up,
+                    Action::FocusPaneDown => FocusDir::Down,
+                    Action::FocusPaneLeft => FocusDir::Left,
+                    _ => FocusDir::Right,
+                };
+                if let Some(next) = self.layout.active_tab().and_then(|t| t.neighbor_pane(dir)) {
+                    dlog_app!("focus-pane neighbor={next:?}");
+                    self.focus_pane(next);
+                }
                 true
             }
             Action::NextTab => {
@@ -1342,7 +1364,26 @@ impl ApplicationHandler<PaneEvent> for Berth {
                         w.request_redraw();
                     }
                 } else if let Some(tab_id) = self.tab_drag {
-                    // Dragging a tab over the sidebar moves it to the hovered workspace.
+                    // Dragging a tab over the sidebar moves it to the hovered
+                    // workspace — but only after crossing the drag threshold,
+                    // so a plain click (plus jitter) stays a click.
+                    let moved = (self.mouse.x - self.tab_drag_origin.0).abs()
+                        > TAB_DRAG_THRESHOLD
+                            * self
+                                .window
+                                .as_ref()
+                                .map(|w| w.scale_factor())
+                                .unwrap_or(1.0)
+                        || (self.mouse.y - self.tab_drag_origin.1).abs()
+                            > TAB_DRAG_THRESHOLD
+                                * self
+                                    .window
+                                    .as_ref()
+                                    .map(|w| w.scale_factor())
+                                    .unwrap_or(1.0);
+                    if !moved {
+                        return;
+                    }
                     dlog_app!(
                         "tab-drag move at ({},{}) sh={}",
                         self.mouse.x,
@@ -1452,11 +1493,7 @@ impl ApplicationHandler<PaneEvent> for Berth {
                         self.mouse.y,
                         ch.tab_bar_h
                     );
-                    if (self.mouse.x - sb_w_f).abs() <= SIDEBAR_EDGE_GRAB * scale {
-                        // Sidebar edge grab wins over entry clicks: drag to resize.
-                        dlog_app!("sidebar grab");
-                        self.sidebar_drag = true;
-                    } else if self.mouse.x < sb_w_f {
+                    if self.mouse.x < sb_w_f {
                         // Sidebar click: entries select or close (right edge of
                         // the entry is the close button); double-click below
                         // the entries creates a workspace.
@@ -1512,8 +1549,14 @@ impl ApplicationHandler<PaneEvent> for Berth {
                             {
                                 dlog_app!("tab drag begin slot{i} tab {:?}", tab.id);
                                 self.tab_drag = Some(tab.id);
+                                self.tab_drag_origin = (self.mouse.x, self.mouse.y);
                             }
                         }
+                    } else if (self.mouse.x - sb_w_f).abs() <= SIDEBAR_EDGE_GRAB * scale {
+                        // Sidebar edge grab: only arms below the tab strip so it
+                        // never swallows tab-strip clicks or close buttons.
+                        dlog_app!("sidebar grab");
+                        self.sidebar_drag = true;
                     } else {
                         // A TUI app that captured the mouse (1000/1002/1006)
                         // receives the press instead of pane selection.
@@ -1818,6 +1861,7 @@ pub fn run() -> anyhow::Result<()> {
         divider_drag: None,
         sidebar_drag: false,
         tab_drag: None,
+        tab_drag_origin: (0.0, 0.0),
         last_click: None,
         confirm_exit: None,
         rename_edit: None,
