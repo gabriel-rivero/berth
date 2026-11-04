@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/gabriel-rivero/berth/compare/v0.20.0...v0.21.0) (2026-11-04)
+
+
+### Features
+
+* **ui:** pane zoom (tmux-style toggle) ([cfa93aa](https://github.com/gabriel-rivero/berth/commit/cfa93aa84ccd8c658a7a15bdeb0600a856f36cb9))
+
 ## [0.20.0](https://github.com/gabriel-rivero/berth/compare/v0.19.0...v0.20.0) (2026-11-04)
 
 
