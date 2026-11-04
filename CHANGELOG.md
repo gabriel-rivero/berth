@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/gabriel-rivero/berth/compare/v0.18.2...v0.19.0) (2026-11-04)
+
+
+### Features
+
+* app icon everywhere ([2ae52ed](https://github.com/gabriel-rivero/berth/commit/2ae52ed4800a6412ed71fb3c783c7f34bd6f5b7c))
+
 ## [0.18.2](https://github.com/gabriel-rivero/berth/compare/v0.18.1...v0.18.2) (2026-11-04)
 
 
