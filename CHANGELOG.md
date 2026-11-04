@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.7](https://github.com/gabriel-rivero/berth/compare/v0.21.6...v0.21.7) (2026-11-04)
+
+
+### Bug Fixes
+
+* **ci:** rpm via cargo-generate-rpm (aarch64-proof) + early tar.gz attach ([5699fd1](https://github.com/gabriel-rivero/berth/commit/5699fd15d95fb2708b8cd9a569ee7892bb5e7f33))
+
 ## [0.21.6](https://github.com/gabriel-rivero/berth/compare/v0.21.5...v0.21.6) (2026-11-04)
 
 
