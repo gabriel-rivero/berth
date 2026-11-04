@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/gabriel-rivero/berth/compare/v0.16.0...v0.17.0) (2026-11-04)
+
+
+### Features
+
+* **plugins:** live plugin host (tier 1: layout snapshot + renames) ([2e0c618](https://github.com/gabriel-rivero/berth/commit/2e0c61801ee2c412912ad86f3c1f31241d897cb9))
+
 ## [0.16.0](https://github.com/gabriel-rivero/berth/compare/v0.15.0...v0.16.0) (2026-11-03)
 
 
