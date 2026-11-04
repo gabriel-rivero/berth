@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.4](https://github.com/gabriel-rivero/berth/compare/v0.21.3...v0.21.4) (2026-11-04)
+
+
+### Bug Fixes
+
+* **ci:** wasm guest build via --manifest-path (berth-plugin-guest is not a workspace member) ([c5843ac](https://github.com/gabriel-rivero/berth/commit/c5843ac485ead93962b247a5cab7fc7a824be490))
+
 ## [0.21.3](https://github.com/gabriel-rivero/berth/compare/v0.21.2...v0.21.3) (2026-11-04)
 
 
