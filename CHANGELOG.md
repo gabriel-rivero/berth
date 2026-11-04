@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.1](https://github.com/gabriel-rivero/berth/compare/v0.18.0...v0.18.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* **ui:** scale all chrome by display scale factor + focused pane outline ([1fc892f](https://github.com/gabriel-rivero/berth/commit/1fc892faf9c7861c10533c14c2cc1e11fdb742d1))
+* **windows:** windows-subsystem release build + file-based debug logging ([66f521c](https://github.com/gabriel-rivero/berth/commit/66f521cf11e8ccbebdead44837cbdc75381f0037))
+
 ## [0.18.0](https://github.com/gabriel-rivero/berth/compare/v0.17.1...v0.18.0) (2026-11-04)
 
 
