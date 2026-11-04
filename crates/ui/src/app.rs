@@ -4,10 +4,11 @@
 use alacritty_terminal::term::TermMode;
 use berth_core::config::{Backspace, Config};
 use berth_core::keybinds::{Action, Chord, build_bindings};
-use berth_core::layout::{Layout, PaneId, Rect, Tab, TabId, Workspace, WorkspaceId};
+use berth_core::layout::{Layout, PaneId, Rect, Session, Tab, TabId, Workspace, WorkspaceId};
 use berth_emulation::pane::{Pane, PaneEvent, TermPoint};
 use berth_plugins::{LoadedPlugin, WorkspaceRename, plugin_engine};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use winit::{
     application::ApplicationHandler,
@@ -135,6 +136,12 @@ pub struct Berth {
     plugins: Vec<LoadedPlugin>,
     /// Set when the app decided to exit; about_to_wait stops the loop.
     exiting: bool,
+    /// Where the layout session snapshot lives (None = no config dir).
+    session_path: Option<PathBuf>,
+    /// Last periodic session save (throttles Session::save to every few seconds).
+    last_save: std::time::Instant,
+    /// Panes to spawn on startup for a restored session (consumed by resumed()).
+    restore_panes: Vec<(PaneId, Option<String>)>,
 }
 
 /// Where the last mouse press landed — used for double-click-to-create.
@@ -1310,6 +1317,10 @@ fn load_window_icon() -> Option<winit::window::Icon> {
 
 impl ApplicationHandler<PaneEvent> for Berth {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // resumed() can fire again on platform lifecycle events; window is created once.
+        if self.window.is_some() {
+            return;
+        }
         let attrs = Window::default_attributes()
             .with_title("berth")
             .with_window_icon(load_window_icon())
@@ -1321,17 +1332,39 @@ impl ApplicationHandler<PaneEvent> for Berth {
         self.window = Some(window);
         self.renderer = Some(renderer);
 
-        let (first_id, cwd) = self
+        let restore_panes = std::mem::take(&mut self.restore_panes);
+        if restore_panes.is_empty() {
+            // Fresh session: one pane in the active tab.
+            let (first_id, cwd) = self
+                .layout
+                .active_tab()
+                .map(|t| (t.focused, t.cwd.clone()))
+                .unwrap_or((PaneId(0), None));
+            self.spawn_pane(first_id, cwd.as_deref());
+        } else {
+            // Restored session: re-spawn a shell for every pane in the saved tree.
+            let mut spawned = 0usize;
+            for (id, cwd) in restore_panes {
+                if self.spawn_pane(id, cwd.as_deref()) {
+                    spawned += 1;
+                }
+            }
+            crate::render::dlog_emit(&format!(
+                "berths: restored layout, {} panes spawned",
+                spawned
+            ));
+        }
+        // Follow the saved focus (or fall back to a spawned pane if it's stale).
+        self.focused_pane = self
             .layout
             .active_tab()
-            .map(|t| (t.focused, t.cwd.clone()))
-            .unwrap_or((PaneId(0), None));
-        self.spawn_pane(first_id, cwd.as_deref());
-        self.focused_pane = first_id;
+            .map(|t| t.focused)
+            .filter(|p| self.panes.contains_key(p))
+            .unwrap_or_else(|| self.panes.keys().copied().next().unwrap_or(PaneId(0)));
         self.sync_size();
     }
 
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: PaneEvent) {
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: PaneEvent) {
         match event {
             PaneEvent::Log(msg) => {
                 crate::render::dlog_emit(&format!("emulation: {msg}"));
@@ -1407,7 +1440,7 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     dlog_app!("all workspaces gone -> exit");
                     self.panes.clear();
                     self.layout = Layout::default();
-                    event_loop.exit();
+                    self.exiting = true;
                     return;
                 }
                 if let Some(tab) = self.layout.active_tab()
@@ -1847,11 +1880,29 @@ impl ApplicationHandler<PaneEvent> for Berth {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // Exit stops everything else (also drains the poll timers).
         if self.exiting {
+            // Flush the final layout snapshot before the loop stops.
+            if let Some(path) = &self.session_path
+                && let Err(e) = berth_core::layout::Session::save(&self.layout, path)
+            {
+                crate::render::dlog_emit(&format!("berths: final save failed: {e:#}"));
+            }
             event_loop.exit();
             return;
         }
         self.poll_config_reload();
         self.tick_plugins();
+        // Periodic layout snapshot (shells are not persisted; only the tree).
+        if let Some(path) = self.session_path.as_ref()
+            && self.last_save.elapsed() >= std::time::Duration::from_millis(SESSION_SAVE_MS)
+        {
+            let path = path.clone();
+            self.last_save = std::time::Instant::now();
+            if let Err(e) = berth_core::layout::Session::save(&self.layout, &path) {
+                crate::render::dlog_emit(&format!("berths: save failed: {e:#}"));
+            } else {
+                dlog_app!("berths: saved layout snapshot");
+            }
+        }
         // Auto-cancel a stale quit confirmation.
         if let Some(t) = self.confirm_exit
             && t.elapsed() >= CONFIRM_TIMEOUT
@@ -1874,6 +1925,8 @@ impl ApplicationHandler<PaneEvent> for Berth {
 
 /// Config polling interval for hot reload.
 const CONFIG_POLL_MS: u64 = 750;
+/// Interval between session layout snapshots (berths).
+const SESSION_SAVE_MS: u64 = 4000;
 /// How long the quit-confirm banner stays up before auto-cancelling.
 const CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -1996,8 +2049,20 @@ pub fn run() -> anyhow::Result<()> {
         }));
     }
     let config = Config::load()?;
-    let layout = Layout::with_defaults("main");
-    let focused_pane = layout.active_tab().map(|t| t.focused).unwrap_or(PaneId(0));
+    // Session restore: reload the last saved layout tree (panes re-spawn fresh shells;
+    // invalid/absent sessions fall back to the default layout).
+    let session_file = config_dir().map(|d| d.join("berths.json"));
+    let (layout, restored) = session_file
+        .as_deref()
+        .and_then(|p| Session::load(p).ok().map(|s| s.layout))
+        .filter(|l| !l.workspaces.is_empty())
+        .map(|l| (l, true))
+        .unwrap_or_else(|| (Layout::with_defaults("main"), false));
+    let focused_pane = layout
+        .active_tab()
+        .or_else(|| layout.workspaces.first().and_then(|w| w.tabs.first()))
+        .map(|t| t.focused)
+        .unwrap_or(PaneId(0));
     let (bindings, binds_warns) = build_bindings(&config.keybinds.0);
     for (id, reason) in &binds_warns {
         crate::render::dlog_emit(&format!("berth config: keybind '{id}': '{reason}'"));
@@ -2024,6 +2089,21 @@ pub fn run() -> anyhow::Result<()> {
         }
     }
 
+    // Layout pane list for a restored session (built before `layout` moves into Berth).
+    let restore_panes = if restored {
+        let mut list = Vec::new();
+        for ws in &layout.workspaces {
+            for tab in &ws.tabs {
+                for id in tab.pane_ids_in_order() {
+                    list.push((id, tab.cwd.clone()));
+                }
+            }
+        }
+        list
+    } else {
+        Vec::new()
+    };
+
     let mut app = Berth {
         config,
         layout,
@@ -2049,6 +2129,9 @@ pub fn run() -> anyhow::Result<()> {
         bindings,
         plugins,
         exiting: false,
+        session_path: session_file,
+        last_save: std::time::Instant::now(),
+        restore_panes,
         config_mtime: Config::path()
             .and_then(|p| std::fs::metadata(&p).ok())
             .and_then(|m| m.modified().ok()),

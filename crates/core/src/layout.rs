@@ -1,15 +1,17 @@
 //! Layout tree: Workspaces -> Tabs -> Pane splits. The sidebar renders `Layout::workspaces` order;
 //! pane content lives in `berth-emulation::Pane`, keyed by `PaneId` (no UI deps here).
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WorkspaceId(pub u64);
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TabId(pub u64);
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PaneId(pub u64);
 
 /// Binary split tree for a tab's panes. `v` = stacked vertically, `h` = side by side.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SplitNode {
     Pane(PaneId),
     Split {
@@ -21,7 +23,7 @@ pub enum SplitNode {
 }
 
 /// Axis-aligned pixel-space rectangle (window-content coordinates).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Rect {
     pub x: u32,
     pub y: u32,
@@ -32,7 +34,7 @@ pub struct Rect {
 /// Thickness of the divider drawn between sibling panes (px).
 pub const DIVIDER_PX: u32 = 2;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tab {
     pub id: TabId,
     pub label: String,
@@ -42,13 +44,24 @@ pub struct Tab {
     pub focused: PaneId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {
     pub id: WorkspaceId,
     pub label: String,
     pub tabs: Vec<Tab>,
     pub focused_tab: TabId,
 }
+
+/// Persisted session snapshot ('berths'): layout skeleton + id spaces, so a
+/// relaunch restores the workspace/tab/split tree (shells are re-spawned fresh).
+/// schema upgrade path: bump `version` and implement a migration.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Session {
+    pub version: u32,
+    pub layout: Layout,
+}
+
+pub const SESSION_VERSION: u32 = 1;
 
 impl Tab {
     /// New tab whose single root pane is `root_pane` (ids are allocated by the caller:
@@ -508,11 +521,38 @@ fn remove_in(node: &mut SplitNode, id: PaneId) -> bool {
 }
 
 /// Whole-window layout: ordered workspaces (sidebar top-to-bottom) + which is active.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Layout {
     pub workspaces: Vec<Workspace>,
     /// The focused workspace's id (sidebar click / keybinds change this).
     pub active: WorkspaceId,
+}
+
+impl Session {
+    /// Save `layout` to `path` (parent dir created; atomic via temp + rename).
+    pub fn save(layout: &Layout, path: &std::path::Path) -> anyhow::Result<()> {
+        let session = Session {
+            version: SESSION_VERSION,
+            layout: layout.clone(),
+        };
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_vec(&session)?)?;
+        std::fs::rename(&tmp, path)?;
+        Ok(())
+    }
+
+    /// Load a session snapshot; unknown/mismatched versions are rejected (caller falls back to defaults).
+    pub fn load(path: &std::path::Path) -> anyhow::Result<Session> {
+        let raw = std::fs::read(path)?;
+        let s: Session = serde_json::from_slice(&raw)?;
+        if s.version != SESSION_VERSION {
+            anyhow::bail!("session version {} != {SESSION_VERSION}", s.version);
+        }
+        Ok(s)
+    }
 }
 
 impl Layout {

@@ -85,7 +85,7 @@ Three pillars for "1.0":
 - **[open]** **Tab reordering** *(qwen U-8)*: drag only moves tabs *between* workspaces; strip slot order is immutable (README "re-orderable" oversells).
 - **[open]** **Discoverable chrome buttons** *(qwen U-9/U-7/U-10)*: tab-strip trailing `+`, sidebar-header `+ ws` (header double-click secretly creates workspaces today — make it visible), right-click context menus (tab: close/rename/close-others/move-to-ws; entry: rename/close; pane: copy/paste/split/zoom), wheel-over-strip cycles tabs / wheel-over-sidebar cycles workspaces.
 - **[open]** Per-workspace `[workspaces.<id>]` config: cwd, env, command, color/icon; auto-name from git basename core-side.
-- **[open]** Session persistence ("berths"): serde the `Layout` tree + labels + cwd + per-pane command; "Reopen last session" on launch. #1 structural advantage over cmux (crash-loss complaints) and the tmux-detach crowd; cheap because core has no UI deps.
+- **[done 0.23.0]** Session persistence ("berths"): layout tree (workspaces/tabs/splits + labels) snapshotted to `config_dir/berths.json` every ~4s and on exit; relaunched restores the tree and re-spawns a fresh shell per pane. Leftover roadmap item: per-pane cwd via OSC 7 + per-workspace command/env.
 - **[open]** Quick switcher (`cmd+p`) over workspaces/tabs.
 - **[open]** Activity badges: output-since-last-look + child-exited dots on sidebar entries/tabs (event stream already carries PaneId) — *the* cmux wedge, done open-source.
 - **[open]** Keyboard split-resize (`alt+shift+arrows` → ratio ±5%).

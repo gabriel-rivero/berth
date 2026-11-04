@@ -40,7 +40,9 @@ v0.11.0 — M1 done, M2 done except polish, M3 mostly done, M4 not started.
   `ws N` labels, per-workspace tabs, hot-reload of `config.toml`
   (mtime polling, every change incl. font swaps applies live),
   `cmd+u` sidebar toggle, `+` buttons on tab strip and sidebar,
-  confirm banner before closing a multi-pane workspace ✕ cascade
+  confirm banner before closing a multi-pane workspace ✕ cascade,
+  session persistence: workspaces/tabs/splits are snapshotted every ~4s
+  and on exit (`berths.json`) and restored — with fresh shells — on relaunch
 
 ### Keybinds
 
