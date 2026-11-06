@@ -445,6 +445,15 @@ struct FallbackFont {
     name: String,
 }
 
+/// Cache key for rasterized glyphs: the faux-bold/italic variants are separate
+/// bitmaps, so they need separate atlas entries.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct GlyphKey {
+    c: char,
+    bold: bool,
+    italic: bool,
+}
+
 /// Per-font glyph cache + raster contexts.
 pub struct FontCtx {
     /// Font data kept alive for the transmuted 'static FontRef.
@@ -456,8 +465,8 @@ pub struct FontCtx {
     /// The family this context was built for (hot-reload comparison).
     family: String,
     ctx: ScaleContext,
-    /// char -> raster (None = glyph unavailable in the whole chain).
-    glyphs: HashMap<char, Option<GlyphRef>>,
+    /// (char, faux-bold, faux-italic) -> raster (None = unavailable in the chain).
+    glyphs: HashMap<GlyphKey, Option<GlyphRef>>,
     pub metrics: Metrics,
 }
 
@@ -1079,7 +1088,7 @@ impl Renderer {
         color: [f32; 4],
         sink: &mut QuadSink,
     ) {
-        let Some(g) = self.rasterize('×', sink) else {
+        let Some(g) = self.rasterize('×', false, false, sink) else {
             dlog!("draw_close: '×' glyph unavailable");
             return;
         };
@@ -1107,7 +1116,7 @@ impl Renderer {
         let mut pen = ((screen_w - text_w) * 0.5).max(8.0);
         let baseline = y0 + (ch.confirm_h - metrics.cell_h) * 0.5 + metrics.ascent;
         for c in text.chars() {
-            let Some(g) = self.rasterize(c, sink) else {
+            let Some(g) = self.rasterize(c, false, false, sink) else {
                 continue;
             };
             let gx = pen + g.left as f32;
@@ -1149,7 +1158,7 @@ impl Renderer {
             let text: String = title.chars().take(max_chars).collect();
             let mut pen = x0 + 8.0 * ch.scale;
             for c in text.chars() {
-                let Some(g) = self.rasterize(c, sink) else {
+                let Some(g) = self.rasterize(c, false, false, sink) else {
                     continue;
                 };
                 let gx = pen + g.left as f32;
@@ -1230,7 +1239,7 @@ impl Renderer {
             let text: String = label.chars().take(max_chars).collect();
             let mut pen = ch.sidebar_pad;
             for c in text.chars() {
-                let Some(g) = self.rasterize(c, sink) else {
+                let Some(g) = self.rasterize(c, false, false, sink) else {
                     continue;
                 };
                 let gx = pen + g.left as f32;
@@ -1290,7 +1299,7 @@ impl Renderer {
         color: [f32; 4],
         sink: &mut QuadSink,
     ) {
-        let Some(g) = self.rasterize(c, sink) else {
+        let Some(g) = self.rasterize(c, false, false, sink) else {
             return;
         };
         let gx = cx - g.uv[2] * 0.5;
@@ -1299,8 +1308,16 @@ impl Renderer {
     }
 
     /// Rasterize `c` (cached) from the primary font or fallbacks; queues the atlas upload on first use.
-    fn rasterize(&mut self, c: char, sink: &mut QuadSink) -> Option<GlyphRef> {
-        if let Some(cached) = self.font.glyphs.get(&c).copied() {
+    /// `bold`/`italic` use swash's faux transforms (real faces are a later pass).
+    fn rasterize(
+        &mut self,
+        c: char,
+        bold: bool,
+        italic: bool,
+        sink: &mut QuadSink,
+    ) -> Option<GlyphRef> {
+        let key = GlyphKey { c, bold, italic };
+        if let Some(cached) = self.font.glyphs.get(&key).copied() {
             return cached;
         }
         let fontc = &mut self.font;
@@ -1330,7 +1347,18 @@ impl Renderer {
             }
             let mut scaler = fontc.ctx.builder(font).size(fontc.size_px).build();
             let mut render = Render::new(&sources);
-            let render = render.format(zeno::Format::Alpha);
+            render.format(zeno::Format::Alpha);
+            if bold {
+                // Faux bold: swash expands the scaled outline; ~1px at 16px.
+                render.embolden((fontc.size_px * 0.055).clamp(0.5, 2.5));
+            }
+            if italic {
+                // Faux italic: shear the outline ~12° (no italic face lookup yet).
+                render.transform(Some(zeno::Transform::skew(
+                    zeno::Angle::from_degrees(12.0),
+                    zeno::Angle::ZERO,
+                )));
+            }
             let Some(image) = render.render(&mut scaler, gid) else {
                 continue;
             };
@@ -1379,7 +1407,7 @@ impl Renderer {
                 break;
             }
         }
-        fontc.glyphs.insert(c, found);
+        fontc.glyphs.insert(key, found);
         found
     }
 
@@ -1636,9 +1664,16 @@ impl Renderer {
             let px = rect.x as f32 + col as f32 * metrics.cell_w;
             let py = rect.y as f32 + row as f32 * metrics.cell_h;
 
-            // bg (respect selection tint).
-            let mut is_default_bg = cell.bg == Color::Named(NamedColor::Background);
+            // bg (respect selection tint + SGR reverse video).
+            let mut fg = color_of(cell.fg);
+            if cell.flags.contains(Flags::DIM) {
+                fg = dim(fg);
+            }
             let mut bg = color_of(cell.bg);
+            if cell.flags.contains(Flags::INVERSE) {
+                std::mem::swap(&mut fg, &mut bg);
+            }
+            let mut is_default_bg = bg == BG_DEFAULT;
             let selected = content
                 .selection
                 .as_ref()
@@ -1674,7 +1709,6 @@ impl Renderer {
             let c = cell.c;
             // cursor: block drawn under the glyph (shown here in inverse). Must be
             // handled before the empty-cell skip so the block shows on blank rows.
-            let mut fg = color_of(cell.fg);
             if selected {
                 fg = blend(fg);
             }
@@ -1691,12 +1725,18 @@ impl Renderer {
                     None,
                 );
             }
-            if c == ' ' || c == '\0' || cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+            if c == ' '
+                || c == '\0'
+                || cell.flags.contains(Flags::HIDDEN)
+                || cell.flags.contains(Flags::WIDE_CHAR_SPACER)
+            {
                 continue;
             }
             fg = if on_cursor { BG_DEFAULT } else { fg };
 
-            if let Some(g) = self.rasterize(c, sink) {
+            let bold = cell.flags.intersects(Flags::BOLD | Flags::DIM_BOLD);
+            let italic = cell.flags.intersects(Flags::ITALIC | Flags::BOLD_ITALIC);
+            if let Some(g) = self.rasterize(c, bold, italic, sink) {
                 // swash origin = (pen_x, baseline_y), y-up: the image's top edge
                 // sits `top` px above the baseline, `left` px right of the pen.
                 let gx = px + g.left as f32;
@@ -1713,6 +1753,24 @@ impl Renderer {
                 }
             } else if debug_enabled() {
                 dlog!("char '{}' (U+{:04X}) has no glyph quad", c, c as u32);
+            }
+
+            // SGR 4/21/24/53: underline and strikeout rects in the text color.
+            let thickness = (metrics.cell_h * 0.055).max(1.0);
+            let baseline = py + metrics.ascent;
+            if cell.flags.intersects(Flags::ALL_UNDERLINES) {
+                let uy = (baseline + thickness).min(py + metrics.cell_h - thickness);
+                sink.push(px, uy, px + metrics.cell_w, uy + thickness, fg, None);
+                if cell.flags.contains(Flags::DOUBLE_UNDERLINE) {
+                    let uy2 = uy + thickness * 1.8;
+                    sink.push(px, uy2, px + metrics.cell_w, uy2 + thickness, fg, None);
+                }
+                quads_bg += 1;
+            }
+            if cell.flags.contains(Flags::STRIKEOUT) {
+                let sy = py + metrics.cell_h * 0.55;
+                sink.push(px, sy, px + metrics.cell_w, sy + thickness, fg, None);
+                quads_bg += 1;
             }
         }
 

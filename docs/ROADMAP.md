@@ -50,7 +50,7 @@ Three pillars for "1.0":
 | S1 | **Hardware acceleration unverified** *(user-reported)* — adapter silently chosen, no diagnostics, no fallback | **[done 2026-11]** — GPU name/backend/device-type logged every launch to `berth.log`; `berth --gpu-info` enumerates adapters without a window; warns on `DeviceType::Cpu` (software) and non-sRGB surfaces; adapter request retries with the software fallback before failing |
 | S2 | DECCKM application cursor keys ignored | **[open]** (`term.mode().application_cursor` → `ESC O A…`) |
 | S2 | Ctrl+digit (2..8) sends nothing | **[open]** — NUL/ESC/FS/GS/RS/US/DEL table |
-| S2 | Bold/italic/underline/strikethrough not rendered | **[open]** — second faces + underline quads; synth-bold fallback |
+| S2 | Bold/italic/underline/strikethrough not rendered | **[done 2026-11, faux faces]** — swash `embolden`/skew for bold+italic, underline/double-underline/strikeout quads, SGR reverse (INVERSE) and DIM honored; real bold/italic font faces + ligatures remain [open] |
 | S2 | New tab/split/workspace loses cwd (`Tab.cwd` dead) | **[done 0.24.0]** — OSC 7 extracted from raw PTY bytes in the reader thread (cross-chunk, BEL + ESC\, percent-decode; unit-test covering split carry) → per-pane cwd pool → `Tab.cwd` write-back → new tab/split/workspace inherit the focused pane's cwd. Leftover: `basename(cwd)` tab labels + shell-integration docs/plugins. |
 | S2 | Close pane/tab/workspace kills live jobs without confirm | **[open]** — extend window-close banner to live-shell closes; single-pane escape hatch. *(qwen U-4: also covers the ✕ cascade — closing the last tab of the last workspace exits the app instantly, `app.rs:1275-1281`, with no banner)* **[done 2026-11]** — last-tab/last-workspace ✕ now arms the quit banner instead of killing the shell; multi-pane ✕ already confirms, single-pane workspace close still immediate |
 | S2 | No IME handling (`WindowEvent::Ime`) | **[open]** — CJK input blocker |
@@ -118,9 +118,10 @@ like one) while staying small and GPU-cheap. Ordered by perceived impact per eff
    **GPU honesty**: adapter/backend logged every run; software fallback + non-sRGB
    surface warned; no silent lavapipe.
 2. **[open]** **Font quality** *(the single biggest "looks cheap" factor)*: real
-   bold/italic/oblique faces + synthetic bold fallback; underline/strikethrough/dotted
-   underline quads; fractional (subpixel-positioned) glyph placement + gamma-correct
-   blending; per-font fallback chain with a missing-glyph diagnostic; config for
+   bold/italic/oblique faces (currently faux embolden/skew) + synthetic fallback;
+   underline/strikethrough/dotted underline quads **[done 2026-11]**; fractional
+   (subpixel-positioned) glyph placement + gamma-correct blending; per-font
+   fallback chain with a missing-glyph diagnostic; config for
    family/size/line-height/cell padding. Stretch: ligatures (off by default).
 3. **[open]** **Theme system**: `[theme]` presets + `[palette]` overrides, hot-reload,
    light/dark auto-switch, contrast-checked defaults; separate chrome palette from ANSI
