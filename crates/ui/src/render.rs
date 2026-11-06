@@ -9,7 +9,7 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Term, point_to_viewport, viewport_to_point};
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
 use berth_core::layout::Rect;
-use berth_emulation::pane::TermListener;
+use berth_emulation::pane::{GridMatch, TermListener};
 use bytemuck::{Pod, Zeroable};
 use fontdb::{Database, Family, Query, Stretch, Style, Weight};
 use std::collections::HashMap;
@@ -326,6 +326,24 @@ pub struct ScrollInfo {
     pub offset: usize,
     /// Lines of history above the viewport.
     pub history: usize,
+}
+
+/// Active scrollback search: query, all hits, and the selected hit index.
+#[derive(Debug, Clone, Copy)]
+pub struct SearchView<'a> {
+    pub query: &'a str,
+    pub matches: &'a [GridMatch],
+    pub current: usize,
+}
+
+/// Text shown in the search overlay: query plus "current/total", or 0/0 when
+/// nothing matches (so an empty result is distinguishable from a pending query).
+fn search_label(query: &str, current: usize, total: usize) -> String {
+    if total == 0 {
+        format!("find: {query}   0/0")
+    } else {
+        format!("find: {query}   {}/{}", current + 1, total)
+    }
 }
 
 /// Which fixed-width tab slot sits under device-px `x` (None past the last tab).
@@ -1629,6 +1647,47 @@ impl Renderer {
         }
     }
 
+    /// Floating top-center input showing the active search query and hit count.
+    fn draw_search(
+        &mut self,
+        view: SearchView<'_>,
+        sb_w: f32,
+        screen_w: f32,
+        ch: Chrome,
+        metrics: Metrics,
+        sink: &mut QuadSink,
+    ) {
+        let s = ch.scale;
+        let colors = self.scheme.chrome;
+        let bh = metrics.cell_h + 10.0 * s;
+        let bw = (340.0 * s).min((screen_w - sb_w - 16.0 * s).max(80.0 * s));
+        let bx = sb_w + ((screen_w - sb_w) - bw) * 0.5;
+        let by = ch.tab_bar_h + 8.0 * s;
+        let mut bg = colors.sidebar_entry_active_bg;
+        bg[3] = 0.97;
+        sink.push_round(bx, by, bx + bw, by + bh, bg, 6.0 * s);
+        let total = view.matches.len();
+        let label = search_label(view.query, view.current, total);
+        let max_chars = ((bw - 16.0 * s) / metrics.cell_w).floor().max(1.0) as usize;
+        let text: String = label.chars().take(max_chars).collect();
+        let color = if total == 0 {
+            colors.tab_text
+        } else {
+            colors.tab_text_active
+        };
+        let baseline = by + (bh - metrics.cell_h) * 0.5 + metrics.ascent;
+        let mut pen = bx + 8.0 * s;
+        for c in text.chars() {
+            let Some(g) = self.rasterize(c, false, false, sink) else {
+                continue;
+            };
+            let gx = pen + g.left as f32;
+            let gy = baseline - g.top as f32;
+            sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
+            pen += metrics.cell_w;
+        }
+    }
+
     /// Centered bottom overlay strip (quit confirmation). Drawn last so it sits
     /// on top of panes/tabs/sidebar.
     fn draw_confirm(
@@ -2010,6 +2069,7 @@ impl Renderer {
         focus: Option<Rect>,
         scroll: Option<ScrollInfo>,
         cursor: CursorPaint,
+        search: Option<SearchView<'_>>,
         hovered: Option<ChromeZone>,
         confirm: Option<&str>,
         window: &Window,
@@ -2052,8 +2112,16 @@ impl Renderer {
                 show: focus == Some(*rect),
                 ..cursor
             };
-            let (n_g, n_b, n_u) =
-                self.draw_term(term, *rect, metrics, quad_trace, paint, &mut sink);
+            let pane_search = if focus == Some(*rect) { search } else { None };
+            let (n_g, n_b, n_u) = self.draw_term(
+                term,
+                *rect,
+                metrics,
+                quad_trace,
+                paint,
+                pane_search,
+                &mut sink,
+            );
             quads_glyph += n_g;
             quads_bg += n_b;
             uploads_pending += n_u;
@@ -2074,6 +2142,9 @@ impl Renderer {
             if let Some(info) = scroll {
                 self.draw_scroll_overlay(r, info, ch, metrics, &mut sink);
             }
+        }
+        if let Some(view) = search {
+            self.draw_search(view, sb_w, screen_w, ch, metrics, &mut sink);
         }
         if self.hud {
             let label = format!("{:.1} ms · {} quads", self.ema_ms, sink.verts.len() / 6);
@@ -2254,6 +2325,7 @@ impl Renderer {
 
     /// Emit one visible pane grid into `sink` (translated by `rect`).
     /// Returns (glyph_quads, bg_quads, unused-upload placer).
+    #[allow(clippy::too_many_arguments)]
     fn draw_term(
         &mut self,
         term: &Term<TermListener>,
@@ -2261,6 +2333,7 @@ impl Renderer {
         metrics: Metrics,
         quad_trace: bool,
         cursor: CursorPaint,
+        search: Option<SearchView<'_>>,
         sink: &mut QuadSink,
     ) -> (usize, usize, usize) {
         let content = term.renderable_content();
@@ -2278,6 +2351,21 @@ impl Renderer {
 
         let cols = (rect.w as f32 / metrics.cell_w).floor().max(1.0) as usize;
         let rows = (rect.h as f32 / metrics.cell_h).floor().max(1.0) as usize;
+
+        // Visible search hits per absolute line: (start, end, is_current).
+        let mut search_rows: HashMap<i32, Vec<(usize, usize, bool)>> = HashMap::new();
+        if let Some(view) = search {
+            for (i, m) in view.matches.iter().enumerate() {
+                let row = m.line + content.display_offset as i32;
+                if row >= 0 && row < rows as i32 {
+                    search_rows.entry(m.line).or_default().push((
+                        m.start,
+                        m.end,
+                        i == view.current,
+                    ));
+                }
+            }
+        }
 
         // Row-major iteration over the visible viewport cells.
         let scheme = self.scheme;
@@ -2315,6 +2403,20 @@ impl Renderer {
             }
             if !is_default_bg {
                 sink.push(px, py, px + metrics.cell_w, py + metrics.cell_h, bg, None);
+                quads_bg += 1;
+            }
+            let line = indexed.point.line.0;
+            if let Some(ranges) = search_rows.get(&line)
+                && let Some(&(_, _, is_current)) =
+                    ranges.iter().find(|(s, e, _)| col >= *s && col < *e)
+            {
+                let mut tint = if is_current {
+                    scheme.chrome.focus_outline
+                } else {
+                    [0.82, 0.68, 0.12, 1.0]
+                };
+                tint[3] = if is_current { 0.45 } else { 0.26 };
+                sink.push(px, py, px + metrics.cell_w, py + metrics.cell_h, tint, None);
                 quads_bg += 1;
             }
             if std::env::var("BERTH_DUMP").ok().as_deref() == Some("1") {
@@ -2508,6 +2610,12 @@ mod tests {
 
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-3
+    }
+
+    #[test]
+    fn search_label_shows_hit_position_or_zero() {
+        assert_eq!(search_label("needle", 0, 0), "find: needle   0/0");
+        assert_eq!(search_label("needle", 2, 7), "find: needle   3/7");
     }
 
     #[test]

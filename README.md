@@ -88,6 +88,7 @@ Defaults follow iTerm2 (`cmd`/super chords work on all platforms); legacy
 | drag tab to another workspace | drag a tab slot onto a sidebar entry |
 | copy / paste selection | `cmd+c` / `cmd+v` (`ctrl+shift+c` / `ctrl+v`) |
 | scroll | mouse wheel, `shift+PgUp` / `shift+PgDn`, `cmd+PgUp` / `cmd+PgDn` |
+| search scrollback | `cmd+f` (`ctrl+shift+f`); type to filter, `enter`/`shift+enter` cycles hits, `esc` closes |
 
 Every chord above is reassignable in `config.toml`; a user entry replaces all
 defaults for that action:
@@ -103,7 +104,7 @@ Action ids: `split-vertical`, `split-horizontal`, `new-tab`, `close-pane`,
 `next-workspace`, `prev-workspace`, `zoom-pane`, `focus-pane-up`, `focus-pane-down`,
 `toggle-sidebar`,
 `focus-pane-left`, `focus-pane-right`, `copy`, `paste`,
-`scroll-page-up`, `scroll-page-down`. Chord syntax is modifier tokens (`ctrl`/`control`,
+`scroll-page-up`, `scroll-page-down`, `search`. Chord syntax is modifier tokens (`ctrl`/`control`,
 `shift`, `alt`/`option`, `super`/`cmd`/`win`) joined with `+` plus the key
 (`enter`, `tab`, `backslash`, `[`, `]`, `left/right/up/down`,
 `pageup/pagedown`, `home`, `end`, `insert`, `delete`, `escape`, `space`,

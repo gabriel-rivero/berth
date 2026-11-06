@@ -3,7 +3,7 @@
 //! on its side to drain into the grid and drive redraws. UI never touches the PtyPair directly.
 use alacritty_terminal::event::EventListener;
 use alacritty_terminal::grid::{Dimensions, Scroll};
-use alacritty_terminal::index::{Point, Side};
+use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::{Config as TermConfig, Term, TermMode};
 use alacritty_terminal::vte::ansi::Processor;
@@ -86,6 +86,51 @@ impl EventListener for TermListener {
             _ => {}
         }
     }
+}
+
+/// One search hit inside the grid: absolute line (negative = history), inclusive
+/// start column, exclusive end column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GridMatch {
+    pub line: i32,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Case-insensitive per-line substring search over scrollback + screen.
+/// Cross-line matches are intentionally not supported (keeps offsets stable).
+fn find_in_term(term: &Term<TermListener>, query: &str) -> Vec<GridMatch> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let needle: Vec<char> = query.chars().collect();
+    let eq_ci = |a: char, b: char| a.to_lowercase().eq(b.to_lowercase());
+    let grid = term.grid();
+    let cols = grid.columns();
+    let history = term.history_size() as i32;
+    let rows = grid.screen_lines() as i32;
+    let mut hits = Vec::new();
+    for line in -history..rows {
+        let row = &grid[Line(line)];
+        let chars: Vec<char> = (0..cols).map(|col| row[Column(col)].c).collect();
+        if chars.len() < needle.len() {
+            continue;
+        }
+        for start in 0..=chars.len() - needle.len() {
+            if chars[start..start + needle.len()]
+                .iter()
+                .zip(&needle)
+                .all(|(a, b)| eq_ci(*a, *b))
+            {
+                hits.push(GridMatch {
+                    line,
+                    start,
+                    end: start + needle.len(),
+                });
+            }
+        }
+    }
+    hits
 }
 
 pub struct Pane {
@@ -338,6 +383,24 @@ impl Pane {
         true
     }
 
+    /// All hits of `query` in scrollback + screen (case-insensitive, per line).
+    pub fn find_matches(&self, query: &str) -> Vec<GridMatch> {
+        find_in_term(&self.term, query)
+    }
+
+    /// Scroll so absolute `line` is visible with `context` rows above it.
+    pub fn reveal_line(&mut self, line: i32, context: usize) {
+        let target = if line < 0 {
+            (context as i32 - line).max(0)
+        } else {
+            0
+        };
+        let delta = target - self.display_offset() as i32;
+        if delta != 0 {
+            self.term.scroll_display(Scroll::Delta(delta));
+        }
+    }
+
     /// Begin/replace the drag selection anchored at `point`.
     pub fn start_selection(&mut self, point: TermPoint) {
         self.term.selection = Some(Selection::new(SelectionType::Simple, point, Side::Left));
@@ -536,6 +599,22 @@ mod shell_config_tests {
         out
     }
 
+    fn wait_for(pane: &mut Pane, needle: &str) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            pane.pump();
+            if grid_text(pane).contains(needle) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "missing {needle:?}; grid: {:?}",
+                grid_text(pane)
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn custom_shell_program_env_and_scrollback_apply() {
         let mut shell = Shell {
@@ -566,6 +645,40 @@ mod shell_config_tests {
             );
             std::thread::sleep(Duration::from_millis(10));
         }
+        pane.kill();
+    }
+
+    #[test]
+    fn search_finds_history_and_reveals_the_line() {
+        let shell = Shell {
+            program: Some("/bin/sh".into()),
+            args: vec![
+                "-c".into(),
+                "for i in $(seq 1 100); do echo line-$i; done; echo NEEDLE-42".into(),
+            ],
+            ..Default::default()
+        };
+        let mut pane = Pane::spawn(
+            berth_core::layout::PaneId(2),
+            Some("/tmp"),
+            &shell,
+            500,
+            Arc::new(|_| {}),
+        )
+        .expect("spawn search shell");
+        wait_for(&mut pane, "NEEDLE-42");
+
+        let hits = pane.find_matches("needle-42");
+        assert_eq!(hits.len(), 1, "case-insensitive single hit: {hits:?}");
+        assert!(
+            pane.history_size() > 0,
+            "expected scrollback after 100 lines"
+        );
+        // Reveal a line 10 rows into history and verify it is on screen.
+        pane.reveal_line(-10, 2);
+        assert!(pane.display_offset() > 0, "reveal should scroll back");
+        let offset = pane.display_offset() as i32;
+        assert!((-10 + offset) >= 0 && (-10 + offset) < 24);
         pane.kill();
     }
 }

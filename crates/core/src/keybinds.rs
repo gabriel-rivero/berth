@@ -31,6 +31,7 @@ pub enum Action {
     FocusPaneLeft,
     FocusPaneRight,
     ToggleSidebar,
+    Search,
 }
 
 impl Action {
@@ -58,6 +59,7 @@ impl Action {
             Action::FocusPaneLeft => "focus-pane-left",
             Action::FocusPaneRight => "focus-pane-right",
             Action::ToggleSidebar => "toggle-sidebar",
+            Action::Search => "search",
         }
     }
 
@@ -84,6 +86,7 @@ impl Action {
             "focus-pane-left" => Action::FocusPaneLeft,
             "focus-pane-right" => Action::FocusPaneRight,
             "toggle-sidebar" => Action::ToggleSidebar,
+            "search" => Action::Search,
             _ => return None,
         })
     }
@@ -119,6 +122,8 @@ impl Action {
             (Action::FocusPaneRight, &["alt+right"]),
             // iTerm2's "show/hide sidebar" chord.
             (Action::ToggleSidebar, &["cmd+u", "ctrl+shift+u"]),
+            // Scrollback search (incremental; Enter/Shift+Enter cycle hits).
+            (Action::Search, &["cmd+f", "ctrl+shift+f"]),
         ]
     }
 }

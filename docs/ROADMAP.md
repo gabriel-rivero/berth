@@ -173,8 +173,9 @@ like one) while staying small and GPU-cheap. Ordered by perceived impact per eff
 
 Mouse reporting **[done]** · bracketed paste/copy-on-select **[done]** ·
 `[shell]` program/args/env + `working_dir` + `[terminal] scrollback` **[done 2026-11]** ·
-**[open]**: scrollback search (`ctrl+shift+f`
-overlay, incremental highlight via a second Selection); **word/line selection
+scrollback search (`ctrl+shift+f`/`cmd+f`, incremental case-insensitive
+highlight + hit cycling) **[done 2026-11]** ·
+**[open]**: **word/line selection
 (double/triple-click — qwen BUGS-9)**; clickable links (OSC 8 +
 regex, `cmd+click`); fullscreen +
 clear-to-scrollback binds;

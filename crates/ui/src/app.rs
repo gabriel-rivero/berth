@@ -171,6 +171,8 @@ pub struct Berth {
     titles: HashMap<PaneId, String>,
     /// focused tab-strip slot or sidebar entry (for hover highlights).
     hovered: Option<crate::render::ChromeZone>,
+    /// Active scrollback search overlay (None = closed).
+    search: Option<SearchState>,
     /// Sub-line wheel remainder so trackpad pixel scrolling isn't rounded
     /// away on every event (fractional lines accumulate across events).
     wheel_accum: f32,
@@ -212,6 +214,14 @@ enum ClickZone {
 struct RenameEdit {
     ws: WorkspaceId,
     buf: String,
+}
+
+/// Active scrollback search: modal query buffer plus the current hit list.
+struct SearchState {
+    query: String,
+    matches: Vec<berth_emulation::pane::GridMatch>,
+    /// Index into `matches` of the highlighted hit.
+    current: usize,
 }
 
 /// Double-click window (matches macOS/Windows defaults, generous on purpose).
@@ -554,6 +564,11 @@ impl Berth {
                         blink_on: self.blink_on || !self.config.terminal.cursor_blink,
                         window_focused: self.window_focused,
                     },
+                    self.search.as_ref().map(|s| crate::render::SearchView {
+                        query: &s.query,
+                        matches: &s.matches,
+                        current: s.current,
+                    }),
                     self.hovered,
                     confirm.as_deref(),
                     w,
@@ -794,6 +809,112 @@ impl Berth {
         }
         if let Some(w) = &self.window {
             w.request_redraw();
+        }
+        true
+    }
+
+    /// Open the scrollback search overlay with an empty query.
+    fn open_search(&mut self) {
+        self.search = Some(SearchState {
+            query: String::new(),
+            matches: Vec::new(),
+            current: 0,
+        });
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+    }
+
+    /// Re-run the query against the focused pane and reveal the first hit.
+    fn refresh_search(&mut self) {
+        let Some(query) = self.search.as_ref().map(|s| s.query.clone()) else {
+            return;
+        };
+        let matches = if let Some(pane) = self.panes.get(&self.focused_pane) {
+            let mut pane = pane.lock().expect("pane poisoned");
+            let matches = pane.find_matches(&query);
+            if let Some(first) = matches.first() {
+                pane.reveal_line(first.line, 2);
+            }
+            matches
+        } else {
+            Vec::new()
+        };
+        if let Some(state) = self.search.as_mut() {
+            state.matches = matches;
+            state.current = 0;
+        }
+        self.wheel_accum = 0.0;
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+    }
+
+    /// Cycle to the next/previous hit and scroll it into view.
+    fn search_next(&mut self, forward: bool) {
+        let Some(state) = self.search.as_mut() else {
+            return;
+        };
+        if state.matches.is_empty() {
+            return;
+        }
+        let n = state.matches.len();
+        state.current = if forward {
+            (state.current + 1) % n
+        } else {
+            (state.current + n - 1) % n
+        };
+        let line = state.matches[state.current].line;
+        if let Some(pane) = self.panes.get(&self.focused_pane) {
+            pane.lock().expect("pane poisoned").reveal_line(line, 2);
+        }
+        self.wheel_accum = 0.0;
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+    }
+
+    /// Key interception while the search overlay is up. Consumes everything.
+    fn search_chord(&mut self, event: &KeyEvent) -> bool {
+        if self.search.is_none() {
+            return false;
+        }
+        use winit::keyboard::{Key, NamedKey};
+        let mut changed = false;
+        match &event.logical_key {
+            Key::Named(NamedKey::Escape) => {
+                self.search = None;
+                self.window.as_ref().inspect(|w| w.request_redraw());
+                return true;
+            }
+            Key::Named(NamedKey::Backspace) => {
+                if let Some(state) = &mut self.search {
+                    state.query.pop();
+                }
+                changed = true;
+            }
+            Key::Named(NamedKey::Enter) => {
+                let forward = !self.modifiers.shift_key();
+                self.search_next(forward);
+                return true;
+            }
+            _ => {
+                let plain = !self.modifiers.control_key()
+                    && !self.modifiers.alt_key()
+                    && !self.modifiers.super_key();
+                if plain
+                    && let Some(text) = event.text.as_deref()
+                    && !text.is_empty()
+                {
+                    if let Some(state) = &mut self.search {
+                        state.query.push_str(text);
+                    }
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.refresh_search();
         }
         true
     }
@@ -1176,11 +1297,15 @@ impl Berth {
             return true;
         }
 
+        // Scrollback search overlay consumes keys while it is up.
+        if self.search_chord(event) {
+            return true;
+        }
+
         // Sidebar rename editor consumes keys while it is up.
         if self.rename_chord(event) {
             return true;
         }
-
         // Table lookup: normalize this key event to a chord key name.
         if let Some(key_name) = chord_key_name(event) {
             let chord = Chord {
@@ -1207,6 +1332,10 @@ impl Berth {
     /// Execute a configured action; true = consumed.
     fn run_action(&mut self, action: Action) -> bool {
         match action {
+            Action::Search => {
+                self.open_search();
+                true
+            }
             Action::SplitVertical => {
                 self.split_focused(true);
                 true
@@ -2379,6 +2508,7 @@ pub fn run() -> anyhow::Result<()> {
         zoomed: None,
         titles: HashMap::new(),
         hovered: None,
+        search: None,
         wheel_accum: 0.0,
         renderer_retry_at: std::time::Instant::now(),
         window_focused: true,
