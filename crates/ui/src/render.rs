@@ -286,6 +286,39 @@ pub fn tab_width(bar_w: f32, count: usize, max_w: f32, scale: f32) -> f32 {
     (bar_w.max(1.0) / count as f32).clamp(TAB_MIN_WIDTH * scale, max_w)
 }
 
+/// How the cursor should be painted for one pane this frame.
+#[derive(Debug, Clone, Copy)]
+pub struct CursorPaint {
+    /// Pane owns the cursor: only the focused pane shows one.
+    pub show: bool,
+    /// False during the blink-off phase (cursor hidden, text normal).
+    pub blink_on: bool,
+    /// Window focus: an unfocused window gets a hollow block, not a solid one.
+    pub window_focused: bool,
+}
+
+/// Bounds of the cursor shape inside its cell (device px).
+pub fn cursor_rect(
+    style: berth_core::config::CursorStyle,
+    px: f32,
+    py: f32,
+    cw: f32,
+    ch: f32,
+) -> (f32, f32, f32, f32) {
+    use berth_core::config::CursorStyle;
+    match style {
+        CursorStyle::Block => (px, py, px + cw, py + ch),
+        CursorStyle::Beam => {
+            let w = (cw * 0.12).max(2.0);
+            (px, py, px + w, py + ch)
+        }
+        CursorStyle::Underline => {
+            let h = (ch * 0.1).max(2.0);
+            (px, py + ch - h, px + cw, py + ch)
+        }
+    }
+}
+
 /// Viewport position of a scrolled-back pane, for the overlay scrollbar/badge.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScrollInfo {
@@ -1137,6 +1170,8 @@ pub struct Renderer {
     font: FontCtx,
     /// Active terminal colors (theme preset + overrides).
     scheme: ColorScheme,
+    /// Cursor shape (block/beam/underline), from `[terminal] cursor_style`.
+    cursor_style: berth_core::config::CursorStyle,
     quad_buf: wgpu::Buffer,
 }
 
@@ -1413,6 +1448,7 @@ impl Renderer {
             atlas: Atlas::new(),
             font,
             scheme,
+            cursor_style: berth_core::config::CursorStyle::default(),
             quad_buf,
         })
     }
@@ -1441,6 +1477,11 @@ impl Renderer {
     /// Apply a theme from config (no font/atlas rebuild needed).
     pub fn set_theme(&mut self, theme: &berth_core::config::Theme) {
         self.scheme = ColorScheme::from_config(theme);
+    }
+
+    /// Cursor shape from `[terminal] cursor_style` (hot-reloadable).
+    pub fn set_cursor_style(&mut self, style: berth_core::config::CursorStyle) {
+        self.cursor_style = style;
     }
 
     pub fn resize_surface(&mut self, window: &Window) {
@@ -1927,6 +1968,7 @@ impl Renderer {
         sb_w: f32,
         focus: Option<Rect>,
         scroll: Option<ScrollInfo>,
+        cursor: CursorPaint,
         hovered: Option<ChromeZone>,
         confirm: Option<&str>,
         window: &Window,
@@ -1967,7 +2009,12 @@ impl Renderer {
         let mut quads_bg = 0usize;
         let mut quads_glyph = 0usize;
         for (term, rect) in panes {
-            let (n_g, n_b, n_u) = self.draw_term(term, *rect, metrics, quad_trace, &mut sink);
+            let paint = CursorPaint {
+                show: focus == Some(*rect),
+                ..cursor
+            };
+            let (n_g, n_b, n_u) =
+                self.draw_term(term, *rect, metrics, quad_trace, paint, &mut sink);
             quads_glyph += n_g;
             quads_bg += n_b;
             uploads_pending += n_u;
@@ -2153,6 +2200,7 @@ impl Renderer {
         rect: Rect,
         metrics: Metrics,
         quad_trace: bool,
+        cursor: CursorPaint,
         sink: &mut QuadSink,
     ) -> (usize, usize, usize) {
         let content = term.renderable_content();
@@ -2164,7 +2212,7 @@ impl Renderer {
         );
         let mut dump_rows: Vec<String> = Vec::new();
         let mut dump_cur: Option<(usize, String)> = None; // (row, chars)
-        let cursor = point_to_viewport(content.display_offset, content.cursor.point);
+        let cursor_vp = point_to_viewport(content.display_offset, content.cursor.point);
         let mut quads_bg = 0usize;
         let mut quads_glyph = 0usize;
 
@@ -2230,18 +2278,33 @@ impl Renderer {
             if selected {
                 fg = scheme.blend(fg);
             }
-            let on_cursor = cursor
-                .map(|vp| vp.line == row && vp.column.0 == col)
-                .unwrap_or(false);
+            let on_cursor = cursor.show
+                && cursor.blink_on
+                && cursor_vp
+                    .map(|vp| vp.line == row && vp.column.0 == col)
+                    .unwrap_or(false);
+            let solid_block = on_cursor
+                && cursor.window_focused
+                && self.cursor_style == berth_core::config::CursorStyle::Block;
             if on_cursor {
-                sink.push(
-                    px,
-                    py,
-                    px + metrics.cell_w,
-                    py + metrics.cell_h,
-                    scheme.cursor,
-                    None,
-                );
+                let (x0, y0, x1, y1) =
+                    cursor_rect(self.cursor_style, px, py, metrics.cell_w, metrics.cell_h);
+                if solid_block {
+                    sink.push(x0, y0, x1, y1, scheme.cursor, None);
+                } else {
+                    // Hollow block when the window is unfocused; bars otherwise.
+                    let mut color = scheme.cursor;
+                    color[3] = 0.7;
+                    if self.cursor_style == berth_core::config::CursorStyle::Block {
+                        let t = (metrics.cell_w * 0.1).max(1.0);
+                        sink.push(x0, y0, x1, y0 + t, color, None);
+                        sink.push(x0, y1 - t, x1, y1, color, None);
+                        sink.push(x0, y0 + t, x0 + t, y1 - t, color, None);
+                        sink.push(x1 - t, y0 + t, x1, y1 - t, color, None);
+                    } else {
+                        sink.push(x0, y0, x1, y1, color, None);
+                    }
+                }
             }
             if c == ' '
                 || c == '\0'
@@ -2250,7 +2313,7 @@ impl Renderer {
             {
                 continue;
             }
-            fg = if on_cursor { scheme.bg } else { fg };
+            fg = if solid_block { scheme.bg } else { fg };
 
             let bold = cell.flags.intersects(Flags::BOLD | Flags::DIM_BOLD);
             let italic = cell.flags.intersects(Flags::ITALIC | Flags::BOLD_ITALIC);
@@ -2385,6 +2448,19 @@ mod tests {
 
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-3
+    }
+
+    #[test]
+    fn cursor_shapes_are_inset_bars_for_beam_and_underline() {
+        use berth_core::config::CursorStyle;
+        assert_eq!(
+            cursor_rect(CursorStyle::Block, 10.0, 20.0, 10.0, 20.0),
+            (10.0, 20.0, 20.0, 40.0)
+        );
+        let (x0, _, x1, _) = cursor_rect(CursorStyle::Beam, 10.0, 20.0, 10.0, 20.0);
+        assert_eq!((x0, x1), (10.0, 12.0), "beam is max(12% width, 2px)");
+        let (_, y0, _, y1) = cursor_rect(CursorStyle::Underline, 10.0, 20.0, 10.0, 20.0);
+        assert_eq!((y0, y1), (38.0, 40.0), "underline hugs the cell bottom");
     }
 
     #[test]

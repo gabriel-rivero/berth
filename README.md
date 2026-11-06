@@ -138,6 +138,19 @@ to make them selectable. Unknown `[theme]` keys and malformed colors are
 reported in `berth.log` rather than silently ignored. The light preset themes
 both the terminal and the window chrome (tab strip, sidebar, dividers).
 
+Cursor shape and blink are separate knobs:
+
+```toml
+[terminal]
+cursor_style = "block"   # "block" | "beam" | "underline"
+cursor_blink = true      # blink only while the window is focused
+cursor_blink_ms = 530    # full on/off cycle, clamped to 200..2000
+```
+
+Typing resets the blink to solid; when the window loses focus the block cursor
+becomes a hollow outline. Multi-pane layouts draw a cursor in the focused pane
+only.
+
 ### Remaining
 
 - sidebar: rename is done (**double-click a workspace entry** to rename it

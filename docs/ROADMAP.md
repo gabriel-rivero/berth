@@ -144,9 +144,11 @@ like one) while staying small and GPU-cheap. Ordered by perceived impact per eff
    focused pane shows an overlay scrollbar + `↑N` badge. Still open: animated
    pixel/line scrolling, scrollbar drag, wheel-over-strip/sidebar tab cycling
    (see Identity). Wheel routing in panes is **[done 2026-11]**.
-6. **[open]** **Cursor & focus**: block/beam/underline shapes, blink rate config,
-   hide-while-typing, dim/hollow unfocused cursor (already tracked in S1), and a clear
-   window-active vs pane-focused distinction.
+6. **[done 2026-11]** **Cursor & focus**: `[terminal] cursor_style =
+   "block"|"beam"|"underline"`, `cursor_blink`, `cursor_blink_ms` (hot-reload,
+   clamped); blink only while the window is focused and reset to solid on
+   input; unfocused window shows a hollow block; only the focused pane draws a
+   cursor (multi-pane bug fixed).
 7. **[open]** **Frame quality under load**: damage tracking (only repaint dirty cells),
    atlas paging/LRU (S1), renderer-loss recovery (S1), frame-time HUD behind
    `BERTH_DEBUG`, and a CI perf budget (e.g. `seq 1 3000` < N frames, idle CPU ≈ 0).
@@ -162,7 +164,7 @@ Mouse reporting **[done]** · bracketed paste/copy-on-select **[done]** ·
 **[open]**: scrollback search (`ctrl+shift+f`
 overlay, incremental highlight via a second Selection); **word/line selection
 (double/triple-click — qwen BUGS-9)**; clickable links (OSC 8 +
-regex, `cmd+click`); cursor shapes/blink + `WindowEvent::Focused`; fullscreen +
+regex, `cmd+click`); fullscreen +
 clear-to-scrollback binds; `[shell]`/`command`+`args`+`env` config (can't start
 fish/login shells today), `working-dir`, `scrollback` size;
 IME; DECCKM + kitty keyboard probe; bell→attention;

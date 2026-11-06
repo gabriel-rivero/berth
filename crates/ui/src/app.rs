@@ -174,6 +174,11 @@ pub struct Berth {
     /// Sub-line wheel remainder so trackpad pixel scrolling isn't rounded
     /// away on every event (fractional lines accumulate across events).
     wheel_accum: f32,
+    /// Window focus (unfocused windows get a hollow cursor).
+    window_focused: bool,
+    /// Cursor blink phase (on/off) and next flip deadline.
+    blink_on: bool,
+    blink_next: std::time::Instant,
     /// OSC 7 cwd per pane (only shells with an integration hook report).
     cwds: HashMap<PaneId, String>,
     /// Compiled keybind table (chord -> action); rebuilt on config reload.
@@ -509,6 +514,11 @@ impl Berth {
                     sb_w,
                     focus,
                     scroll,
+                    crate::render::CursorPaint {
+                        show: true,
+                        blink_on: self.blink_on || !self.config.terminal.cursor_blink,
+                        window_focused: self.window_focused,
+                    },
                     self.hovered,
                     confirm.as_deref(),
                     w,
@@ -909,6 +919,13 @@ impl Berth {
 
     /// Current chrome zone under the pointer (single source of truth shared by
     /// hover highlight, cursor icon and click dispatch).
+    /// Blink cadence when enabled and the window is focused (config ms clamped).
+    fn blink_interval(&self) -> Option<std::time::Duration> {
+        let t = &self.config.terminal;
+        (t.cursor_blink && self.window_focused)
+            .then(|| std::time::Duration::from_millis(t.cursor_blink_ms.clamp(200, 2000)))
+    }
+
     /// Chrome geometry for the current window. Tab slots shrink-to-fit so a
     /// crowded strip stays inside the window; draw and hit-testing share this.
     fn chrome(&self) -> Chrome {
@@ -1452,6 +1469,9 @@ impl ApplicationHandler<PaneEvent> for Berth {
 
         self.window = Some(window);
         self.renderer = Some(renderer);
+        if let Some(r) = &mut self.renderer {
+            r.set_cursor_style(self.config.terminal.cursor_style);
+        }
 
         let restore_panes = std::mem::take(&mut self.restore_panes);
         if restore_panes.is_empty() {
@@ -1619,6 +1639,12 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                if event.state == ElementState::Pressed {
+                    // Typing resets the blink phase (cursor is solid while active).
+                    self.blink_on = true;
+                    self.blink_next =
+                        std::time::Instant::now() + self.blink_interval().unwrap_or(BLINK_DEFAULT);
+                }
                 let consumed = event.state == ElementState::Pressed
                     && self.handle_chord(&event, self.modifiers);
                 if !consumed
@@ -1634,6 +1660,15 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     if pane.scroll_to_bottom() {
                         self.wheel_accum = 0.0;
                     }
+                }
+            }
+            WindowEvent::Focused(focused) => {
+                self.window_focused = focused;
+                self.blink_on = true;
+                self.blink_next =
+                    std::time::Instant::now() + self.blink_interval().unwrap_or(BLINK_DEFAULT);
+                if let Some(w) = &self.window {
+                    w.request_redraw();
                 }
             }
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
@@ -2062,9 +2097,20 @@ impl ApplicationHandler<PaneEvent> for Berth {
             self.confirm_ws = None;
             self.window.as_ref().inspect(|w| w.request_redraw());
         }
-        event_loop.set_control_flow(ControlFlow::WaitUntil(
-            std::time::Instant::now() + std::time::Duration::from_millis(CONFIG_POLL_MS),
-        ));
+        // Cursor blink: only while the window is focused and config allows it.
+        let mut wait_until =
+            std::time::Instant::now() + std::time::Duration::from_millis(CONFIG_POLL_MS);
+        let blink_interval = self.blink_interval();
+        if let Some(interval) = blink_interval {
+            let now = std::time::Instant::now();
+            if now >= self.blink_next {
+                self.blink_on = !self.blink_on;
+                self.blink_next = now + interval;
+                self.window.as_ref().inspect(|w| w.request_redraw());
+            }
+            wait_until = wait_until.min(self.blink_next);
+        }
+        event_loop.set_control_flow(ControlFlow::WaitUntil(wait_until));
     }
 }
 
@@ -2074,6 +2120,8 @@ const CONFIG_POLL_MS: u64 = 750;
 const SESSION_SAVE_MS: u64 = 4000;
 /// How long the quit-confirm banner stays up before auto-cancelling.
 const CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Default cursor blink interval until config is consulted (530 ms ≈ xterm).
+const BLINK_DEFAULT: std::time::Duration = std::time::Duration::from_millis(530);
 
 impl Berth {
     /// Re-read config.toml when its mtime changes; font changes rebuild the
@@ -2099,6 +2147,7 @@ impl Berth {
         self.config = cfg;
         if let Some(renderer) = &mut self.renderer {
             renderer.set_theme(&self.config.theme);
+            renderer.set_cursor_style(self.config.terminal.cursor_style);
         }
         let (bindings, warns) = build_bindings(&self.config.keybinds.0);
         self.bindings = bindings;
@@ -2281,6 +2330,9 @@ pub fn run() -> anyhow::Result<()> {
         titles: HashMap::new(),
         hovered: None,
         wheel_accum: 0.0,
+        window_focused: true,
+        blink_on: true,
+        blink_next: std::time::Instant::now() + BLINK_DEFAULT,
         cwds: HashMap::new(),
         bindings,
         plugins,

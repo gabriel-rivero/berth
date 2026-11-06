@@ -143,12 +143,27 @@ pub enum Backspace {
     Bs,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CursorStyle {
+    #[default]
+    Block,
+    Beam,
+    Underline,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Terminal {
     pub backspace: Backspace,
     /// Selection goes to the clipboard when the drag ends (iTerm2/Alacritty parity).
     pub copy_on_select: bool,
+    /// Cursor shape: `block`, `beam`, or `underline`.
+    pub cursor_style: CursorStyle,
+    /// Blink the cursor while the window is focused.
+    pub cursor_blink: bool,
+    /// Full blink cycle length in ms (clamped to 200..=2000 on use).
+    pub cursor_blink_ms: u64,
 }
 
 impl Default for Terminal {
@@ -156,6 +171,9 @@ impl Default for Terminal {
         Self {
             backspace: Backspace::Del,
             copy_on_select: true,
+            cursor_style: CursorStyle::Block,
+            cursor_blink: true,
+            cursor_blink_ms: 530,
         }
     }
 }
@@ -250,5 +268,26 @@ mod tests {
     fn unknown_theme_key_is_rejected() {
         let err = toml::from_str::<Config>("[theme]\nbackgroud = \"#fff\"\n");
         assert!(err.is_err(), "typo should fail loudly: {err:?}");
+    }
+
+    #[test]
+    fn parses_cursor_style_and_blink() {
+        let cfg: Config = toml::from_str(
+            "[terminal]\ncursor_style = \"beam\"\ncursor_blink = false\ncursor_blink_ms = 900\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.terminal.cursor_style, CursorStyle::Beam);
+        assert!(!cfg.terminal.cursor_blink);
+        assert_eq!(cfg.terminal.cursor_blink_ms, 900);
+
+        let default: Config = toml::from_str("").unwrap();
+        assert_eq!(default.terminal.cursor_style, CursorStyle::Block);
+        assert!(default.terminal.cursor_blink);
+    }
+
+    #[test]
+    fn unknown_cursor_style_is_rejected() {
+        let err = toml::from_str::<Config>("[terminal]\ncursor_style = \"box\"\n");
+        assert!(err.is_err(), "unknown cursor shape should fail loudly");
     }
 }
