@@ -274,6 +274,15 @@ pub fn chrome_zone_at(
     None
 }
 
+/// Viewport position of a scrolled-back pane, for the overlay scrollbar/badge.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ScrollInfo {
+    /// Lines scrolled back from the live bottom.
+    pub offset: usize,
+    /// Lines of history above the viewport.
+    pub history: usize,
+}
+
 /// Which fixed-width tab slot sits under device-px `x` (None past the last tab).
 /// `x` is sidebar-relative (the app subtracts the sidebar width first).
 /// Chrome geometry in device px, scaled by the window's scale factor
@@ -1411,6 +1420,78 @@ impl Renderer {
         sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
     }
 
+    /// Overlay scrollbar + "scrolled back" badge for the focused pane. Only
+    /// visible while the viewport is off the live bottom, so the grid stays
+    /// clean during normal typing.
+    fn draw_scroll_overlay(
+        &mut self,
+        rect: Rect,
+        info: ScrollInfo,
+        ch: Chrome,
+        metrics: Metrics,
+        sink: &mut QuadSink,
+    ) {
+        if info.offset == 0 || info.history == 0 || rect.w < 40 || rect.h < 40 {
+            return;
+        }
+        let colors = self.scheme.chrome;
+        let s = ch.scale;
+        let (rx, ry) = (rect.x as f32, rect.y as f32);
+        let (rw, rh) = (rect.w as f32, rect.h as f32);
+        let pad = 8.0 * s;
+        let track_w = 3.0 * s;
+        let track_x = rx + rw - pad - track_w;
+        let (track_y0, track_y1) = (ry + pad, ry + rh - pad);
+        let track_h = (track_y1 - track_y0).max(1.0);
+        let viewport = (rh / metrics.cell_h).max(1.0);
+        let total = info.history as f32 + viewport;
+        let thumb_h = (track_h * (viewport / total)).clamp(24.0 * s, track_h);
+        let progress = (info.offset as f32 / info.history as f32).clamp(0.0, 1.0);
+        let thumb_y0 = track_y1 - thumb_h - progress * (track_h - thumb_h);
+        let mut track = colors.divider;
+        track[3] = 0.55;
+        sink.push(track_x, track_y0, track_x + track_w, track_y1, track, None);
+        let mut thumb = colors.sidebar_text_active;
+        thumb[3] = 0.8;
+        sink.push(
+            track_x,
+            thumb_y0,
+            track_x + track_w,
+            thumb_y0 + thumb_h,
+            thumb,
+            None,
+        );
+
+        // Pill badge centered at the top of the pane: "↑ 42".
+        let label = format!("↑{}", info.offset);
+        let text_w = label.chars().count() as f32 * metrics.cell_w;
+        let bw = text_w + 12.0 * s;
+        let bh = metrics.cell_h + 6.0 * s;
+        let bx = rx + (rw - bw) * 0.5;
+        let by = ry + pad;
+        let mut bg = colors.sidebar_entry_active_bg;
+        bg[3] = 0.94;
+        sink.push(bx, by, bx + bw, by + bh, bg, None);
+        let baseline = by + 3.0 * s + metrics.ascent;
+        let mut pen = bx + 6.0 * s;
+        for c in label.chars() {
+            let Some(g) = self.rasterize(c, false, false, sink) else {
+                continue;
+            };
+            let gx = pen + g.left as f32;
+            let gy = baseline - g.top as f32;
+            sink.push(
+                gx,
+                gy,
+                gx + g.uv[2],
+                gy + g.uv[3],
+                colors.sidebar_text_active,
+                Some(g),
+            );
+            pen += metrics.cell_w;
+        }
+    }
+
     /// Centered bottom overlay strip (quit confirmation). Drawn last so it sits
     /// on top of panes/tabs/sidebar.
     fn draw_confirm(
@@ -1767,6 +1848,7 @@ impl Renderer {
         workspaces: &[(&str, bool)],
         sb_w: f32,
         focus: Option<Rect>,
+        scroll: Option<ScrollInfo>,
         hovered: Option<ChromeZone>,
         confirm: Option<&str>,
         window: &Window,
@@ -1821,6 +1903,9 @@ impl Renderer {
         }
         if let Some(r) = focus {
             draw_focus_outline(&mut sink, r, self.scheme.chrome.focus_outline);
+            if let Some(info) = scroll {
+                self.draw_scroll_overlay(r, info, ch, metrics, &mut sink);
+            }
         }
 
         dlog!(

@@ -26,9 +26,11 @@ Nov 2026 external review's findings and their status).
 
 v0.24.0 — M1–M3 shipped (details below), M4 plugin host in progress.
 Post-0.24.0 fixes: correct sRGB→linear color pipeline, mouse wheel scrolls the
-viewport instead of walking shell history, real hover states, one shared
-chrome hit-test for every press (close buttons stable across DPI/OS), and
-per-launch GPU diagnostics in `berth.log`.
+viewport instead of walking shell history (trackpad pixel deltas accumulate
+instead of rounding away), typing while scrolled back returns to the live tail
+with an overlay scrollbar/`↑N` badge, real hover states, one shared chrome
+hit-test for every press (close buttons stable across DPI/OS), real bold/italic
+faces, theme presets, and per-launch GPU diagnostics in `berth.log`.
 
 ### Shipped
 

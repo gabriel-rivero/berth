@@ -276,6 +276,25 @@ impl Pane {
         self.term.scroll_display(scroll);
     }
 
+    /// Lines the viewport is scrolled back from the live bottom (0 = tail).
+    pub fn display_offset(&self) -> usize {
+        self.term.grid().display_offset()
+    }
+
+    /// Lines of history available above the visible grid.
+    pub fn history_size(&self) -> usize {
+        self.term.history_size()
+    }
+
+    /// Jump back to the live bottom. Returns true when the viewport moved.
+    pub fn scroll_to_bottom(&mut self) -> bool {
+        if self.display_offset() == 0 {
+            return false;
+        }
+        self.term.scroll_display(Scroll::Bottom);
+        true
+    }
+
     /// Begin/replace the drag selection anchored at `point`.
     pub fn start_selection(&mut self, point: TermPoint) {
         self.term.selection = Some(Selection::new(SelectionType::Simple, point, Side::Left));

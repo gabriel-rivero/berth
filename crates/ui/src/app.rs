@@ -57,6 +57,19 @@ fn wheel_target(mode: TermMode) -> WheelTarget {
     }
 }
 
+/// Add a (possibly fractional) line delta to the wheel accumulator and return
+/// the whole lines to act on now. Sub-line trackpad deltas accumulate instead
+/// of being rounded away; a direction flip discards the stale remainder.
+fn accumulate_wheel(accum: &mut f32, delta_lines: f32) -> i32 {
+    if delta_lines != 0.0 && accum.signum() != delta_lines.signum() {
+        *accum = 0.0;
+    }
+    *accum += delta_lines;
+    let lines = accum.trunc() as i32;
+    *accum -= lines as f32;
+    lines
+}
+
 /// Convert a pane-local viewport cell to a terminal-space selection point.
 fn term_point(pane: &Pane, row: usize, col: usize) -> TermPoint {
     alacritty_terminal::term::viewport_to_point(
@@ -158,6 +171,9 @@ pub struct Berth {
     titles: HashMap<PaneId, String>,
     /// focused tab-strip slot or sidebar entry (for hover highlights).
     hovered: Option<crate::render::ChromeZone>,
+    /// Sub-line wheel remainder so trackpad pixel scrolling isn't rounded
+    /// away on every event (fractional lines accumulate across events).
+    wheel_accum: f32,
     /// OSC 7 cwd per pane (only shells with an integration hook report).
     cwds: HashMap<PaneId, String>,
     /// Compiled keybind table (chord -> action); rebuilt on config reload.
@@ -442,6 +458,18 @@ impl Berth {
                 guards.push((guard, rect));
             }
         }
+        let mut scroll = None;
+        if let Some(fr) = focus {
+            for (g, r) in &guards {
+                if *r == fr {
+                    scroll = Some(crate::render::ScrollInfo {
+                        offset: g.display_offset(),
+                        history: g.history_size(),
+                    });
+                    break;
+                }
+            }
+        }
         let spans = guards
             .iter()
             .map(|(g, r)| (g.term(), *r))
@@ -480,6 +508,7 @@ impl Berth {
                     &workspaces,
                     sb_w,
                     focus,
+                    scroll,
                     self.hovered,
                     confirm.as_deref(),
                     w,
@@ -1571,7 +1600,13 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     && let Some(pane) = self.panes.get(&self.focused_pane)
                 {
                     dlog_app!("kbd write: pane={:?} bytes={:?}", self.focused_pane, bytes);
-                    let _ = pane.lock().expect("pane poisoned").write(&bytes);
+                    let mut pane = pane.lock().expect("pane poisoned");
+                    let _ = pane.write(&bytes);
+                    // Typing while scrolled back returns to the live tail (xterm
+                    // behavior); the wheel remainder is stale afterwards.
+                    if pane.scroll_to_bottom() {
+                        self.wheel_accum = 0.0;
+                    }
                 }
             }
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
@@ -1924,10 +1959,13 @@ impl ApplicationHandler<PaneEvent> for Berth {
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let (_, cell_h) = self.cell_metrics();
-                let lines = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => (y * WHEEL_LINES_PER_TICK as f32) as i32,
-                    MouseScrollDelta::PixelDelta(pos) => (pos.y / cell_h as f64).round() as i32,
+                let delta_lines = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y * WHEEL_LINES_PER_TICK as f32,
+                    MouseScrollDelta::PixelDelta(pos) => (pos.y / cell_h.max(1.0) as f64) as f32,
                 };
+                // Trackpads emit many sub-line pixel deltas; accumulate instead of
+                // rounding each event away (the old code dropped smooth scrolling).
+                let lines = accumulate_wheel(&mut self.wheel_accum, delta_lines);
                 if lines != 0 {
                     // Wheel follows the hovered pane, not the focused one
                     // (matches macOS Terminal / iTerm2 behavior).
@@ -2225,6 +2263,7 @@ pub fn run() -> anyhow::Result<()> {
         zoomed: None,
         titles: HashMap::new(),
         hovered: None,
+        wheel_accum: 0.0,
         cwds: HashMap::new(),
         bindings,
         plugins,
@@ -2266,5 +2305,26 @@ mod tests {
         assert_eq!(wheel_target(mode), WheelTarget::MouseReport);
         let drag = TermMode::default() | TermMode::MOUSE_DRAG;
         assert_eq!(wheel_target(drag), WheelTarget::MouseReport);
+    }
+
+    #[test]
+    fn sub_line_wheel_deltas_accumulate_instead_of_rounding_away() {
+        // A trackpad sends 0.25-line pixel deltas; four of them must move one line
+        // instead of being rounded to zero and lost (the old behavior).
+        let mut acc = 0.0;
+        assert_eq!(accumulate_wheel(&mut acc, 0.25), 0);
+        assert_eq!(accumulate_wheel(&mut acc, 0.25), 0);
+        assert_eq!(accumulate_wheel(&mut acc, 0.25), 0);
+        assert_eq!(accumulate_wheel(&mut acc, 0.25), 1);
+        assert!(acc.abs() < 1e-6);
+    }
+
+    #[test]
+    fn wheel_direction_flip_drops_stale_remainder() {
+        let mut acc = 0.0;
+        assert_eq!(accumulate_wheel(&mut acc, 0.9), 0);
+        assert_eq!(accumulate_wheel(&mut acc, -0.5), 0);
+        assert!((acc + 0.5).abs() < 1e-6);
+        assert_eq!(accumulate_wheel(&mut acc, -0.5), -1);
     }
 }

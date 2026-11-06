@@ -135,10 +135,12 @@ like one) while staying small and GPU-cheap. Ordered by perceived impact per eff
    active-tab and focused-pane affordances that survive color-blind palettes; rounded
    tab/panel corners; overflow shrink-to-fit + chevrons; optional `+`/close reveal on
    hover only; no layout shift on hover. (Hover + shared zones **[done 2026-11]**.)
-5. **[open]** **Scrolling feel**: pixel/line smooth scrolling with optional animation,
-   overlay scrollbar with drag, scroll-to-bottom on input, wheel-over-strip/sidebar
-   cycling (see Identity), and a visible "scrolled back" badge. Wheel routing in panes
-   is **[done 2026-11]**.
+5. **[done 2026-11, animation/drag open]** **Scrolling feel**: sub-line trackpad
+   pixel deltas accumulate across events (no more dropped smooth scrolling);
+   typing while scrolled back snaps to the live tail; while off the bottom the
+   focused pane shows an overlay scrollbar + `↑N` badge. Still open: animated
+   pixel/line scrolling, scrollbar drag, wheel-over-strip/sidebar tab cycling
+   (see Identity). Wheel routing in panes is **[done 2026-11]**.
 6. **[open]** **Cursor & focus**: block/beam/underline shapes, blink rate config,
    hide-while-typing, dim/hollow unfocused cursor (already tracked in S1), and a clear
    window-active vs pane-focused distinction.
@@ -160,7 +162,7 @@ overlay, incremental highlight via a second Selection); **word/line selection
 regex, `cmd+click`); cursor shapes/blink + `WindowEvent::Focused`; fullscreen +
 clear-to-scrollback binds; `[shell]`/`command`+`args`+`env` config (can't start
 fish/login shells today), `working-dir`, `scrollback` size;
-IME; scroll-to-bottom; DECCKM + kitty keyboard probe; bell→attention;
+IME; DECCKM + kitty keyboard probe; bell→attention;
 exit-status surfacing; wide-glyph advance audit; selection drag auto-scroll
 past window edges (qwen U-13); zoomed-pane indicator + window title carrying
 tab/workspace context (qwen U-12).
