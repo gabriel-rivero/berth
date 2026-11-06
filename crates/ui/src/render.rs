@@ -1173,6 +1173,10 @@ pub struct Renderer {
     /// Cursor shape (block/beam/underline), from `[terminal] cursor_style`.
     cursor_style: berth_core::config::CursorStyle,
     quad_buf: wgpu::Buffer,
+    /// Draw a small frame-time HUD in the corner (`BERTH_DEBUG=1`).
+    hud: bool,
+    /// Smoothed CPU frame time in ms (HUD only; not GPU time).
+    ema_ms: f32,
 }
 
 impl Renderer {
@@ -1450,6 +1454,8 @@ impl Renderer {
             scheme,
             cursor_style: berth_core::config::CursorStyle::default(),
             quad_buf,
+            hud: std::env::var_os("BERTH_DEBUG").is_some(),
+            ema_ms: 0.0,
         })
     }
 
@@ -1582,6 +1588,43 @@ impl Renderer {
                 colors.sidebar_text_active,
                 Some(g),
             );
+            pen += metrics.cell_w;
+        }
+    }
+
+    /// Small top-right HUD (visible with `BERTH_DEBUG=1`): smoothed CPU draw
+    /// time and quad count. GPU time is not reported (wgpu timestamps are off by
+    /// default); this is a "is the CPU the bottleneck" indicator only.
+    fn draw_hud(
+        &mut self,
+        label: &str,
+        screen_w: f32,
+        screen_h: f32,
+        ch: Chrome,
+        confirm_h: f32,
+        sink: &mut QuadSink,
+    ) {
+        let metrics = self.font.metrics;
+        let s = ch.scale;
+        let text_w = label.chars().count() as f32 * metrics.cell_w;
+        let bh = metrics.cell_h + 8.0 * s;
+        let bw = text_w + 16.0 * s;
+        let bx = (screen_w - bw - 8.0 * s).max(0.0);
+        let by = (screen_h - bh - 8.0 * s - confirm_h).max(0.0);
+        let mut bg = self.scheme.chrome.tab_active_bg;
+        bg[3] = 0.92;
+        sink.push_round(bx, by, bx + bw, by + bh, bg, bh * 0.5);
+        let baseline = by + 4.0 * s + metrics.ascent;
+        let mut pen = bx + 8.0 * s;
+        let mut color = self.scheme.chrome.tab_text_active;
+        color[3] = 0.85;
+        for c in label.chars() {
+            let Some(g) = self.rasterize(c, false, false, sink) else {
+                continue;
+            };
+            let gx = pen + g.left as f32;
+            let gy = baseline - g.top as f32;
+            sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
             pen += metrics.cell_w;
         }
     }
@@ -1955,9 +1998,7 @@ impl Renderer {
         found
     }
 
-    /// Full frame: sidebar + tab strip + tiled panes (term + rect) + dividers.
     /// Full frame: cell quads per pane + chrome. Drawn on RedrawRequested.
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)] // draw args are the frame's scene inputs
     pub fn draw(
         &mut self,
@@ -1973,6 +2014,7 @@ impl Renderer {
         confirm: Option<&str>,
         window: &Window,
     ) -> anyhow::Result<()> {
+        let frame_start = std::time::Instant::now();
         let phys = window.inner_size();
         let screen_w = phys.width as f32;
         let screen_h = phys.height as f32;
@@ -2002,9 +2044,6 @@ impl Renderer {
         let mut sink = QuadSink::default();
         self.draw_sidebar(workspaces, sb_w, ch, metrics, hovered, &mut sink);
         self.draw_tab_bar(tabs, metrics, ch, sb_w, hovered, &mut sink);
-        if let Some(msg) = confirm {
-            self.draw_confirm(msg, screen_w, screen_h, ch, &mut sink);
-        }
         let mut uploads_pending = 0usize;
         let mut quads_bg = 0usize;
         let mut quads_glyph = 0usize;
@@ -2035,6 +2074,16 @@ impl Renderer {
             if let Some(info) = scroll {
                 self.draw_scroll_overlay(r, info, ch, metrics, &mut sink);
             }
+        }
+        if self.hud {
+            let label = format!("{:.1} ms · {} quads", self.ema_ms, sink.verts.len() / 6);
+            let confirm_h = if confirm.is_some() { ch.confirm_h } else { 0.0 };
+            self.draw_hud(&label, screen_w, screen_h, ch, confirm_h, &mut sink);
+        }
+        // Confirm banner last: panes skip default-bg quads, so an earlier banner
+        // showed through the grid but lost to any glyph/selection painted over it.
+        if let Some(msg) = confirm {
+            self.draw_confirm(msg, screen_w, screen_h, ch, &mut sink);
         }
 
         dlog!(
@@ -2075,9 +2124,14 @@ impl Renderer {
         let frame = match self.surface.get_current_texture() {
             CurrentSurfaceTexture::Success(t) => t,
             CurrentSurfaceTexture::Suboptimal(t) => t,
-            CurrentSurfaceTexture::Timeout
-            | CurrentSurfaceTexture::Occluded
-            | CurrentSurfaceTexture::Outdated => return Ok(()),
+            CurrentSurfaceTexture::Timeout | CurrentSurfaceTexture::Occluded => return Ok(()),
+            CurrentSurfaceTexture::Outdated => {
+                // Window resize/scale change raced the acquire: reconfigure and
+                // let the next redraw present normally.
+                dlog!("surface outdated: reconfiguring");
+                self.surface.configure(&self.device, &self.config);
+                return Ok(());
+            }
             _ => anyhow::bail!("surface texture lost/invalid"),
         };
         let view = frame
@@ -2125,6 +2179,12 @@ impl Renderer {
             }
         }
         self.queue.submit(Some(encoder.finish()));
+        let ms = frame_start.elapsed().as_secs_f32() * 1000.0;
+        self.ema_ms = if self.ema_ms <= 0.0 {
+            ms
+        } else {
+            self.ema_ms * 0.9 + ms * 0.1
+        };
 
         if frame_dump_enabled() {
             let (w, h) = (self.config.width, self.config.height);

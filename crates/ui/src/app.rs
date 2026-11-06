@@ -193,6 +193,8 @@ pub struct Berth {
     last_save: std::time::Instant,
     /// Panes to spawn on startup for a restored session (consumed by resumed()).
     restore_panes: Vec<(PaneId, Option<String>)>,
+    /// Earliest time to retry building the renderer after a lost surface/device.
+    renderer_retry_at: std::time::Instant,
 }
 
 /// Where the last mouse press landed — used for double-click-to-create.
@@ -409,7 +411,40 @@ impl Berth {
     }
 
     /// Pump every pane and redraw the whole layout.
+    /// (Re)create the GPU renderer for an existing window. Used at startup and
+    /// after a lost device/surface (driver reset, GPU hotplug, display change).
+    fn build_renderer(&self, window: &Window) -> Option<Renderer> {
+        let font = &self.config.font;
+        let mut r = match Renderer::new(
+            window,
+            &font.family,
+            font.size_pt,
+            font.line_height,
+            &self.config.theme,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                crate::render::dlog_emit(&format!("renderer init failed: {e:#}"));
+                return None;
+            }
+        };
+        r.set_cursor_style(self.config.terminal.cursor_style);
+        Some(r)
+    }
+
     fn redraw(&mut self) {
+        // Recover from a lost surface/device: rebuild lazily on the next frame
+        // instead of leaving a dead window until restart.
+        if self.renderer.is_none()
+            && std::time::Instant::now() >= self.renderer_retry_at
+            && let Some(w) = &self.window
+        {
+            self.renderer = self.build_renderer(w);
+            if self.renderer.is_none() {
+                self.renderer_retry_at =
+                    std::time::Instant::now() + std::time::Duration::from_secs(1);
+            }
+        }
         let area = self.content_rect();
         let (rect_list, dividers) = self.current_rects(area);
         let rect_map: HashMap<PaneId, Rect> = rect_list.into_iter().collect();
@@ -527,7 +562,13 @@ impl Berth {
             _ => false,
         };
         if failed {
-            self.renderer = None; // surface lost hard; window close handles the rest
+            // The next redraw rebuilds the renderer (see top of redraw); keep
+            // the window/content alive so a driver reset doesn't kill the app.
+            crate::render::dlog_emit("draw failed: dropping renderer for rebuild");
+            self.renderer = None;
+            self.renderer_retry_at =
+                std::time::Instant::now() + std::time::Duration::from_millis(500);
+            // about_to_wait schedules the retry; no immediate redraw loop.
         }
     }
 
@@ -1457,21 +1498,10 @@ impl ApplicationHandler<PaneEvent> for Berth {
             .with_window_icon(load_window_icon())
             .with_min_inner_size(winit::dpi::LogicalSize::new(400.0, 200.0));
         let window = event_loop.create_window(attrs).expect("window creation");
-        let font = &self.config.font;
-        let renderer = Renderer::new(
-            &window,
-            &font.family,
-            font.size_pt,
-            font.line_height,
-            &self.config.theme,
-        )
-        .expect("renderer init");
+        let renderer = self.build_renderer(&window).expect("renderer init");
 
         self.window = Some(window);
         self.renderer = Some(renderer);
-        if let Some(r) = &mut self.renderer {
-            r.set_cursor_style(self.config.terminal.cursor_style);
-        }
 
         let restore_panes = std::mem::take(&mut self.restore_panes);
         if restore_panes.is_empty() {
@@ -2110,6 +2140,15 @@ impl ApplicationHandler<PaneEvent> for Berth {
             }
             wait_until = wait_until.min(self.blink_next);
         }
+        // Renderer rebuild retry after a lost surface/device (backoff, driven by
+        // the wait timer so a broken GPU doesn't spin the event loop).
+        if self.renderer.is_none() && self.window.is_some() {
+            if std::time::Instant::now() >= self.renderer_retry_at {
+                self.window.as_ref().inspect(|w| w.request_redraw());
+            } else {
+                wait_until = wait_until.min(self.renderer_retry_at);
+            }
+        }
         event_loop.set_control_flow(ControlFlow::WaitUntil(wait_until));
     }
 }
@@ -2330,6 +2369,7 @@ pub fn run() -> anyhow::Result<()> {
         titles: HashMap::new(),
         hovered: None,
         wheel_accum: 0.0,
+        renderer_retry_at: std::time::Instant::now(),
         window_focused: true,
         blink_on: true,
         blink_next: std::time::Instant::now() + BLINK_DEFAULT,

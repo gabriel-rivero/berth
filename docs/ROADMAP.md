@@ -41,7 +41,7 @@ Three pillars for "1.0":
 | S1 | Wheel scrolls focused pane → hovered pane | **[done]** |
 | S1 | Focused-pane indicator | **[done]** (accent outline; cursor still identical — dim unfocused cursors **[open]**) |
 | S1 | 5s keyboard blackout during quit-confirm | **[deferred]** (only scroll/escape flow suffers; revisit when confirm path gets per-key routing) |
-| S1 | Renderer loss unrecoverable (black window) | **[open]** — recreate Renderer on draw failure |
+| S1 | Renderer loss unrecoverable (black window) | **[done 2026-11]** — `Outdated` reconfigures; lost device/surface rebuilds the renderer with backoff (see visual wave item 7) |
 | S1 | Atlas exhaustion → cache wipe + torn frames | **[open]** — LRU eviction or texture pages (CJK screens) |
 | S1 | **Default `ctrl+alt+←/→` workspace cycling is dead** *(qwen BUGS-1, runtime-verified)* — hardcoded alt+arrow pane-focus intercept (`app.rs:899-916`) runs before the bindings table and swallows the chord silently; alt+arrow is also unbindable for users | **[open]** — table-first lookup; promote pane focus to `focus-pane-*` actions |
 | S1 | Wheel scroll only (never history arrows) in normal shell | **[done 2026-11]** — root cause: `TermMode::default()` includes `ALTERNATE_SCROLL`, so the old `ALTERNATE_SCROLL`-only check arrowed through history on every tick. `wheel_target()` now requires `ALT_SCREEN|ALTERNATE_SCROLL` (mouse-reporting wins, else viewport scroll) + unit tests |
@@ -149,9 +149,13 @@ like one) while staying small and GPU-cheap. Ordered by perceived impact per eff
    clamped); blink only while the window is focused and reset to solid on
    input; unfocused window shows a hollow block; only the focused pane draws a
    cursor (multi-pane bug fixed).
-7. **[open]** **Frame quality under load**: damage tracking (only repaint dirty cells),
-   atlas paging/LRU (S1), renderer-loss recovery (S1), frame-time HUD behind
-   `BERTH_DEBUG`, and a CI perf budget (e.g. `seq 1 3000` < N frames, idle CPU ≈ 0).
+7. **[done 2026-11, damage tracking/CI budget open]** **Frame quality under
+   load**: lost-surface/device recovery (renderer rebuilt with a 500 ms backoff;
+   `Outdated` reconfigures instead of freezing), and a `BERTH_DEBUG=1` HUD with
+   smoothed CPU draw time + quad count. Still open: damage tracking (only
+   repaint dirty cells), atlas paging/LRU (exhaustion currently clears the glyph
+   cache mid-frame), GPU-timestamp timing, and a CI perf budget
+   (e.g. `seq 1 3000` < N frames, idle CPU ≈ 0).
 8. **[open]** **Plugin-facing polish**: status-bar/segment contribution API
    (`badge`/`segment`), plugin manager panel (enable/disable, errors, reload), and
    theme-aware accent colors handed to guests so plugin UI matches the active theme.

@@ -199,7 +199,8 @@ berth --gpu-info
 ```
 
 `BERTH_DEBUG=1` adds per-event lines (input routing, wheel, font raster
-probes) to the same file and stderr. If the log says `type=Cpu`, wgpu fell
+probes) to the same file and stderr, plus a bottom-right HUD with the smoothed
+CPU draw time and quad count. If the log says `type=Cpu`, wgpu fell
 back to software rendering (lavapipe/SwiftShader) — install the GPU driver or
 force a backend with `WGPU_BACKEND=vulkan|metal|dx12`. A `srgb=false` line
 means the compositor offered no sRGB surface; colors are converted but may
