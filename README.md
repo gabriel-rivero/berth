@@ -29,7 +29,8 @@ Post-0.24.0 fixes: correct sRGB→linear color pipeline, mouse wheel scrolls the
 viewport instead of walking shell history (trackpad pixel deltas accumulate
 instead of rounding away), typing while scrolled back returns to the live tail
 with an overlay scrollbar/`↑N` badge, real hover states, one shared chrome
-hit-test for every press (close buttons stable across DPI/OS), real bold/italic
+hit-test for every press (close buttons stable across DPI/OS), rounded pill
+tab/sidebar chrome with shrink-to-fit tabs, real bold/italic
 faces, theme presets, and per-launch GPU diagnostics in `berth.log`.
 
 ### Shipped

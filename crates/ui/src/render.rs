@@ -274,6 +274,18 @@ pub fn chrome_zone_at(
     None
 }
 
+/// Minimum tab slot width (logical px) before tabs overflow the strip.
+pub const TAB_MIN_WIDTH: f32 = 96.0;
+
+/// Effective tab slot width: shrink from [`TAB_WIDTH`] down to
+/// [`TAB_MIN_WIDTH`] so a crowded strip still fits inside the window.
+pub fn tab_width(bar_w: f32, count: usize, max_w: f32, scale: f32) -> f32 {
+    if count == 0 {
+        return max_w;
+    }
+    (bar_w.max(1.0) / count as f32).clamp(TAB_MIN_WIDTH * scale, max_w)
+}
+
 /// Viewport position of a scrolled-back pane, for the overlay scrollbar/badge.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScrollInfo {
@@ -988,6 +1000,10 @@ struct Vertex {
     uv: [f32; 2],
     /// 0 = plain color, 1 = alpha coverage, 2 = color glyph.
     tex: u32,
+    /// Device-px bounds (x0, y0, x1, y1) for the rounded-corner SDF.
+    rect: [f32; 4],
+    /// Corner radius in device px; 0 = square corners.
+    radius: f32,
 }
 
 /// Per-frame quad accumulator; `dropped` counts budget refusals (logged once).
@@ -1028,6 +1044,25 @@ impl QuadSink {
         color: [f32; 4],
         glyph: Option<GlyphRef>,
     ) {
+        self.push_radius(x0, y0, x1, y1, color, glyph, 0.0);
+    }
+
+    /// Rounded-corner variant used by chrome (tabs, sidebar pills, badges).
+    fn push_round(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, color: [f32; 4], radius: f32) {
+        self.push_radius(x0, y0, x1, y1, color, None, radius);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_radius(
+        &mut self,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+        color: [f32; 4],
+        glyph: Option<GlyphRef>,
+        radius: f32,
+    ) {
         if self.verts.len() + 6 > QUAD_LIMIT {
             if self.dropped == 0 {
                 // Loud, once per frame: silent cell drops were a release bug.
@@ -1056,24 +1091,32 @@ impl QuadSink {
                 color: [r, g, b, a],
                 uv: [u0, v1],
                 tex,
+                rect: [x0, y0, x1, y1],
+                radius,
             },
             Vertex {
                 pos: [x1, y1],
                 color: [r, g, b, a],
                 uv: [u1, v1],
                 tex,
+                rect: [x0, y0, x1, y1],
+                radius,
             },
             Vertex {
                 pos: [x0, y0],
                 color: [r, g, b, a],
                 uv: [u0, v0],
                 tex,
+                rect: [x0, y0, x1, y1],
+                radius,
             },
             Vertex {
                 pos: [x1, y0],
                 color: [r, g, b, a],
                 uv: [u1, v0],
                 tex,
+                rect: [x0, y0, x1, y1],
+                radius,
             },
         );
         // Triangle-list quad: (bl, br, tl) + (br, tr, tl).
@@ -1324,6 +1367,16 @@ impl Renderer {
                             offset: 32,
                             shader_location: 3,
                         },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x4,
+                            offset: 36,
+                            shader_location: 4,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32,
+                            offset: 52,
+                            shader_location: 5,
+                        },
                     ],
                 })],
                 compilation_options: Default::default(),
@@ -1453,13 +1506,13 @@ impl Renderer {
         sink.push(track_x, track_y0, track_x + track_w, track_y1, track, None);
         let mut thumb = colors.sidebar_text_active;
         thumb[3] = 0.8;
-        sink.push(
+        sink.push_round(
             track_x,
             thumb_y0,
             track_x + track_w,
             thumb_y0 + thumb_h,
             thumb,
-            None,
+            track_w * 0.5,
         );
 
         // Pill badge centered at the top of the pane: "↑ 42".
@@ -1471,7 +1524,7 @@ impl Renderer {
         let by = ry + pad;
         let mut bg = colors.sidebar_entry_active_bg;
         bg[3] = 0.94;
-        sink.push(bx, by, bx + bw, by + bh, bg, None);
+        sink.push_round(bx, by, bx + bw, by + bh, bg, bh * 0.5);
         let baseline = by + 3.0 * s + metrics.ascent;
         let mut pen = bx + 6.0 * s;
         for c in label.chars() {
@@ -1543,11 +1596,13 @@ impl Renderer {
             return;
         }
         let colors = self.scheme.chrome;
+        let s = ch.scale;
+        let tab_w = tab_width(bar_w, tabs.len(), ch.tab_w, s);
         sink.push(sb_w, 0.0, sb_w + bar_w, ch.tab_bar_h, colors.bar_bg, None);
         // Vertical centering: text baseline sits half a cell below the strip middle.
         let baseline = (ch.tab_bar_h - metrics.cell_h) * 0.5 + metrics.ascent;
         for (i, (title, active)) in tabs.iter().enumerate() {
-            let x0 = sb_w + i as f32 * ch.tab_w;
+            let x0 = sb_w + i as f32 * tab_w;
             let is_hovered = matches!(hovered, Some(ChromeZone::Tab(idx) | ChromeZone::TabClose(idx)) if idx == i);
             let mut bg = if *active {
                 colors.tab_active_bg
@@ -1557,12 +1612,20 @@ impl Renderer {
             if is_hovered && !*active {
                 bg = colors.tab_hover_bg;
             }
-            sink.push(x0, 0.0, x0 + ch.tab_w, ch.tab_bar_h, bg, None);
-            let max_chars = (((ch.tab_w - ch.close_w - 16.0 * ch.scale) / metrics.cell_w).floor()
-                as usize)
-                .max(1);
+            // Pill-shaped slots: small inset + radius keeps the strip airy.
+            let (pad_x, pad_y) = (3.0 * s, 4.0 * s);
+            sink.push_round(
+                x0 + pad_x,
+                pad_y,
+                x0 + tab_w - pad_x,
+                ch.tab_bar_h - pad_y,
+                bg,
+                5.0 * s,
+            );
+            let max_chars =
+                (((tab_w - ch.close_w - 20.0 * s) / metrics.cell_w).floor() as usize).max(1);
             let text: String = title.chars().take(max_chars).collect();
-            let mut pen = x0 + 8.0 * ch.scale;
+            let mut pen = x0 + 10.0 * s;
             for c in text.chars() {
                 let Some(g) = self.rasterize(c, false, false, sink) else {
                     continue;
@@ -1580,22 +1643,25 @@ impl Renderer {
                 sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
                 pen += metrics.cell_w;
             }
+            // Reveal ✕ on the active or hovered tab only (no layout shift).
             let close_hovered = matches!(hovered, Some(ChromeZone::TabClose(idx)) if idx == i);
-            let close_color = if close_hovered {
-                colors.tab_text_active
-            } else {
-                colors.tab_text
-            };
-            self.draw_close(
-                x0 + ch.tab_w - ch.close_w * 0.5,
-                ch.tab_bar_h * 0.5,
-                metrics,
-                close_color,
-                sink,
-            );
+            if *active || is_hovered {
+                let close_color = if close_hovered {
+                    colors.tab_text_active
+                } else {
+                    colors.tab_text
+                };
+                self.draw_close(
+                    x0 + tab_w - pad_x - ch.close_w * 0.5,
+                    ch.tab_bar_h * 0.5,
+                    metrics,
+                    close_color,
+                    sink,
+                );
+            }
         }
         // `+` new-tab button when the strip has room for it.
-        let plus_x = sb_w + tabs.len() as f32 * ch.tab_w;
+        let plus_x = sb_w + tabs.len() as f32 * tab_w;
         if plus_x + ch.plus_w <= sb_w + bar_w {
             let is_plus_hovered = matches!(hovered, Some(ChromeZone::TabPlus));
             let plus_color = if is_plus_hovered {
@@ -1641,7 +1707,15 @@ impl Renderer {
             if is_hovered && !*active {
                 bg = colors.sidebar_entry_hover_bg;
             }
-            sink.push(0.0, y0, sb_w, y0 + ch.sidebar_entry_h, bg, None);
+            let s = ch.scale;
+            sink.push_round(
+                6.0 * s,
+                y0 + 2.0 * s,
+                sb_w - 6.0 * s,
+                y0 + ch.sidebar_entry_h - 2.0 * s,
+                bg,
+                6.0 * s,
+            );
             let baseline = (ch.sidebar_entry_h - metrics.cell_h) * 0.5 + metrics.ascent;
             let baseline = y0 + baseline;
             let max_chars = (((sb_w - 2.0 * ch.sidebar_pad - ch.close_w) / metrics.cell_w).floor()
@@ -1666,19 +1740,22 @@ impl Renderer {
                 sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
                 pen += metrics.cell_w;
             }
+            // ✕ only on the active or hovered row.
             let close_hovered = matches!(hovered, Some(ChromeZone::SidebarClose(idx)) if idx == i);
-            let close_color = if close_hovered {
-                colors.sidebar_text_active
-            } else {
-                colors.sidebar_text
-            };
-            self.draw_close(
-                sb_w - ch.close_w * 0.5,
-                y0 + ch.sidebar_entry_h * 0.5,
-                metrics,
-                close_color,
-                sink,
-            );
+            if *active || is_hovered {
+                let close_color = if close_hovered {
+                    colors.sidebar_text_active
+                } else {
+                    colors.sidebar_text
+                };
+                self.draw_close(
+                    sb_w - 6.0 * s - ch.close_w * 0.5,
+                    y0 + ch.sidebar_entry_h * 0.5,
+                    metrics,
+                    close_color,
+                    sink,
+                );
+            }
         }
         // `+` new-workspace button: one free row band below the last entry.
         let plus_y = ch.sidebar_top + workspaces.len() as f32 * ch.sidebar_entry_h;
@@ -1840,6 +1917,7 @@ impl Renderer {
     /// Full frame: sidebar + tab strip + tiled panes (term + rect) + dividers.
     /// Full frame: cell quads per pane + chrome. Drawn on RedrawRequested.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // draw args are the frame's scene inputs
     pub fn draw(
         &mut self,
         panes: &[(&Term<TermListener>, Rect)],
@@ -1875,6 +1953,10 @@ impl Renderer {
         let quad_trace = std::env::var("BERTH_TRACE").ok().as_deref() == Some("1");
 
         let ch = Chrome::new(window.scale_factor());
+        let ch = Chrome {
+            tab_w: tab_width(screen_w - sb_w, tabs.len(), ch.tab_w, ch.scale),
+            ..ch
+        };
         let mut sink = QuadSink::default();
         self.draw_sidebar(workspaces, sb_w, ch, metrics, hovered, &mut sink);
         self.draw_tab_bar(tabs, metrics, ch, sb_w, hovered, &mut sink);
@@ -2250,6 +2332,8 @@ struct VertexInput {
     @location(1) color: vec4<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) tex: u32,
+    @location(4) rect: vec4<f32>,
+    @location(5) radius: f32,
 };
 
 struct VertexOutput {
@@ -2257,6 +2341,8 @@ struct VertexOutput {
     @location(0) color: vec4<f32>,
     @location(1) @interpolate(flat) tex: u32,
     @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) rect: vec4<f32>,
+    @location(4) @interpolate(flat) radius: f32,
 };
 
 @vertex
@@ -2266,7 +2352,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let y = 1.0 - 2.0 * in.pos.y / u.screen.y;
     let clip = vec4<f32>(x, y, 0.0, 1.0);
     // naga: struct construction is parenthesized (positional, declaration order).
-    return VertexOutput(clip, in.color, in.tex, in.uv);
+    return VertexOutput(clip, in.color, in.tex, in.uv, in.rect, in.radius);
 }
 
 @fragment
@@ -2278,7 +2364,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let t = textureSample(atlas, samp, in.uv);
         return vec4<f32>(t.rgb, t.a * in.color.a);
     } else {
-        return in.color;
+        // Rounded-rect SDF: distance from the quadrant-inset box, 1px AA.
+        var alpha = in.color.a;
+        if (in.radius > 0.0) {
+            let half = (in.rect.zw - in.rect.xy) * 0.5;
+            let center = in.rect.xy + half;
+            let r = min(in.radius, min(half.x, half.y));
+            let q = abs(in.clip.xy - center) - half + vec2<f32>(r, r);
+            let d = length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - r;
+            alpha = alpha * clamp(0.5 - d, 0.0, 1.0);
+        }
+        return vec4<f32>(in.color.rgb, alpha);
     }
 }
 "#;

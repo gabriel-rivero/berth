@@ -1,7 +1,7 @@
 //! Chrome hit-testing regressions: close-✕ precedence, tab-strip vs sidebar
 //! edge-grab overlap, plus/empty zones — at 1x and 2x DPI.
 
-use berth_ui::render::{Chrome, ChromeZone, chrome_zone_at, sidebar_width};
+use berth_ui::render::{Chrome, ChromeZone, chrome_zone_at, sidebar_width, tab_width};
 
 const SIDEBAR_LOGICAL: f32 = 200.0;
 const WORKSPACES: usize = 3;
@@ -137,6 +137,32 @@ fn edge_band_is_not_clickable_for_pointer_cursor() {
     assert!(ChromeZone::SidebarPlus.is_clickable());
     assert_eq!(ChromeZone::TabClose(4).tab_index(), Some(4));
     assert_eq!(ChromeZone::SidebarClose(2).workspace_index(), Some(2));
+}
+
+#[test]
+fn tab_width_shrinks_to_fit_then_clamps_at_minimum() {
+    let max = 140.0;
+    assert_eq!(
+        tab_width(1000.0, 3, max, 1.0),
+        140.0,
+        "roomy strip keeps max"
+    );
+    assert_eq!(
+        tab_width(400.0, 4, max, 1.0),
+        100.0,
+        "crowded strip shrinks"
+    );
+    assert_eq!(
+        tab_width(400.0, 8, max, 1.0),
+        96.0,
+        "below the minimum tabs overflow instead of vanishing"
+    );
+    assert_eq!(tab_width(0.0, 0, max, 1.0), max, "no tabs: max width");
+    assert_eq!(
+        tab_width(800.0, 4, 280.0, 2.0),
+        200.0,
+        "HiDPI minimum/maximum scale together"
+    );
 }
 
 #[test]

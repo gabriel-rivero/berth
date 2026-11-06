@@ -909,9 +909,36 @@ impl Berth {
 
     /// Current chrome zone under the pointer (single source of truth shared by
     /// hover highlight, cursor icon and click dispatch).
+    /// Chrome geometry for the current window. Tab slots shrink-to-fit so a
+    /// crowded strip stays inside the window; draw and hit-testing share this.
+    fn chrome(&self) -> Chrome {
+        let scale = self
+            .window
+            .as_ref()
+            .map(|w| w.scale_factor())
+            .unwrap_or(1.0);
+        let mut ch = Chrome::new(scale);
+        let win_w = self
+            .window
+            .as_ref()
+            .map(|w| w.inner_size().width as f32)
+            .unwrap_or(0.0);
+        let sb_w = sidebar_width(
+            self.config.sidebar.show,
+            self.config.sidebar.width_px,
+            scale,
+        );
+        let tabs = self
+            .layout
+            .active_workspace()
+            .map(|ws| ws.tabs.len())
+            .unwrap_or(0);
+        ch.tab_w = crate::render::tab_width((win_w - sb_w).max(1.0), tabs, ch.tab_w, ch.scale);
+        ch
+    }
+
     fn chrome_zone(&self) -> Option<ChromeZone> {
-        let window = self.window.as_ref()?;
-        let ch = Chrome::new(window.scale_factor());
+        self.window.as_ref()?;
         crate::render::chrome_zone_at(
             self.mouse.x,
             self.mouse.y,
@@ -922,7 +949,7 @@ impl Berth {
                 .active_workspace()
                 .map(|ws| ws.tabs.len())
                 .unwrap_or(0),
-            ch,
+            self.chrome(),
         )
     }
 
@@ -1747,12 +1774,7 @@ impl ApplicationHandler<PaneEvent> for Berth {
             } => {
                 match state {
                     ElementState::Pressed => {
-                        let scale = self
-                            .window
-                            .as_ref()
-                            .map(|w| w.scale_factor())
-                            .unwrap_or(1.0);
-                        let ch = Chrome::new(scale);
+                        let ch = self.chrome();
                         dlog_app!(
                             "mouse press at ({:?},{:?}) y_strip={}",
                             self.mouse.x,
@@ -1904,12 +1926,7 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 // style); other middle/right clicks go to capturing TUI apps
                 // (2=right, 1=middle). The Left arm owns selection semantics.
                 if button == MouseButton::Middle && state == ElementState::Pressed {
-                    let scale = self
-                        .window
-                        .as_ref()
-                        .map(|w| w.scale_factor())
-                        .unwrap_or(1.0);
-                    let ch = Chrome::new(scale);
+                    let ch = self.chrome();
                     let zone = crate::render::chrome_zone_at(
                         self.mouse.x,
                         self.mouse.y,

@@ -131,10 +131,13 @@ like one) while staying small and GPU-cheap. Ordered by perceived impact per eff
    hot-reload applies live; unknown keys and malformed colors fail loudly in the log.
    Still open: OS light/dark auto-switch, contrast-checked user colors, per-theme
    chrome accent override knobs, theme-aware plugin accents.
-4. **[open]** **Chrome polish**: consistent spacing/typography in tab strip + sidebar;
-   active-tab and focused-pane affordances that survive color-blind palettes; rounded
-   tab/panel corners; overflow shrink-to-fit + chevrons; optional `+`/close reveal on
-   hover only; no layout shift on hover. (Hover + shared zones **[done 2026-11]**.)
+4. **[done 2026-11, overflow chevrons open]** **Chrome polish**: pill-shaped
+   tab slots and sidebar rows (rounded-corner SDF in the quad shader), shared
+   spacing, tabs shrink from 140→96 logical px to fit the strip, `✕` revealed
+   only on the active/hovered tab or workspace (hit zones unchanged, so no
+   layout shift), hover states and the shared zone map. Still open: overflow
+   chevrons/scrollable strip when even the minimum width doesn't fit, and a
+   color-blind-safe focused-pane affordance audit.
 5. **[done 2026-11, animation/drag open]** **Scrolling feel**: sub-line trackpad
    pixel deltas accumulate across events (no more dropped smooth scrolling);
    typing while scrolled back snaps to the live tail; while off the bottom the
