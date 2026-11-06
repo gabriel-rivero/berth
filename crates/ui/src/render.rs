@@ -126,12 +126,6 @@ fn srgb_to_linear(c: [f32; 4]) -> [f32; 4] {
 }
 
 const PANEL_BG: [f32; 4] = [0.00394, 0.00394, 0.00490, 1.0];
-const CLEAR_COLOR: wgpu::Color = wgpu::Color {
-    r: 0.0039,
-    g: 0.0039,
-    b: 0.0051,
-    a: 1.0,
-};
 const CURSOR_BG: [f32; 4] = [0.69207, 0.69207, 0.63828, 1.0];
 const DIVIDER_COLOR: [f32; 4] = [0.05088, 0.05088, 0.06372, 1.0];
 /// Focused-pane outline (iTerm-style indicator that keyboard input follows).
@@ -139,7 +133,6 @@ const FOCUS_OUTLINE: [f32; 4] = [0.10048, 0.26327, 1.0, 1.0];
 /// Outline thickness ~1.5 device px, independent of chrome scale.
 const FOCUS_OUTLINE_PX: f32 = 1.5;
 const FG_DEFAULT: [f32; 4] = [0.68658, 0.68658, 0.68658, 1.0];
-const BG_DEFAULT: [f32; 4] = PANEL_BG;
 const DIM_FACTOR: f32 = 0.62;
 const ATLAS_W: u32 = 2048;
 const ATLAS_H: u32 = 2048;
@@ -365,6 +358,239 @@ const PALETTE: [[f32; 4]; 16] = [
     [1.0, 1.0, 1.0, 1.0],
 ];
 
+/// Active terminal colors (preset resolved + config overrides applied).
+#[derive(Debug, Clone, Copy)]
+pub struct ColorScheme {
+    pub bg: [f32; 4],
+    pub fg: [f32; 4],
+    pub cursor: [f32; 4],
+    pub palette: [[f32; 4]; 16],
+    pub chrome: ChromeColors,
+}
+
+/// Window chrome colors (tab strip, sidebar, dividers, banners). Kept separate
+/// from ANSI colors so a theme can tune UI and terminal independently.
+#[derive(Debug, Clone, Copy)]
+pub struct ChromeColors {
+    pub panel_bg: [f32; 4],
+    pub bar_bg: [f32; 4],
+    pub tab_bg: [f32; 4],
+    pub tab_active_bg: [f32; 4],
+    pub tab_text: [f32; 4],
+    pub tab_text_active: [f32; 4],
+    pub sidebar_bg: [f32; 4],
+    pub sidebar_entry_bg: [f32; 4],
+    pub sidebar_entry_active_bg: [f32; 4],
+    pub sidebar_text: [f32; 4],
+    pub sidebar_text_active: [f32; 4],
+    pub tab_hover_bg: [f32; 4],
+    pub sidebar_entry_hover_bg: [f32; 4],
+    pub text_hover: [f32; 4],
+    pub divider: [f32; 4],
+    pub focus_outline: [f32; 4],
+    pub confirm_bg: [f32; 4],
+    pub confirm_text: [f32; 4],
+}
+
+impl ChromeColors {
+    fn dark() -> Self {
+        Self {
+            panel_bg: PANEL_BG,
+            bar_bg: BAR_BG,
+            tab_bg: TAB_BG,
+            tab_active_bg: TAB_ACTIVE_BG,
+            tab_text: TAB_TEXT,
+            tab_text_active: TAB_TEXT_ACTIVE,
+            sidebar_bg: SIDEBAR_BG,
+            sidebar_entry_bg: SIDEBAR_ENTRY_BG,
+            sidebar_entry_active_bg: SIDEBAR_ENTRY_ACTIVE_BG,
+            sidebar_text: SIDEBAR_TEXT,
+            sidebar_text_active: SIDEBAR_TEXT_ACTIVE,
+            tab_hover_bg: TAB_HOVER_BG,
+            sidebar_entry_hover_bg: SIDEBAR_ENTRY_HOVER_BG,
+            text_hover: UI_TEXT_HOVER,
+            divider: DIVIDER_COLOR,
+            focus_outline: FOCUS_OUTLINE,
+            confirm_bg: CONFIRM_BG,
+            confirm_text: CONFIRM_TEXT,
+        }
+    }
+
+    fn light() -> Self {
+        let h = |s: &str| hex_to_linear(s).expect("built-in theme hex is valid");
+        Self {
+            panel_bg: h("#f7f7f7"),
+            bar_bg: h("#ececef"),
+            tab_bg: h("#e8e8ec"),
+            tab_active_bg: h("#f7f7f7"),
+            tab_text: h("#6b6b73"),
+            tab_text_active: h("#1f2328"),
+            sidebar_bg: h("#f2f2f4"),
+            sidebar_entry_bg: h("#f7f7f7"),
+            sidebar_entry_active_bg: h("#e3e3e8"),
+            sidebar_text: h("#5c5c66"),
+            sidebar_text_active: h("#1f2328"),
+            tab_hover_bg: h("#e0e0e6"),
+            sidebar_entry_hover_bg: h("#e9e9ee"),
+            text_hover: h("#2b2b31"),
+            divider: h("#d4d4da"),
+            focus_outline: h("#0969da"),
+            confirm_bg: h("#fff4d6"),
+            confirm_text: h("#6b5200"),
+        }
+    }
+}
+
+impl ColorScheme {
+    /// Default dark scheme (matches the original hardcoded 16-color palette).
+    pub fn dark() -> Self {
+        Self {
+            bg: PANEL_BG,
+            fg: FG_DEFAULT,
+            cursor: CURSOR_BG,
+            palette: PALETTE,
+            chrome: ChromeColors::dark(),
+        }
+    }
+
+    /// Light scheme with GitHub-flavored contrast.
+    pub fn light() -> Self {
+        const HEX: [&str; 16] = [
+            "#24292f", "#cf222e", "#116329", "#4d2d00", "#0969da", "#8250df", "#1b7c83", "#6e7781",
+            "#57606a", "#a40e26", "#1a7f37", "#633c01", "#218bff", "#a475f9", "#3192aa", "#8c959f",
+        ];
+        let mut palette = [[0.0; 4]; 16];
+        for (dst, hex) in palette.iter_mut().zip(HEX) {
+            *dst = hex_to_linear(hex).expect("built-in theme hex is valid");
+        }
+        Self {
+            bg: hex_to_linear("#f7f7f7").unwrap(),
+            fg: hex_to_linear("#24292f").unwrap(),
+            cursor: hex_to_linear("#24292f").unwrap(),
+            palette,
+            chrome: ChromeColors::light(),
+        }
+    }
+
+    /// Resolve `[theme]` from config; invalid color strings are logged and ignored.
+    pub fn from_config(cfg: &berth_core::config::Theme) -> Self {
+        use berth_core::config::ThemePreset;
+        let mut scheme = match cfg.preset {
+            ThemePreset::Dark => Self::dark(),
+            ThemePreset::Light => Self::light(),
+        };
+        fn apply(dst: &mut [f32; 4], value: &Option<String>, name: &str) {
+            if let Some(v) = value {
+                match hex_to_linear(v) {
+                    Some(c) => *dst = c,
+                    None => dlog!("theme: invalid color {name}={v:?} (want #rgb or #rrggbb)"),
+                }
+            }
+        }
+        apply(&mut scheme.bg, &cfg.background, "background");
+        // Keep the pane gutter in sync with a custom background.
+        scheme.chrome.panel_bg = scheme.bg;
+        apply(&mut scheme.fg, &cfg.foreground, "foreground");
+        apply(&mut scheme.cursor, &cfg.cursor, "cursor");
+        for (i, value) in cfg.palette.as_slots().iter().enumerate() {
+            apply(&mut scheme.palette[i], value, &format!("palette slot {i}"));
+        }
+        scheme
+    }
+
+    /// Map a term Color to linear RGBA32; handles dim and 256-color variants.
+    fn color_of(&self, c: Color) -> [f32; 4] {
+        match c {
+            Color::Named(NamedColor::Foreground) => self.fg,
+            Color::Named(NamedColor::Background) => self.bg,
+            Color::Named(n) => match n {
+                NamedColor::Black => self.palette[0],
+                NamedColor::Red => self.palette[1],
+                NamedColor::Green => self.palette[2],
+                NamedColor::Yellow => self.palette[3],
+                NamedColor::Blue => self.palette[4],
+                NamedColor::Magenta => self.palette[5],
+                NamedColor::Cyan => self.palette[6],
+                NamedColor::White => self.palette[7],
+                NamedColor::BrightBlack => self.palette[8],
+                NamedColor::BrightRed => self.palette[9],
+                NamedColor::BrightGreen => self.palette[10],
+                NamedColor::BrightYellow => self.palette[11],
+                NamedColor::BrightBlue => self.palette[12],
+                NamedColor::BrightMagenta => self.palette[13],
+                NamedColor::BrightCyan => self.palette[14],
+                NamedColor::BrightWhite => self.palette[15],
+                // Dim variants (SGR 2).
+                NamedColor::DimBlack => dim(self.palette[0]),
+                NamedColor::DimRed => dim(self.palette[1]),
+                NamedColor::DimGreen => dim(self.palette[2]),
+                NamedColor::DimYellow => dim(self.palette[3]),
+                NamedColor::DimBlue => dim(self.palette[4]),
+                NamedColor::DimMagenta => dim(self.palette[5]),
+                NamedColor::DimCyan => dim(self.palette[6]),
+                NamedColor::DimWhite => dim(self.palette[7]),
+                NamedColor::DimForeground => dim(self.fg),
+                _ => self.palette[7],
+            },
+            Color::Spec(Rgb { r, g, b }) => {
+                srgb_to_linear([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0])
+            }
+            Color::Indexed(i) => self.indexed(i),
+        }
+    }
+
+    /// xterm-256 palette into the 16-color range.
+    fn indexed(&self, i: u8) -> [f32; 4] {
+        let (r, g, b) = if i < 16 {
+            return self.palette[i as usize];
+        } else if i < 232 {
+            let i = i as u32 - 16;
+            let lvl = |v: u32| if v == 0 { 0 } else { 55 + v * 40 };
+            (lvl(i / 36) as u8, lvl((i % 36) / 6) as u8, lvl(i % 6) as u8)
+        } else {
+            let v = ((i as u32 - 232) * 10 + 8) as u8;
+            (v, v, v)
+        };
+        srgb_to_linear([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0])
+    }
+
+    fn blend(&self, c: [f32; 4]) -> [f32; 4] {
+        [
+            c[0] * 0.5 + self.fg[0] * 0.5,
+            c[1] * 0.5 + self.fg[1] * 0.5,
+            c[2] * 0.5 + self.fg[2] * 0.5,
+            1.0,
+        ]
+    }
+}
+
+/// Parse `#rgb` / `#rrggbb` into linear RGBA.
+pub fn hex_to_linear(s: &str) -> Option<[f32; 4]> {
+    let h = s.strip_prefix('#')?;
+    let expand = |c: char| -> Option<u8> { c.to_digit(16).map(|d| (d * 17) as u8) };
+    let (r, g, b) = match h.len() {
+        3 => {
+            let mut it = h.chars();
+            (
+                expand(it.next()?)?,
+                expand(it.next()?)?,
+                expand(it.next()?)?,
+            )
+        }
+        6 => {
+            let p = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
+            (p(0)?, p(2)?, p(4)?)
+        }
+        _ => return None,
+    };
+    Some(srgb_to_linear([
+        r as f32 / 255.0,
+        g as f32 / 255.0,
+        b as f32 / 255.0,
+        1.0,
+    ]))
+}
+
 /// Device-pixel cell metrics (whole px for a stable grid).
 #[derive(Debug, Clone, Copy)]
 pub struct Metrics {
@@ -445,6 +671,13 @@ struct FallbackFont {
     name: String,
 }
 
+/// A real bold/italic face resolved from the primary family, with owned bytes.
+struct Face {
+    /// Keeps the transmuted 'static `font` alive.
+    _data: Vec<u8>,
+    font: FontRef<'static>,
+}
+
 /// Cache key for rasterized glyphs: the faux-bold/italic variants are separate
 /// bitmaps, so they need separate atlas entries.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -459,9 +692,17 @@ pub struct FontCtx {
     /// Font data kept alive for the transmuted 'static FontRef.
     _data: Vec<u8>,
     font: FontRef<'static>,
+    /// Real bold face from the same family (None = synthesize with embolden).
+    bold: Option<Face>,
+    /// Real italic/oblique face (None = synthesize with a skew transform).
+    italic: Option<Face>,
+    /// Real bold-italic face (falls back to bold/italic/regular + synthesis).
+    bold_italic: Option<Face>,
     /// Faces consulted when the primary lacks a glyph (first hit wins).
     fallbacks: Vec<FallbackFont>,
     size_px: f32,
+    /// Line-height multiplier used when computing `cell_h`.
+    line_height: f32,
     /// The family this context was built for (hot-reload comparison).
     family: String,
     ctx: ScaleContext,
@@ -475,7 +716,7 @@ impl FontCtx {
     const FALLBACK_FONT: &'static [u8] = include_bytes!("../fonts/JetBrainsMono-Regular.ttf");
 
     /// Load `family` (fallback path: system monospace -> bundled font) at `size_px` device px.
-    pub fn new(family: &str, size_px: f32) -> anyhow::Result<Self> {
+    pub fn new(family: &str, size_px: f32, line_height: f32) -> anyhow::Result<Self> {
         let mut db = Database::new();
         db.load_system_fonts();
         // User-vendored faces: drop TTFs in the config dir's fonts/ to make them
@@ -536,6 +777,52 @@ impl FontCtx {
             .unwrap_or_else(|| "bundled JetBrainsMono-Regular".to_string());
         dlog!("font: family={family:?} -> {source_desc}");
 
+        // Real weight/style faces: query the same family list so bold/italic
+        // pick up the family's actual faces. If the family has no such face
+        // (or fontdb hands back the regular one), keep None and synthesize.
+        let load_face = |weight: Weight, style: Style, label: &str| -> Option<Face> {
+            let fid = db.query(&Query {
+                families: &fams,
+                weight,
+                stretch: Stretch::Normal,
+                style,
+            })?;
+            if Some(fid) == id {
+                return None;
+            }
+            let (fdata, fidx) = db.with_face_data(fid, |d, idx| (d.to_vec(), idx))?;
+            let fr = FontRef::from_index(&fdata, fidx as usize)?;
+            // SAFETY: `fdata` moves into the returned Face and outlives its FontRef.
+            let fr: FontRef<'static> = unsafe { std::mem::transmute(fr) };
+            let desc = db
+                .face(fid)
+                .map(|fi| {
+                    format!(
+                        "'{}' (index {fidx}, ps {:?})",
+                        fi.families
+                            .first()
+                            .map(|f| &f.0)
+                            .unwrap_or(&"?".to_string()),
+                        fi.post_script_name
+                    )
+                })
+                .unwrap_or_else(|| format!("face {fidx}"));
+            dlog!("face: {label} -> {desc}");
+            Some(Face {
+                _data: fdata,
+                font: fr,
+            })
+        };
+        let bold = load_face(Weight::BOLD, Style::Normal, "bold");
+        let italic = load_face(Weight::NORMAL, Style::Italic, "italic");
+        let bold_italic = load_face(Weight::BOLD, Style::Italic, "bold-italic");
+        if bold.is_none() {
+            dlog!("face: no real bold in family; using synthetic embolden");
+        }
+        if italic.is_none() {
+            dlog!("face: no real italic in family; using synthetic skew");
+        }
+
         // Emoji/symbol/CJK fallbacks: consulted only for glyphs the primary lacks.
         const FALLBACK_FAMILIES: &[&str] = &[
             "Apple Color Emoji",
@@ -585,27 +872,34 @@ impl FontCtx {
         Ok(Self {
             _data: data,
             font,
+            bold,
+            italic,
+            bold_italic,
             fallbacks,
             size_px,
+            line_height,
             family: family.to_string(),
             ctx: swash::scale::ScaleContext::new(),
             glyphs: HashMap::new(),
-            metrics: Self::compute_metrics(&font, size_px),
+            metrics: Self::compute_metrics(&font, size_px, line_height),
         })
     }
 
-    /// True when this context is already built for `family` (size compared separately).
-    pub fn matches(&self, family: &str) -> bool {
-        self.family == family
+    /// True when this context is already built for `family` and line height
+    /// (size compared separately).
+    pub fn matches(&self, family: &str, line_height: f32) -> bool {
+        self.family == family && (self.line_height - line_height).abs() < f32::EPSILON
     }
 
-    fn compute_metrics(font: &FontRef<'_>, size_px: f32) -> Metrics {
+    fn compute_metrics(font: &FontRef<'_>, size_px: f32, line_height: f32) -> Metrics {
         let m = font.metrics(&[]).scale(size_px);
         // swash: ascent = baseline->top (positive), descent = baseline->bottom
         // (negative; some faces report it positive, so normalize).
         let ascent = m.ascent;
         let descent = m.descent.abs();
-        let cell_h = (ascent + descent).clamp(6.0, 128.0).round();
+        let cell_h = ((ascent + descent) * line_height.clamp(0.8, 3.0))
+            .clamp(6.0, 256.0)
+            .round();
         let gid = font.charmap().map('M');
         let cell_w = font
             .glyph_metrics(&[])
@@ -661,7 +955,7 @@ impl FontCtx {
     pub fn set_size(&mut self, size_px: f32) {
         if (size_px - self.size_px).abs() > 0.01 {
             self.size_px = size_px;
-            self.metrics = Self::compute_metrics(&self.font, size_px);
+            self.metrics = Self::compute_metrics(&self.font, size_px, self.line_height);
             self.glyphs.clear();
             self.ctx = swash::scale::ScaleContext::new();
         }
@@ -789,15 +1083,25 @@ pub struct Renderer {
     atlas_tex: wgpu::Texture,
     atlas: Atlas,
     font: FontCtx,
+    /// Active terminal colors (theme preset + overrides).
+    scheme: ColorScheme,
     quad_buf: wgpu::Buffer,
 }
 
 impl Renderer {
     /// Create surface + pipeline; call once per window.
-    pub fn new(window: &Window, family: &str, size_pt: f32) -> anyhow::Result<Self> {
+    pub fn new(
+        window: &Window,
+        family: &str,
+        size_pt: f32,
+        line_height: f32,
+        theme: &berth_core::config::Theme,
+    ) -> anyhow::Result<Self> {
         let scale = window.scale_factor();
         let size_px = size_pt * 1.333_333 * scale as f32;
-        let mut font = FontCtx::new(family, size_px)?;
+        let mut font = FontCtx::new(family, size_px, line_height)?;
+        let scheme = ColorScheme::from_config(theme);
+        dlog!("theme: preset={:?} bg={:?}", theme.preset, scheme.bg);
         let phys = window.inner_size();
         dlog!(
             "renderer: scale={scale} size_px={size_px} metrics={:?} surface={}x{}",
@@ -1046,6 +1350,7 @@ impl Renderer {
             atlas_tex,
             atlas: Atlas::new(),
             font,
+            scheme,
             quad_buf,
         })
     }
@@ -1058,15 +1363,22 @@ impl Renderer {
     /// Hot font swap for config reload: rebuild the font context (fresh glyph
     /// cache) and rewind the atlas packer. Stale pixels get overwritten as the
     /// new glyphs upload at the same shelf positions.
-    pub fn set_font(&mut self, family: &str, size_px: f32) -> anyhow::Result<()> {
-        if (size_px - self.font.size_px).abs() <= f32::EPSILON && self.font.matches(family) {
+    pub fn set_font(&mut self, family: &str, size_px: f32, line_height: f32) -> anyhow::Result<()> {
+        if (size_px - self.font.size_px).abs() <= f32::EPSILON
+            && self.font.matches(family, line_height)
+        {
             return Ok(());
         }
-        dlog!("set_font: family={family:?} size_px={size_px}");
-        self.font = FontCtx::new(family, size_px)?;
+        dlog!("set_font: family={family:?} size_px={size_px} line_height={line_height}");
+        self.font = FontCtx::new(family, size_px, line_height)?;
         self.font.raster_probe(&['M', 'p', '%']);
         self.atlas.reset();
         Ok(())
+    }
+
+    /// Apply a theme from config (no font/atlas rebuild needed).
+    pub fn set_theme(&mut self, theme: &berth_core::config::Theme) {
+        self.scheme = ColorScheme::from_config(theme);
     }
 
     pub fn resize_surface(&mut self, window: &Window) {
@@ -1110,8 +1422,9 @@ impl Renderer {
         sink: &mut QuadSink,
     ) {
         let metrics = self.font.metrics;
+        let colors = self.scheme.chrome;
         let y0 = (screen_h - ch.confirm_h).max(0.0);
-        sink.push(0.0, y0, screen_w, screen_h, CONFIRM_BG, None);
+        sink.push(0.0, y0, screen_w, screen_h, colors.confirm_bg, None);
         let text_w = text.chars().count() as f32 * metrics.cell_w;
         let mut pen = ((screen_w - text_w) * 0.5).max(8.0);
         let baseline = y0 + (ch.confirm_h - metrics.cell_h) * 0.5 + metrics.ascent;
@@ -1121,7 +1434,14 @@ impl Renderer {
             };
             let gx = pen + g.left as f32;
             let gy = baseline - g.top as f32;
-            sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], CONFIRM_TEXT, Some(g));
+            sink.push(
+                gx,
+                gy,
+                gx + g.uv[2],
+                gy + g.uv[3],
+                colors.confirm_text,
+                Some(g),
+            );
             pen += metrics.cell_w;
         }
     }
@@ -1141,15 +1461,20 @@ impl Renderer {
         if bar_w <= 0.0 {
             return;
         }
-        sink.push(sb_w, 0.0, sb_w + bar_w, ch.tab_bar_h, BAR_BG, None);
+        let colors = self.scheme.chrome;
+        sink.push(sb_w, 0.0, sb_w + bar_w, ch.tab_bar_h, colors.bar_bg, None);
         // Vertical centering: text baseline sits half a cell below the strip middle.
         let baseline = (ch.tab_bar_h - metrics.cell_h) * 0.5 + metrics.ascent;
         for (i, (title, active)) in tabs.iter().enumerate() {
             let x0 = sb_w + i as f32 * ch.tab_w;
             let is_hovered = matches!(hovered, Some(ChromeZone::Tab(idx) | ChromeZone::TabClose(idx)) if idx == i);
-            let mut bg = if *active { TAB_ACTIVE_BG } else { TAB_BG };
+            let mut bg = if *active {
+                colors.tab_active_bg
+            } else {
+                colors.tab_bg
+            };
             if is_hovered && !*active {
-                bg = TAB_HOVER_BG;
+                bg = colors.tab_hover_bg;
             }
             sink.push(x0, 0.0, x0 + ch.tab_w, ch.tab_bar_h, bg, None);
             let max_chars = (((ch.tab_w - ch.close_w - 16.0 * ch.scale) / metrics.cell_w).floor()
@@ -1163,18 +1488,22 @@ impl Renderer {
                 };
                 let gx = pen + g.left as f32;
                 let gy = baseline - g.top as f32;
-                let mut color = if *active { TAB_TEXT_ACTIVE } else { TAB_TEXT };
+                let mut color = if *active {
+                    colors.tab_text_active
+                } else {
+                    colors.tab_text
+                };
                 if is_hovered && !*active {
-                    color = UI_TEXT_HOVER;
+                    color = colors.text_hover;
                 }
                 sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
                 pen += metrics.cell_w;
             }
             let close_hovered = matches!(hovered, Some(ChromeZone::TabClose(idx)) if idx == i);
             let close_color = if close_hovered {
-                TAB_TEXT_ACTIVE
+                colors.tab_text_active
             } else {
-                TAB_TEXT
+                colors.tab_text
             };
             self.draw_close(
                 x0 + ch.tab_w - ch.close_w * 0.5,
@@ -1189,9 +1518,9 @@ impl Renderer {
         if plus_x + ch.plus_w <= sb_w + bar_w {
             let is_plus_hovered = matches!(hovered, Some(ChromeZone::TabPlus));
             let plus_color = if is_plus_hovered {
-                TAB_TEXT_ACTIVE
+                colors.tab_text_active
             } else {
-                TAB_TEXT
+                colors.tab_text
             };
             self.draw_char_c(
                 '+',
@@ -1218,17 +1547,18 @@ impl Renderer {
             return;
         }
         let full_h = self.config.height as f32;
-        sink.push(0.0, 0.0, sb_w, full_h, SIDEBAR_BG, None);
+        let colors = self.scheme.chrome;
+        sink.push(0.0, 0.0, sb_w, full_h, colors.sidebar_bg, None);
         for (i, (label, active)) in workspaces.iter().enumerate() {
             let y0 = ch.sidebar_top + i as f32 * ch.sidebar_entry_h;
             let is_hovered = matches!(hovered, Some(ChromeZone::SidebarEntry(idx) | ChromeZone::SidebarClose(idx)) if idx == i);
             let mut bg = if *active {
-                SIDEBAR_ENTRY_ACTIVE_BG
+                colors.sidebar_entry_active_bg
             } else {
-                SIDEBAR_ENTRY_BG
+                colors.sidebar_entry_bg
             };
             if is_hovered && !*active {
-                bg = SIDEBAR_ENTRY_HOVER_BG;
+                bg = colors.sidebar_entry_hover_bg;
             }
             sink.push(0.0, y0, sb_w, y0 + ch.sidebar_entry_h, bg, None);
             let baseline = (ch.sidebar_entry_h - metrics.cell_h) * 0.5 + metrics.ascent;
@@ -1245,21 +1575,21 @@ impl Renderer {
                 let gx = pen + g.left as f32;
                 let gy = baseline - g.top as f32;
                 let mut color = if *active {
-                    SIDEBAR_TEXT_ACTIVE
+                    colors.sidebar_text_active
                 } else {
-                    SIDEBAR_TEXT
+                    colors.sidebar_text
                 };
                 if is_hovered && !*active {
-                    color = UI_TEXT_HOVER;
+                    color = colors.text_hover;
                 }
                 sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
                 pen += metrics.cell_w;
             }
             let close_hovered = matches!(hovered, Some(ChromeZone::SidebarClose(idx)) if idx == i);
             let close_color = if close_hovered {
-                SIDEBAR_TEXT_ACTIVE
+                colors.sidebar_text_active
             } else {
-                SIDEBAR_TEXT
+                colors.sidebar_text
             };
             self.draw_close(
                 sb_w - ch.close_w * 0.5,
@@ -1274,9 +1604,9 @@ impl Renderer {
         if plus_y + ch.sidebar_entry_h <= full_h {
             let is_plus_hovered = matches!(hovered, Some(ChromeZone::SidebarPlus));
             let plus_color = if is_plus_hovered {
-                SIDEBAR_TEXT_ACTIVE
+                colors.sidebar_text_active
             } else {
-                SIDEBAR_TEXT
+                colors.sidebar_text
             };
             self.draw_char_c(
                 '+',
@@ -1326,11 +1656,26 @@ impl Renderer {
             Source::ColorBitmap(StrikeWith::BestFit),
             Source::Outline,
         ];
+        // Prefer the family's real faces; synthesize only the styles it lacks.
+        let face = match (bold, italic) {
+            (false, false) => fontc.font,
+            (true, false) => fontc.bold.as_ref().map(|f| f.font).unwrap_or(fontc.font),
+            (false, true) => fontc.italic.as_ref().map(|f| f.font).unwrap_or(fontc.font),
+            (true, true) => fontc
+                .bold_italic
+                .as_ref()
+                .or(fontc.bold.as_ref())
+                .or(fontc.italic.as_ref())
+                .map(|f| f.font)
+                .unwrap_or(fontc.font),
+        };
+        let faux_bold = bold && fontc.bold.is_none();
+        let faux_italic = italic && fontc.italic.is_none();
         // FontRefs are Copy; snapshot the whole chain (primary first).
         // Chain snapshot taken via self.font.fallbacks to keep fontc's mut
         // field borrow disjoint (fontc = self.font, fallbacks = sibling field).
         let fonts: Vec<(FontRef<'static>, Option<String>)> = {
-            let mut chain = vec![(fontc.font, None)];
+            let mut chain = vec![(face, None)];
             chain.extend(
                 fontc
                     .fallbacks
@@ -1348,12 +1693,12 @@ impl Renderer {
             let mut scaler = fontc.ctx.builder(font).size(fontc.size_px).build();
             let mut render = Render::new(&sources);
             render.format(zeno::Format::Alpha);
-            if bold {
+            if faux_bold {
                 // Faux bold: swash expands the scaled outline; ~1px at 16px.
                 render.embolden((fontc.size_px * 0.055).clamp(0.5, 2.5));
             }
-            if italic {
-                // Faux italic: shear the outline ~12° (no italic face lookup yet).
+            if faux_italic {
+                // Faux italic: shear the outline ~12° when no italic face exists.
                 render.transform(Some(zeno::Transform::skew(
                     zeno::Angle::from_degrees(12.0),
                     zeno::Angle::ZERO,
@@ -1470,12 +1815,12 @@ impl Renderer {
                 d.y as f32,
                 (d.x + d.w) as f32,
                 (d.y + d.h) as f32,
-                DIVIDER_COLOR,
+                self.scheme.chrome.divider,
                 None,
             );
         }
         if let Some(r) = focus {
-            draw_focus_outline(&mut sink, r, FOCUS_OUTLINE);
+            draw_focus_outline(&mut sink, r, self.scheme.chrome.focus_outline);
         }
 
         dlog!(
@@ -1543,7 +1888,12 @@ impl Renderer {
                     resolve_target: None,
                     depth_slice: None,
                     ops: Operations {
-                        load: LoadOp::Clear(CLEAR_COLOR),
+                        load: LoadOp::Clear(wgpu::Color {
+                            r: self.scheme.bg[0] as f64,
+                            g: self.scheme.bg[1] as f64,
+                            b: self.scheme.bg[2] as f64,
+                            a: 1.0,
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -1655,6 +2005,7 @@ impl Renderer {
         let rows = (rect.h as f32 / metrics.cell_h).floor().max(1.0) as usize;
 
         // Row-major iteration over the visible viewport cells.
+        let scheme = self.scheme;
         let mut cells = content.display_iter;
         for idx in 0..(rows * cols) {
             let Some(indexed) = cells.next() else { break };
@@ -1665,15 +2016,15 @@ impl Renderer {
             let py = rect.y as f32 + row as f32 * metrics.cell_h;
 
             // bg (respect selection tint + SGR reverse video).
-            let mut fg = color_of(cell.fg);
+            let mut fg = scheme.color_of(cell.fg);
             if cell.flags.contains(Flags::DIM) {
                 fg = dim(fg);
             }
-            let mut bg = color_of(cell.bg);
+            let mut bg = scheme.color_of(cell.bg);
             if cell.flags.contains(Flags::INVERSE) {
                 std::mem::swap(&mut fg, &mut bg);
             }
-            let mut is_default_bg = bg == BG_DEFAULT;
+            let mut is_default_bg = bg == scheme.bg;
             let selected = content
                 .selection
                 .as_ref()
@@ -1684,7 +2035,7 @@ impl Renderer {
                 })
                 .unwrap_or(false);
             if selected {
-                bg = blend(bg);
+                bg = scheme.blend(bg);
                 is_default_bg = false;
             }
             if !is_default_bg {
@@ -1710,7 +2061,7 @@ impl Renderer {
             // cursor: block drawn under the glyph (shown here in inverse). Must be
             // handled before the empty-cell skip so the block shows on blank rows.
             if selected {
-                fg = blend(fg);
+                fg = scheme.blend(fg);
             }
             let on_cursor = cursor
                 .map(|vp| vp.line == row && vp.column.0 == col)
@@ -1721,7 +2072,7 @@ impl Renderer {
                     py,
                     px + metrics.cell_w,
                     py + metrics.cell_h,
-                    CURSOR_BG,
+                    scheme.cursor,
                     None,
                 );
             }
@@ -1732,7 +2083,7 @@ impl Renderer {
             {
                 continue;
             }
-            fg = if on_cursor { BG_DEFAULT } else { fg };
+            fg = if on_cursor { scheme.bg } else { fg };
 
             let bold = cell.flags.intersects(Flags::BOLD | Flags::DIM_BOLD);
             let italic = cell.flags.intersects(Flags::ITALIC | Flags::BOLD_ITALIC);
@@ -1786,77 +2137,12 @@ impl Renderer {
     }
 }
 
-/// Map a term Color to linear RGBA32; handles dim and 256-color variants.
-fn color_of(c: Color) -> [f32; 4] {
-    match c {
-        Color::Named(NamedColor::Foreground) => FG_DEFAULT,
-        Color::Named(NamedColor::Background) => BG_DEFAULT,
-        Color::Named(n) => match n {
-            NamedColor::Black => PALETTE[0],
-            NamedColor::Red => PALETTE[1],
-            NamedColor::Green => PALETTE[2],
-            NamedColor::Yellow => PALETTE[3],
-            NamedColor::Blue => PALETTE[4],
-            NamedColor::Magenta => PALETTE[5],
-            NamedColor::Cyan => PALETTE[6],
-            NamedColor::White => PALETTE[7],
-            NamedColor::BrightBlack => PALETTE[8],
-            NamedColor::BrightRed => PALETTE[9],
-            NamedColor::BrightGreen => PALETTE[10],
-            NamedColor::BrightYellow => PALETTE[11],
-            NamedColor::BrightBlue => PALETTE[12],
-            NamedColor::BrightMagenta => PALETTE[13],
-            NamedColor::BrightCyan => PALETTE[14],
-            NamedColor::BrightWhite => PALETTE[15],
-            // Dim variants (SGR 2).
-            NamedColor::DimBlack => dim(PALETTE[0]),
-            NamedColor::DimRed => dim(PALETTE[1]),
-            NamedColor::DimGreen => dim(PALETTE[2]),
-            NamedColor::DimYellow => dim(PALETTE[3]),
-            NamedColor::DimBlue => dim(PALETTE[4]),
-            NamedColor::DimMagenta => dim(PALETTE[5]),
-            NamedColor::DimCyan => dim(PALETTE[6]),
-            NamedColor::DimWhite => dim(PALETTE[7]),
-            NamedColor::DimForeground => dim(FG_DEFAULT),
-            _ => PALETTE[7],
-        },
-        Color::Spec(Rgb { r, g, b }) => {
-            srgb_to_linear([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0])
-        }
-        Color::Indexed(i) => indexed(i),
-    }
-}
-
-/// xterm-256 palette into PALETTE slot range.
-fn indexed(i: u8) -> [f32; 4] {
-    let (r, g, b) = if i < 16 {
-        return PALETTE[i as usize];
-    } else if i < 232 {
-        let i = i as u32 - 16;
-        let lvl = |v: u32| if v == 0 { 0 } else { 55 + v * 40 };
-        (lvl(i / 36) as u8, lvl((i % 36) / 6) as u8, lvl(i % 6) as u8)
-    } else {
-        let v = ((i as u32 - 232) * 10 + 8) as u8;
-        (v, v, v)
-    };
-    srgb_to_linear([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0])
-}
-
 fn dim(c: [f32; 4]) -> [f32; 4] {
     [
         c[0] * DIM_FACTOR,
         c[1] * DIM_FACTOR,
         c[2] * DIM_FACTOR,
         c[3],
-    ]
-}
-
-fn blend(c: [f32; 4]) -> [f32; 4] {
-    [
-        c[0] * 0.5 + FG_DEFAULT[0] * 0.5,
-        c[1] * 0.5 + FG_DEFAULT[1] * 0.5,
-        c[2] * 0.5 + FG_DEFAULT[2] * 0.5,
-        1.0,
     ]
 }
 
@@ -1966,28 +2252,85 @@ mod tests {
     fn palette_is_linear_not_srgb() {
         // 0.8 sRGB -> 0.604 linear; the pre-fix constants leaked sRGB values
         // straight into the linear pipeline and washed every color out.
-        assert!(close(PALETTE[1][0], 0.604), "red={}", PALETTE[1][0]);
-        assert!(close(PALETTE[7][0], 0.78346), "white={}", PALETTE[7][0]);
-        assert_eq!(PALETTE[9], [1.0, 0.0, 0.0, 1.0]);
+        let dark = ColorScheme::dark();
+        assert!(
+            close(dark.palette[1][0], 0.604),
+            "red={}",
+            dark.palette[1][0]
+        );
+        assert!(
+            close(dark.palette[7][0], 0.78346),
+            "white={}",
+            dark.palette[7][0]
+        );
+        assert_eq!(dark.palette[9], [1.0, 0.0, 0.0, 1.0]);
         // Indexed slots 0-15 must not be gamma-converted twice.
-        assert_eq!(indexed(1), PALETTE[1]);
-        assert_eq!(indexed(9), PALETTE[9]);
+        assert_eq!(dark.indexed(1), dark.palette[1]);
+        assert_eq!(dark.indexed(9), dark.palette[9]);
     }
 
     #[test]
     fn truecolor_spec_is_converted_once() {
-        let white = color_of(Color::Spec(Rgb {
+        let dark = ColorScheme::dark();
+        let white = dark.color_of(Color::Spec(Rgb {
             r: 255,
             g: 255,
             b: 255,
         }));
         assert_eq!(white, [1.0, 1.0, 1.0, 1.0]);
-        let grey = color_of(Color::Spec(Rgb {
+        let grey = dark.color_of(Color::Spec(Rgb {
             r: 128,
             g: 128,
             b: 128,
         }));
         // 128/255 = 0.502 sRGB -> ~0.2158 linear.
         assert!(close(grey[0], 0.2158), "got {}", grey[0]);
+    }
+
+    #[test]
+    fn theme_overrides_apply_to_palette_and_ui() {
+        use berth_core::config::{Palette, Theme, ThemePreset};
+        let cfg = Theme {
+            preset: ThemePreset::Dark,
+            background: Some("#112233".into()),
+            foreground: Some("#eeeeee".into()),
+            cursor: None,
+            palette: Palette {
+                red: Some("#ff0000".into()),
+                ..Default::default()
+            },
+        };
+        let scheme = ColorScheme::from_config(&cfg);
+        assert_eq!(scheme.bg, hex_to_linear("#112233").unwrap());
+        assert_eq!(scheme.fg, hex_to_linear("#eeeeee").unwrap());
+        assert_eq!(scheme.palette[1], [1.0, 0.0, 0.0, 1.0]);
+        // Non-overridden slots keep the preset.
+        assert_eq!(scheme.palette[2], ColorScheme::dark().palette[2]);
+    }
+
+    #[test]
+    fn light_preset_is_light_and_invalid_hex_is_ignored() {
+        use berth_core::config::{Theme, ThemePreset};
+        let mut cfg = Theme {
+            preset: ThemePreset::Light,
+            ..Default::default()
+        };
+        cfg.background = Some("not-a-color".into());
+        let scheme = ColorScheme::from_config(&cfg);
+        // Invalid override ignored -> preset background stays light grey.
+        assert_eq!(scheme.bg, hex_to_linear("#f7f7f7").unwrap());
+        assert!(scheme.fg[0] < 0.1, "light theme needs dark text");
+        assert!(
+            scheme.chrome.tab_text_active[0] < 0.05,
+            "light chrome needs dark active-tab text"
+        );
+    }
+
+    #[test]
+    fn hex_parser_accepts_short_and_long_forms() {
+        assert_eq!(hex_to_linear("#fff"), Some([1.0, 1.0, 1.0, 1.0]));
+        assert_eq!(hex_to_linear("abc"), None);
+        assert_eq!(hex_to_linear("#12345"), None);
+        assert_eq!(hex_to_linear("#xyzxyz"), None);
     }
 }

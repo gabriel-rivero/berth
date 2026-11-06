@@ -18,6 +18,75 @@ pub struct Config {
     pub plugins: Plugins,
     /// PTY/keyboard compatibility knobs.
     pub terminal: Terminal,
+    /// Terminal color preset + overrides.
+    pub theme: Theme,
+}
+
+/// Built-in color presets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemePreset {
+    #[default]
+    Dark,
+    Light,
+}
+
+/// `[theme]` table: preset plus optional `#rrggbb` overrides. Unknown keys are
+/// rejected so a typo (`backgroud`) fails loudly instead of silently ignoring.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Theme {
+    pub preset: ThemePreset,
+    pub background: Option<String>,
+    pub foreground: Option<String>,
+    pub cursor: Option<String>,
+    /// ANSI 0-15 overrides, e.g. `[theme.palette] red = "#ff5555"`.
+    pub palette: Palette,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Palette {
+    pub black: Option<String>,
+    pub red: Option<String>,
+    pub green: Option<String>,
+    pub yellow: Option<String>,
+    pub blue: Option<String>,
+    pub magenta: Option<String>,
+    pub cyan: Option<String>,
+    pub white: Option<String>,
+    pub bright_black: Option<String>,
+    pub bright_red: Option<String>,
+    pub bright_green: Option<String>,
+    pub bright_yellow: Option<String>,
+    pub bright_blue: Option<String>,
+    pub bright_magenta: Option<String>,
+    pub bright_cyan: Option<String>,
+    pub bright_white: Option<String>,
+}
+
+impl Palette {
+    /// ANSI slot order (0-15) for applying overrides.
+    pub fn as_slots(&self) -> [&Option<String>; 16] {
+        [
+            &self.black,
+            &self.red,
+            &self.green,
+            &self.yellow,
+            &self.blue,
+            &self.magenta,
+            &self.cyan,
+            &self.white,
+            &self.bright_black,
+            &self.bright_red,
+            &self.bright_green,
+            &self.bright_yellow,
+            &self.bright_blue,
+            &self.bright_magenta,
+            &self.bright_cyan,
+            &self.bright_white,
+        ]
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -26,6 +95,8 @@ pub struct Font {
     /// fontconfig pattern (Linux), system font name (macOS/Windows)
     pub family: String,
     pub size_pt: f32,
+    /// Line-height multiplier applied to the face's ascent+descent (1.0 = tight).
+    pub line_height: f32,
 }
 
 impl Default for Font {
@@ -34,6 +105,7 @@ impl Default for Font {
         Self {
             family: "monospace".to_string(),
             size_pt: 12.0,
+            line_height: 1.0,
         }
     }
 }
@@ -130,5 +202,53 @@ impl Config {
         };
         // TODO(core): watch file for hot reload (ui layer re-emits Layout snapshots on change).
         toml::from_str(&raw).map_err(|e| anyhow::anyhow!("parse {}: {e}", path.display()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_theme_preset_overrides_and_line_height() {
+        let cfg: Config = toml::from_str(
+            r##"
+            [font]
+            family = "JetBrains Mono"
+            size_pt = 13.5
+            line_height = 1.2
+
+            [theme]
+            preset = "light"
+            background = "#101010"
+            cursor = "#ff0000"
+
+            [theme.palette]
+            red = "#aa0000"
+            bright_cyan = "#00ffff"
+            "##,
+        )
+        .unwrap();
+        assert_eq!(cfg.font.family, "JetBrains Mono");
+        assert_eq!(cfg.font.line_height, 1.2);
+        assert_eq!(cfg.theme.preset, ThemePreset::Light);
+        assert_eq!(cfg.theme.background.as_deref(), Some("#101010"));
+        assert_eq!(cfg.theme.palette.red.as_deref(), Some("#aa0000"));
+        assert_eq!(cfg.theme.palette.bright_cyan.as_deref(), Some("#00ffff"));
+        assert!(cfg.theme.palette.green.is_none());
+    }
+
+    #[test]
+    fn theme_defaults_are_dark_and_unset() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert_eq!(cfg.theme.preset, ThemePreset::Dark);
+        assert!(cfg.theme.background.is_none());
+        assert_eq!(cfg.font.line_height, 1.0);
+    }
+
+    #[test]
+    fn unknown_theme_key_is_rejected() {
+        let err = toml::from_str::<Config>("[theme]\nbackgroud = \"#fff\"\n");
+        assert!(err.is_err(), "typo should fail loudly: {err:?}");
     }
 }

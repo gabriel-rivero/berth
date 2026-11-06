@@ -50,7 +50,7 @@ Three pillars for "1.0":
 | S1 | **Hardware acceleration unverified** *(user-reported)* — adapter silently chosen, no diagnostics, no fallback | **[done 2026-11]** — GPU name/backend/device-type logged every launch to `berth.log`; `berth --gpu-info` enumerates adapters without a window; warns on `DeviceType::Cpu` (software) and non-sRGB surfaces; adapter request retries with the software fallback before failing |
 | S2 | DECCKM application cursor keys ignored | **[open]** (`term.mode().application_cursor` → `ESC O A…`) |
 | S2 | Ctrl+digit (2..8) sends nothing | **[open]** — NUL/ESC/FS/GS/RS/US/DEL table |
-| S2 | Bold/italic/underline/strikethrough not rendered | **[done 2026-11, faux faces]** — swash `embolden`/skew for bold+italic, underline/double-underline/strikeout quads, SGR reverse (INVERSE) and DIM honored; real bold/italic font faces + ligatures remain [open] |
+| S2 | Bold/italic/underline/strikethrough not rendered | **[done 2026-11, real + faux fallback]** — real bold/italic/bold-italic faces resolved from the family; swash `embolden`/skew only as synthetic fallback; underline/double-underline/strikeout quads, SGR reverse (INVERSE) and DIM honored; ligatures remain [open] |
 | S2 | New tab/split/workspace loses cwd (`Tab.cwd` dead) | **[done 0.24.0]** — OSC 7 extracted from raw PTY bytes in the reader thread (cross-chunk, BEL + ESC\, percent-decode; unit-test covering split carry) → per-pane cwd pool → `Tab.cwd` write-back → new tab/split/workspace inherit the focused pane's cwd. Leftover: `basename(cwd)` tab labels + shell-integration docs/plugins. |
 | S2 | Close pane/tab/workspace kills live jobs without confirm | **[open]** — extend window-close banner to live-shell closes; single-pane escape hatch. *(qwen U-4: also covers the ✕ cascade — closing the last tab of the last workspace exits the app instantly, `app.rs:1275-1281`, with no banner)* **[done 2026-11]** — last-tab/last-workspace ✕ now arms the quit banner instead of killing the shell; multi-pane ✕ already confirms, single-pane workspace close still immediate |
 | S2 | No IME handling (`WindowEvent::Ime`) | **[open]** — CJK input blocker |
@@ -117,16 +117,20 @@ like one) while staying small and GPU-cheap. Ordered by perceived impact per eff
 1. **[done 2026-11]** Color correctness + sRGB pipeline (see S1 colors row) and
    **GPU honesty**: adapter/backend logged every run; software fallback + non-sRGB
    surface warned; no silent lavapipe.
-2. **[open]** **Font quality** *(the single biggest "looks cheap" factor)*: real
-   bold/italic/oblique faces (currently faux embolden/skew) + synthetic fallback;
-   underline/strikethrough/dotted underline quads **[done 2026-11]**; fractional
-   (subpixel-positioned) glyph placement + gamma-correct blending; per-font
-   fallback chain with a missing-glyph diagnostic; config for
-   family/size/line-height/cell padding. Stretch: ligatures (off by default).
-3. **[open]** **Theme system**: `[theme]` presets + `[palette]` overrides, hot-reload,
-   light/dark auto-switch, contrast-checked defaults; separate chrome palette from ANSI
-   palette so UI and terminal can be tuned independently. (Today palette is hardcoded
-   linear constants in `render.rs`.)
+2. **[done 2026-11, faux→real faces + font config; subpixel/ligatures open]**
+   **Font quality** *(the single biggest "looks cheap" factor)*: real bold/italic/
+   bold-italic faces are resolved from the same family (fontdb weight/style query;
+   synthetic embolden/skew only when the family lacks them); underline/double
+   underline/strikethrough quads; per-font fallback chain with diagnostics;
+   `[font] family/size_pt/line_height` config, hot-reloaded. Still open: fractional
+   (subpixel-positioned) glyph placement + gamma-correct blending, cell padding,
+   `.woff2`/variable-font tuning, ligatures (off by default).
+3. **[done 2026-11, auto-switch open]** **Theme system**: `[theme] preset = "dark"|"light"`
+   plus `background`/`foreground`/`cursor` and 16 `[theme.palette]` `#rrggbb` overrides;
+   separate chrome palette (tab strip/sidebar/divider/banner) from the ANSI palette;
+   hot-reload applies live; unknown keys and malformed colors fail loudly in the log.
+   Still open: OS light/dark auto-switch, contrast-checked user colors, per-theme
+   chrome accent override knobs, theme-aware plugin accents.
 4. **[open]** **Chrome polish**: consistent spacing/typography in tab strip + sidebar;
    active-tab and focused-pane affordances that survive color-blind palettes; rounded
    tab/panel corners; overflow shrink-to-fit + chevrons; optional `+`/close reveal on
@@ -150,12 +154,12 @@ like one) while staying small and GPU-cheap. Ordered by perceived impact per eff
 ## Table stakes still missing (review §4a, priority order)
 
 Mouse reporting **[done]** · bracketed paste/copy-on-select **[done]** ·
-**[open]**: bold/italic faces; scrollback search (`ctrl+shift+f`
+**[open]**: scrollback search (`ctrl+shift+f`
 overlay, incremental highlight via a second Selection); **word/line selection
 (double/triple-click — qwen BUGS-9)**; clickable links (OSC 8 +
 regex, `cmd+click`); cursor shapes/blink + `WindowEvent::Focused`; fullscreen +
 clear-to-scrollback binds; `[shell]`/`command`+`args`+`env` config (can't start
-fish/login shells today), `working-dir`, `scrollback` size, theme/`[palette]`;
+fish/login shells today), `working-dir`, `scrollback` size;
 IME; scroll-to-bottom; DECCKM + kitty keyboard probe; bell→attention;
 exit-status surfacing; wide-glyph advance audit; selection drag auto-scroll
 past window edges (qwen U-13); zoomed-pane indicator + window title carrying

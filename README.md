@@ -107,6 +107,34 @@ Action ids: `split-vertical`, `split-horizontal`, `new-tab`, `close-pane`,
 `f1..f12`, or any digit/letter). Unknown actions or unparseable chords are
 reported on stderr at load. Changes hot-reload like the rest of the config.
 
+### Fonts & themes
+
+Typefaces and colors live in the same `config.toml` and hot-reload on save:
+
+```toml
+[font]
+family = "JetBrains Mono"   # any installed family; falls back to a per-OS mono
+size_pt = 12.5
+line_height = 1.15          # multiplier on the face's ascent+descent (1.0 = tight)
+
+[theme]
+preset = "dark"             # "dark" (default) or "light"
+background = "#121317"      # optional overrides
+foreground = "#e6e6e6"
+cursor = "#f0e6c8"
+
+[theme.palette]             # ANSI 0-15, any subset
+red = "#ff5f5f"
+bright_blue = "#7aa2ff"
+```
+
+Real bold, italic, and bold-italic faces are loaded from the chosen family;
+when a family ships no italic, berth synthesizes a skew so italics still read
+differently. Drop extra `.ttf`/`.otf` files into `~/.config/berth/fonts/`
+to make them selectable. Unknown `[theme]` keys and malformed colors are
+reported in `berth.log` rather than silently ignored. The light preset themes
+both the terminal and the window chrome (tab strip, sidebar, dividers).
+
 ### Remaining
 
 - sidebar: rename is done (**double-click a workspace entry** to rename it

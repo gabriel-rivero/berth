@@ -1385,7 +1385,14 @@ impl ApplicationHandler<PaneEvent> for Berth {
             .with_min_inner_size(winit::dpi::LogicalSize::new(400.0, 200.0));
         let window = event_loop.create_window(attrs).expect("window creation");
         let font = &self.config.font;
-        let renderer = Renderer::new(&window, &font.family, font.size_pt).expect("renderer init");
+        let renderer = Renderer::new(
+            &window,
+            &font.family,
+            font.size_pt,
+            font.line_height,
+            &self.config.theme,
+        )
+        .expect("renderer init");
 
         self.window = Some(window);
         self.renderer = Some(renderer);
@@ -1543,7 +1550,14 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     let size_px = self.config.font.size_pt * 1.333_333 * scale_factor as f32;
                     // Font rebuild failure keeps the old strike (visible but
                     // stale-size chrome) instead of dropping the renderer.
-                    if renderer.set_font(&self.config.font.family, size_px).is_ok() {
+                    if renderer
+                        .set_font(
+                            &self.config.font.family,
+                            size_px,
+                            self.config.font.line_height,
+                        )
+                        .is_ok()
+                    {
                         self.sync_size();
                     }
                 }
@@ -2025,8 +2039,12 @@ impl Berth {
             return;
         };
         let font_changed = cfg.font.family != self.config.font.family
-            || cfg.font.size_pt != self.config.font.size_pt;
+            || cfg.font.size_pt != self.config.font.size_pt
+            || cfg.font.line_height != self.config.font.line_height;
         self.config = cfg;
+        if let Some(renderer) = &mut self.renderer {
+            renderer.set_theme(&self.config.theme);
+        }
         let (bindings, warns) = build_bindings(&self.config.keybinds.0);
         self.bindings = bindings;
         for (id, reason) in &warns {
@@ -2042,7 +2060,11 @@ impl Berth {
         if font_changed && let (Some(renderer), Some(window)) = (&mut self.renderer, &self.window) {
             // Same scale chain as Renderer::new (pt -> CSS px -> device px).
             let size_px = self.config.font.size_pt * 1.333_333 * window.scale_factor() as f32;
-            match renderer.set_font(&self.config.font.family, size_px) {
+            match renderer.set_font(
+                &self.config.font.family,
+                size_px,
+                self.config.font.line_height,
+            ) {
                 Ok(()) => self.sync_size(),
                 Err(e) => {
                     crate::render::dlog_emit(&format!("config reload: font swap failed: {e}"))
