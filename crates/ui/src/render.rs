@@ -1538,6 +1538,33 @@ impl Renderer {
         sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
     }
 
+    /// Small "zoom" pill in the top-left of a zoomed pane so the full-bleed
+    /// layout is distinguishable from a single-pane tab.
+    fn draw_zoom_badge(&mut self, rect: Rect, ch: Chrome, metrics: Metrics, sink: &mut QuadSink) {
+        let colors = self.scheme.chrome;
+        let s = ch.scale;
+        let label = "zoom";
+        let text_w = label.chars().count() as f32 * metrics.cell_w;
+        let bw = text_w + 12.0 * s;
+        let bh = metrics.cell_h + 6.0 * s;
+        let bx = rect.x as f32 + 8.0 * s;
+        let by = rect.y as f32 + 8.0 * s;
+        let mut bg = colors.focus_outline;
+        bg[3] = 0.9;
+        sink.push_round(bx, by, bx + bw, by + bh, bg, bh * 0.5);
+        let baseline = by + 3.0 * s + metrics.ascent;
+        let mut pen = bx + 6.0 * s;
+        for c in label.chars() {
+            let Some(g) = self.rasterize(c, false, false, sink) else {
+                continue;
+            };
+            let gx = pen + g.left as f32;
+            let gy = baseline - g.top as f32;
+            sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], colors.panel_bg, Some(g));
+            pen += metrics.cell_w;
+        }
+    }
+
     /// Overlay scrollbar + "scrolled back" badge for the focused pane. Only
     /// visible while the viewport is off the live bottom, so the grid stays
     /// clean during normal typing.
@@ -2071,6 +2098,7 @@ impl Renderer {
         cursor: CursorPaint,
         search: Option<SearchView<'_>>,
         link: Option<(Rect, LinkSpan)>,
+        zoomed: bool,
         hovered: Option<ChromeZone>,
         confirm: Option<&str>,
         window: &Window,
@@ -2147,6 +2175,9 @@ impl Renderer {
             draw_focus_outline(&mut sink, r, self.scheme.chrome.focus_outline);
             if let Some(info) = scroll {
                 self.draw_scroll_overlay(r, info, ch, metrics, &mut sink);
+            }
+            if zoomed {
+                self.draw_zoom_badge(r, ch, metrics, &mut sink);
             }
         }
         if let Some(view) = search {

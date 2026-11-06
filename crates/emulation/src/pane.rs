@@ -519,6 +519,13 @@ impl Pane {
         })
     }
 
+    /// Drop saved scrollback lines, keeping the visible screen (xterm ED 3),
+    /// and snap back to the live tail so the cleared view isn't blank.
+    pub fn clear_scrollback(&mut self) {
+        self.parser.advance(&mut self.term, b"\x1b[3J");
+        self.term.scroll_display(Scroll::Bottom);
+    }
+
     /// Begin/replace the drag selection anchored at `point`.
     pub fn start_selection(&mut self, point: TermPoint) {
         self.start_selection_kind(point, SelectionKind::Simple);
@@ -842,6 +849,35 @@ mod shell_config_tests {
         assert!(pane.display_offset() > 0, "reveal should scroll back");
         let offset = pane.display_offset() as i32;
         assert!((-10 + offset) >= 0 && (-10 + offset) < 24);
+        pane.kill();
+    }
+
+    #[test]
+    fn clear_scrollback_drops_history_and_snaps_to_tail() {
+        let shell = Shell {
+            program: Some("/bin/sh".into()),
+            args: vec![
+                "-c".into(),
+                "for i in $(seq 1 100); do echo line-$i; done".into(),
+            ],
+            ..Default::default()
+        };
+        let mut pane = Pane::spawn(
+            berth_core::layout::PaneId(4),
+            Some("/tmp"),
+            &shell,
+            500,
+            Arc::new(|_| {}),
+        )
+        .expect("spawn clear shell");
+        wait_for(&mut pane, "line-100");
+        assert!(pane.history_size() > 0);
+        pane.reveal_line(-10, 2);
+        assert!(pane.display_offset() > 0);
+
+        pane.clear_scrollback();
+        assert_eq!(pane.history_size(), 0, "ED 3 must drop saved lines");
+        assert_eq!(pane.display_offset(), 0, "clear snaps to the live tail");
         pane.kill();
     }
 

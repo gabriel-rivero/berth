@@ -32,6 +32,8 @@ pub enum Action {
     FocusPaneRight,
     ToggleSidebar,
     Search,
+    Fullscreen,
+    ClearScrollback,
 }
 
 impl Action {
@@ -60,6 +62,8 @@ impl Action {
             Action::FocusPaneRight => "focus-pane-right",
             Action::ToggleSidebar => "toggle-sidebar",
             Action::Search => "search",
+            Action::Fullscreen => "fullscreen",
+            Action::ClearScrollback => "clear-scrollback",
         }
     }
 
@@ -87,6 +91,8 @@ impl Action {
             "focus-pane-right" => Action::FocusPaneRight,
             "toggle-sidebar" => Action::ToggleSidebar,
             "search" => Action::Search,
+            "fullscreen" => Action::Fullscreen,
+            "clear-scrollback" => Action::ClearScrollback,
             _ => return None,
         })
     }
@@ -124,6 +130,11 @@ impl Action {
             (Action::ToggleSidebar, &["cmd+u", "ctrl+shift+u"]),
             // Scrollback search (incremental; Enter/Shift+Enter cycle hits).
             (Action::Search, &["cmd+f", "ctrl+shift+f"]),
+            // Fullscreen toggle (F11 is the cross-platform convention; alt+enter
+            // matches xterm/kitty on Linux and Windows).
+            (Action::Fullscreen, &["f11", "alt+enter"]),
+            // ED 3: drop saved lines, keep the visible screen (xterm/iTerm).
+            (Action::ClearScrollback, &["cmd+k", "ctrl+shift+k"]),
         ]
     }
 }
@@ -140,7 +151,8 @@ pub struct Chord {
 
 /// Parse a chord string like "ctrl+shift+enter" into a Chord.
 /// Unknown modifiers/keys, or bare keys with no modifiers, return None
-/// (bare chords would shadow typing).
+/// (bare chords would shadow typing) — except function keys, which are safe
+/// to bind bare (F11 fullscreen, F1 help, ...).
 pub fn parse_chord(s: &str) -> Option<Chord> {
     let mut chord = Chord {
         ctrl: false,
@@ -165,10 +177,16 @@ pub fn parse_chord(s: &str) -> Option<Chord> {
             _ => return None,
         }
     }
-    if !chord.ctrl && !chord.shift && !chord.alt && !chord.super_key {
+    if !chord.ctrl && !chord.shift && !chord.alt && !chord.super_key && !is_function_key(&chord.key)
+    {
         return None;
     }
     Some(chord)
+}
+
+/// `f1`..`f12` (case-insensitive input is lowercased before this check).
+fn is_function_key(k: &str) -> bool {
+    k.len() >= 2 && k.len() <= 3 && k.starts_with('f') && k[1..].chars().all(|c| c.is_ascii_digit())
 }
 
 /// Keys we allow in chords. Anything else (weird Dead keys etc.) is rejected
@@ -198,7 +216,7 @@ fn is_bindable_key(k: &str) -> bool {
         && k.chars()
             .next()
             .is_some_and(|c| c.is_ascii_alphanumeric() || c == '[' || c == ']')
-        || (k.len() == 3 && k.starts_with('f') && k[1..].chars().all(|c| c.is_ascii_digit()))
+        || is_function_key(k)
 }
 
 /// Compile a config table (action id -> chords) into bindings, falling back to
@@ -290,6 +308,22 @@ mod tests {
         // case-insensitive key
         let chord = parse_chord("CTRL+SHIFT+N").unwrap();
         assert_eq!(bindings.get(&chord), Some(&Action::NewTab));
+        let chord = parse_chord("f11").unwrap();
+        assert_eq!(bindings.get(&chord), Some(&Action::Fullscreen));
+        let chord = parse_chord("cmd+k").unwrap();
+        assert_eq!(bindings.get(&chord), Some(&Action::ClearScrollback));
+    }
+
+    #[test]
+    fn action_ids_roundtrip() {
+        for (action, _) in Action::defaults() {
+            assert_eq!(
+                Action::from_action_str(action.as_str()),
+                Some(*action),
+                "{} must parse back to itself",
+                action.as_str()
+            );
+        }
     }
 
     #[test]

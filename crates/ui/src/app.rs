@@ -191,6 +191,8 @@ pub struct Berth {
     titles: HashMap<PaneId, String>,
     /// focused tab-strip slot or sidebar entry (for hover highlights).
     hovered: Option<crate::render::ChromeZone>,
+    /// Whether the OS window is currently borderless-fullscreen.
+    fullscreen: bool,
     /// Link under the pointer (pane + row/col span + URI), for Pointer cursor,
     /// underline highlight and modifier-click opening.
     hover_link: Option<(PaneId, LinkSpan)>,
@@ -606,6 +608,7 @@ impl Berth {
                         current: s.current,
                     }),
                     hover_link,
+                    self.zoomed.is_some(),
                     self.hovered,
                     confirm.as_deref(),
                     w,
@@ -1069,15 +1072,42 @@ impl Berth {
         self.window.as_ref().inspect(|w| w.request_redraw());
     }
 
-    /// Mirror the focused pane's OSC title into the OS window title.
+    /// Mirror the focused pane's OSC title into the OS window title, prefixed
+    /// with the workspace/tab context (qwen U-12) and a zoom marker.
     fn sync_window_title(&mut self) {
         let Some(window) = self.window.as_ref() else {
             return;
         };
-        match self.titles.get(&self.focused_pane) {
-            Some(title) => window.set_title(format!("berth — {title}").as_str()),
-            None => window.set_title("berth"),
+        let ws_label = self
+            .layout
+            .active_workspace()
+            .map(|w| w.label.as_str())
+            .unwrap_or("");
+        let tab_label = self.layout.active_tab().map(|t| t.label.as_str());
+        let pane_title = self
+            .titles
+            .get(&self.focused_pane)
+            .map(String::as_str)
+            .filter(|t| !t.is_empty());
+        let mut title = String::from("berth");
+        if !ws_label.is_empty() {
+            title.push_str(" — ");
+            title.push_str(ws_label);
+            if let Some(tab) = tab_label {
+                title.push_str(" / ");
+                title.push_str(tab);
+            }
         }
+        if let Some(pane) = pane_title
+            && Some(pane) != tab_label
+        {
+            title.push_str(" · ");
+            title.push_str(pane);
+        }
+        if self.zoomed.is_some() {
+            title.push_str(" [zoom]");
+        }
+        window.set_title(&title);
     }
 
     /// Kill the focused pane's shell; the Closed event does tree cleanup.
@@ -1411,6 +1441,28 @@ impl Berth {
                 self.open_search();
                 true
             }
+            Action::Fullscreen => {
+                self.fullscreen = !self.fullscreen;
+                dlog_app!("fullscreen -> {}", self.fullscreen);
+                if let Some(w) = &self.window {
+                    w.set_fullscreen(if self.fullscreen {
+                        Some(winit::window::Fullscreen::Borderless(None))
+                    } else {
+                        None
+                    });
+                }
+                true
+            }
+            Action::ClearScrollback => {
+                if let Some(pane) = self.panes.get(&self.focused_pane) {
+                    pane.lock().expect("pane poisoned").clear_scrollback();
+                }
+                self.wheel_accum = 0.0;
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+                true
+            }
             Action::SplitVertical => {
                 self.split_focused(true);
                 true
@@ -1450,6 +1502,7 @@ impl Berth {
                     Some(self.focused_pane)
                 };
                 self.sync_size();
+                self.sync_window_title();
                 true
             }
             Action::FocusPaneUp
@@ -1587,6 +1640,18 @@ fn chord_key_name(event: &KeyEvent) -> Option<String> {
                 NamedKey::End => "end",
                 NamedKey::Insert => "insert",
                 NamedKey::Delete => "delete",
+                NamedKey::F1 => "f1",
+                NamedKey::F2 => "f2",
+                NamedKey::F3 => "f3",
+                NamedKey::F4 => "f4",
+                NamedKey::F5 => "f5",
+                NamedKey::F6 => "f6",
+                NamedKey::F7 => "f7",
+                NamedKey::F8 => "f8",
+                NamedKey::F9 => "f9",
+                NamedKey::F10 => "f10",
+                NamedKey::F11 => "f11",
+                NamedKey::F12 => "f12",
                 _ => return None,
             }
             .to_string(),
@@ -2615,6 +2680,7 @@ pub fn run() -> anyhow::Result<()> {
         zoomed: None,
         titles: HashMap::new(),
         hovered: None,
+        fullscreen: false,
         hover_link: None,
         search: None,
         wheel_accum: 0.0,

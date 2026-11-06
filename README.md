@@ -91,6 +91,8 @@ Defaults follow iTerm2 (`cmd`/super chords work on all platforms); legacy
 | scroll | mouse wheel, `shift+PgUp` / `shift+PgDn`, `cmd+PgUp` / `cmd+PgDn` |
 | search scrollback | `cmd+f` (`ctrl+shift+f`); type to filter, `enter`/`shift+enter` cycles hits, `esc` closes |
 | open link | `cmd+click` (`ctrl+click` on Linux/Windows) over OSC 8 or `http(s)://`/`file://`/`mailto:` text |
+| fullscreen | `F11` or `alt+Enter` (borderless; same chord toggles back) |
+| clear scrollback | `cmd+k` (`ctrl+shift+k`); keeps the visible screen |
 
 Every chord above is reassignable in `config.toml`; a user entry replaces all
 defaults for that action:
@@ -106,7 +108,7 @@ Action ids: `split-vertical`, `split-horizontal`, `new-tab`, `close-pane`,
 `next-workspace`, `prev-workspace`, `zoom-pane`, `focus-pane-up`, `focus-pane-down`,
 `toggle-sidebar`,
 `focus-pane-left`, `focus-pane-right`, `copy`, `paste`,
-`scroll-page-up`, `scroll-page-down`, `search`. Chord syntax is modifier tokens (`ctrl`/`control`,
+`scroll-page-up`, `scroll-page-down`, `search`, `fullscreen`, `clear-scrollback`. Chord syntax is modifier tokens (`ctrl`/`control`,
 `shift`, `alt`/`option`, `super`/`cmd`/`win`) joined with `+` plus the key
 (`enter`, `tab`, `backslash`, `[`, `]`, `left/right/up/down`,
 `pageup/pagedown`, `home`, `end`, `insert`, `delete`, `escape`, `space`,

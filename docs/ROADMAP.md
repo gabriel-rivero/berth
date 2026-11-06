@@ -179,12 +179,13 @@ word/line selection (double/triple-click → semantic/lines selection,
 qwen BUGS-9) **[done 2026-11]** ·
 clickable links (OSC 8 + scheme-scan, safe-scheme allowlist, hover underline +
 `cmd`/`ctrl`-click opening through the OS handler) **[done 2026-11]** ·
-**[open]**: fullscreen +
-clear-to-scrollback binds;
-IME; DECCKM + kitty keyboard probe; bell→attention;
-exit-status surfacing; wide-glyph advance audit; selection drag auto-scroll
-past window edges (qwen U-13); zoomed-pane indicator + window title carrying
-tab/workspace context (qwen U-12).
+ fullscreen (`f11`/`alt+enter`, borderless toggle) and clear-scrollback
+ (ED 3, keeps the visible screen) **[done 2026-11]** ·
+ zoomed-pane badge + window title carrying workspace/tab/pane context and a
+ `[zoom]` marker **[done 2026-11]** ·
+ **[open]**: IME; DECCKM + kitty keyboard probe; bell→attention;
+ exit-status surfacing; wide-glyph advance audit; selection drag auto-scroll
+ past window edges (qwen U-13).
 
 ## Distribution / branding (review §4d)
 
