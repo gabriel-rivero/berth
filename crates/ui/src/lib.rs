@@ -6,3 +6,9 @@ pub mod render;
 pub fn run() -> anyhow::Result<()> {
     app::run()
 }
+
+/// Human-readable list of every wgpu adapter visible to this build, without
+/// opening a window (`berth --gpu-info`). Use it to confirm hardware accel.
+pub fn gpu_report() -> String {
+    render::gpu_report()
+}

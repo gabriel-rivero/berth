@@ -1,5 +1,6 @@
 <!-- docs/ROADMAP.md — merged from the GLM-5.3 product/code review (2026-11-03, made against main @ 0.16.0) plus the shipped-work status. Full original report: /tmp/opencode/berth-review.md (uncommitted). -->
 <!-- 2026-11-04: qwen review @ v0.21.4 (38cbed0) folded in — runtime-verified under Xvfb/xdotool (scales 1+2) + user-reported UX list cross-checked. Full report: docs/UI-REVIEW-qwen.md (BUGS-n / U-n refs below point into it). -->
+<!-- 2026-11-06: post-0.24.0 Gemini-fix audit (wheel / colors / hover / close buttons / GPU) — findings and the new "visual & terminal quality" wave folded in. -->
 
 # berth — Roadmap
 
@@ -43,20 +44,23 @@ Three pillars for "1.0":
 | S1 | Renderer loss unrecoverable (black window) | **[open]** — recreate Renderer on draw failure |
 | S1 | Atlas exhaustion → cache wipe + torn frames | **[open]** — LRU eviction or texture pages (CJK screens) |
 | S1 | **Default `ctrl+alt+←/→` workspace cycling is dead** *(qwen BUGS-1, runtime-verified)* — hardcoded alt+arrow pane-focus intercept (`app.rs:899-916`) runs before the bindings table and swallows the chord silently; alt+arrow is also unbindable for users | **[open]** — table-first lookup; promote pane focus to `focus-pane-*` actions |
-| S1 | **Sidebar edge-grab branch steals the workspace close-✕** *(qwen BUGS-2 = user-reported "close button not working on tabs/workspaces", CONFIRMED at scales 1+2)* — grab band `|x−sb_w|≤4·scale` checked first with **no y-guard** (`app.rs:1455`) overlaps the right ~29% of the ✕ zone (`app.rs:1465`): clean click = no-op, jitter = surprise resize. Same band eats pane clicks and leftmost tab-strip clicks (8px full-height dead band). Tab-✕ geometry itself verified correct — perception side: no hover (below) + drag-arm-on-press + last-tab-✕ exits app | **[done 0.21.6]** — press restructured: ✕-check first inside sidebar branch, edge band only below the tab strip (+ same guard in cursor icons); tab-drag motion threshold added; full `chrome_zone_at()` refactor deferred with hover wave |
+| S1 | Wheel scroll only (never history arrows) in normal shell | **[done 2026-11]** — root cause: `TermMode::default()` includes `ALTERNATE_SCROLL`, so the old `ALTERNATE_SCROLL`-only check arrowed through history on every tick. `wheel_target()` now requires `ALT_SCREEN|ALTERNATE_SCROLL` (mouse-reporting wins, else viewport scroll) + unit tests |
+| S1 | **Sidebar edge-grab branch steals the workspace close-✕** *(qwen BUGS-2 = user-reported "close button not working on tabs/workspaces", CONFIRMED at scales 1+2)* — grab band `|x−sb_w|≤4·scale` checked first with **no y-guard** (`app.rs:1455`) overlaps the right ~29% of the ✕ zone (`app.rs:1465`): clean click = no-op, jitter = surprise resize. Same band eats pane clicks and leftmost tab-strip clicks (8px full-height dead band). Tab-✕ geometry itself verified correct — perception side: no hover (below) + drag-arm-on-press + last-tab-✕ exits app | **[done 0.21.6]** — press restructured: ✕-check first inside sidebar branch, edge band only below the tab strip (+ same guard in cursor icons); tab-drag motion threshold added. **[done 2026-11]** — all press/middle-click/cursor paths now dispatch on the single shared `chrome_zone_at()` (sidebar → tab strip → edge band → pane), removing the last draw/hit-test drift; `tests/chrome_hit.rs` locks geometry at DPI 1x + 2x incl. close-✕ vs edge-grab precedence |
+| S1 | **Colors washed out** *(user-reported "colors look wrong")* — UI constants authored as sRGB but fed to a linear pipeline | **[done 2026-11]** — `srgb_to_linear()` applied to constants and truecolor/256-color specs exactly once; sRGB surface format explicitly selected (warn + fallback otherwise); unit tests pin endpoints/midpoint and "palette is linear, not sRGB" |
+| S1 | **Hardware acceleration unverified** *(user-reported)* — adapter silently chosen, no diagnostics, no fallback | **[done 2026-11]** — GPU name/backend/device-type logged every launch to `berth.log`; `berth --gpu-info` enumerates adapters without a window; warns on `DeviceType::Cpu` (software) and non-sRGB surfaces; adapter request retries with the software fallback before failing |
 | S2 | DECCKM application cursor keys ignored | **[open]** (`term.mode().application_cursor` → `ESC O A…`) |
 | S2 | Ctrl+digit (2..8) sends nothing | **[open]** — NUL/ESC/FS/GS/RS/US/DEL table |
 | S2 | Bold/italic/underline/strikethrough not rendered | **[open]** — second faces + underline quads; synth-bold fallback |
 | S2 | New tab/split/workspace loses cwd (`Tab.cwd` dead) | **[done 0.24.0]** — OSC 7 extracted from raw PTY bytes in the reader thread (cross-chunk, BEL + ESC\, percent-decode; unit-test covering split carry) → per-pane cwd pool → `Tab.cwd` write-back → new tab/split/workspace inherit the focused pane's cwd. Leftover: `basename(cwd)` tab labels + shell-integration docs/plugins. |
-| S2 | Close pane/tab/workspace kills live jobs without confirm | **[open]** — extend window-close banner to live-shell closes; single-pane escape hatch. *(qwen U-4: also covers the ✕ cascade — closing the last tab of the last workspace exits the app instantly, `app.rs:1275-1281`, with no banner)* |
+| S2 | Close pane/tab/workspace kills live jobs without confirm | **[open]** — extend window-close banner to live-shell closes; single-pane escape hatch. *(qwen U-4: also covers the ✕ cascade — closing the last tab of the last workspace exits the app instantly, `app.rs:1275-1281`, with no banner)* **[done 2026-11]** — last-tab/last-workspace ✕ now arms the quit banner instead of killing the shell; multi-pane ✕ already confirms, single-pane workspace close still immediate |
 | S2 | No IME handling (`WindowEvent::Ime`) | **[open]** — CJK input blocker |
 | S2 | Tab/sidebar overflow past ~6/25 entries unreachable | **[open]** — shrink-to-fit + ellipsis + chevrons/scroll |
-| S2 | Palette math: sRGB constants through linear pipeline (washed) | **[open]** — convert constants once or mark targets consistently |
+| S2 | Palette math: sRGB constants through linear pipeline (washed) | **[done 2026-11]** — see the S1 colors row: constants + `Color::Spec`/indexed 16-255 converted once via `srgb_to_linear()`; host palette returned pre-linearized; sRGB surface format enforced |
 | S2 | PTY write errors ignored → typing into dead pane; no exit-status surface | **[open]** — "process exited (N)" pane state; also Bell → attention + OSC 52 clipboard |
 | S2 | No scroll-to-bottom on keypress | **[open]** |
 | S2 | **Redraw storm: full redraw per PTY Output event** *(qwen BUGS-3, verified: `seq 1 3000` → 689 presents)* — `user_event` calls `redraw()` directly (`app.rs:1216-1221`); vsync-blocked presents stall input under output floods | **[done 0.21.8]** — `PaneEvent::Output` now pumps + `request_redraw()` only (title/closed redraws kept synchronous; damage tracking later). Verified: `seq 1 3000` → 37 draw frames (was 689) |
 | S2 | **No tab-drag threshold: clicks teleport tabs + delete the emptied origin workspace** *(qwen BUGS-4)* — press arms `tab_drag` (`app.rs:1508-1515`); first CursorMoved over sidebar moves the tab and drops the origin ws (`app.rs:1381-1384`); 2px jitter = data loss, no undo | **[done 0.21.6]** — `TAB_DRAG_THRESHOLD` 6 logical px; origin recorded on press; drag arm early-returns before threshold (xvfb-verified: jitter no-ops, real drag moves) |
-| S2 | **No hover states / pointer cursor on any chrome** *(user-reported "no ui hover animations on clickable buttons" — CONFIRMED; qwen BUGS-6)* — hover never reaches the renderer (`draw` gets only `active` bools); `update_cursor` emits resize icons only (`app.rs:758-792`) | **[done 0.21.8 (partial)]** — `CursorIcon::Pointer` over sidebar/tab strip via `hover_chrome()`; visual hover highlight + shared `chrome_zone_at()` remain [open] |
+| S2 | **No hover states / pointer cursor on any chrome** *(user-reported "no ui hover animations on clickable buttons" — CONFIRMED; qwen BUGS-6)* — hover never reaches the renderer (`draw` gets only `active` bools); `update_cursor` emits resize icons only (`app.rs:758-792`) | **[done]** — `CursorIcon::Pointer` + visual hover highlight on sidebar rows/✕/`+` and tab slots/✕/`+`; hover and press share one `chrome_zone_at()` (empty strip/sidebar regions are clickable targets for double-click new tab/workspace) |
 | S2 | **No middle-click close of tabs/workspaces** *(user-reported — CONFIRMED, probe: total no-op; qwen BUGS-5)* — non-left buttons only forward to capturing panes (`app.rs:1575-1594`) | **[done 0.21.8]** — Middle-Pressed over tab slot → `close_tab`, over workspace row → `close_workspace_at` (never the only workspace), else forwards to TUI; xvfb-verified end-to-end |
 | S2 | **`close-tab` keybind is a trap** *(qwen BUGS-7; upgrades the old S3 "close-tab no-ops")* — action returns false (`app.rs:960-963`); binding it silently steals the chord's old action AND the fall-through **types the letter into the shell** | **[done 0.21.6]** — closes active tab (kills its panes); refuses on the only tab of the only workspace (`last tab -> ignored`); user keybind verified via `close-tab = [ctrl+alt+t]` |
 | S2 | **Windows: broken config = silent launch failure** *(qwen BUGS-8)* — `Config::load()?` in `main.rs:6` errors to a nonexistent stderr (GUI subsystem); dlog sink starts only inside `run()` | **[open]** — init dlog in main; msgbox/log before exit, or boot with defaults + banner |
@@ -71,7 +75,7 @@ Three pillars for "1.0":
 | Quote | Verdict | Tracked as |
 |-------|---------|-----------|
 | "no ui hover animations on clickable buttons" | **CONFIRMED** (no hover plumbing; no Pointer cursor) | S2 hover row above (BUGS-6) |
-| "close button not working on tabs/workspaces" | **CONFIRMED (workspace ✕)**: edge-grab branch beats close-✕ hit-test, no y-guard — right ~29% of the ✕ starts a resize (verified scales 1+2). **Tab ✕: PLAUSIBLE** — geometry verified correct; perception = no hover + drag-arm-on-press + last-tab-✕ exits app | S1 edge-grab row (BUGS-2) + BUGS-4/BUGS-6 + confirm row — **fixed 0.21.6** (edge branch reorder; hover still owed) |
+| "close button not working on tabs/workspaces" | **CONFIRMED (workspace ✕)**: edge-grab branch beats close-✕ hit-test, no y-guard — right ~29% of the ✕ starts a resize (verified scales 1+2). **Tab ✕: PLAUSIBLE** — geometry verified correct; perception = no hover + drag-arm-on-press + last-tab-✕ exits app | S1 edge-grab row (BUGS-2) + BUGS-4/BUGS-6 + confirm row — **done** (edge reorder 0.21.6; shared zone + hover + DPI tests + last-tab confirm 2026-11) |
 | "no button to hide/show the workspaces" | **CONFIRMED** (config `[sidebar].show` only, no action/button) | Identity section (U-1) |
 | "no config panel" | **CONFIRMED** (no settings UI; `Config` has no `save()` — nothing writes back today) | Distribution section (U-5) |
 | "no plugin enable/disable interface" | **CONFIRMED** (load-all at startup; no manifest/toggles/rescan) | Plugin platform item 8 (U-6) |
@@ -104,6 +108,43 @@ Safety/pipeline, in risk order:
 6. **[open]** Tier 2 shape: `set-tab-label`, `badge(target, text, color)` (pairs with core activity badges), `register-command` → quick switcher, notifications. Tier 3 observability: rate-limited PTY output taps, OSC event stream. Tier 4 control: spawn/move/`send-text` (the `berth` CLI/IPC = cmux `send` equivalent).
 7. **[open]** Document the supported std surface for wasm32-wasip2 guests (rustc shim imports WASI at link time) or move tier-2 guests to `wasm32-unknown-unknown` + bindgen-only.
 8. **[open]** **Plugin manager UX** *(user-reported "no plugin enable/disable interface" — CONFIRMED; qwen U-6)*: `load_plugins` loads every `*.wasm` at startup with no manifest, no per-plugin toggles, no in-app error visibility, and **no rescan on config hot-reload** (`app.rs:1795-1805`, `plugins/lib.rs:118-135`). Staging: `[[plugin]] name/enabled` config flags (cheap, pairs with item 3's manifest) **[done 0.21.9]** [plugins] per-plugin enabled flags + file-stem skip → list view with load status/errors → hot (re)scan.
+
+## Visual & terminal-quality wave (Nov 2026) — "good looking lightweight terminal with plugins"
+
+Goal: the binary should *look* like a modern terminal out of the box (not just behave
+like one) while staying small and GPU-cheap. Ordered by perceived impact per effort.
+
+1. **[done 2026-11]** Color correctness + sRGB pipeline (see S1 colors row) and
+   **GPU honesty**: adapter/backend logged every run; software fallback + non-sRGB
+   surface warned; no silent lavapipe.
+2. **[open]** **Font quality** *(the single biggest "looks cheap" factor)*: real
+   bold/italic/oblique faces + synthetic bold fallback; underline/strikethrough/dotted
+   underline quads; fractional (subpixel-positioned) glyph placement + gamma-correct
+   blending; per-font fallback chain with a missing-glyph diagnostic; config for
+   family/size/line-height/cell padding. Stretch: ligatures (off by default).
+3. **[open]** **Theme system**: `[theme]` presets + `[palette]` overrides, hot-reload,
+   light/dark auto-switch, contrast-checked defaults; separate chrome palette from ANSI
+   palette so UI and terminal can be tuned independently. (Today palette is hardcoded
+   linear constants in `render.rs`.)
+4. **[open]** **Chrome polish**: consistent spacing/typography in tab strip + sidebar;
+   active-tab and focused-pane affordances that survive color-blind palettes; rounded
+   tab/panel corners; overflow shrink-to-fit + chevrons; optional `+`/close reveal on
+   hover only; no layout shift on hover. (Hover + shared zones **[done 2026-11]**.)
+5. **[open]** **Scrolling feel**: pixel/line smooth scrolling with optional animation,
+   overlay scrollbar with drag, scroll-to-bottom on input, wheel-over-strip/sidebar
+   cycling (see Identity), and a visible "scrolled back" badge. Wheel routing in panes
+   is **[done 2026-11]**.
+6. **[open]** **Cursor & focus**: block/beam/underline shapes, blink rate config,
+   hide-while-typing, dim/hollow unfocused cursor (already tracked in S1), and a clear
+   window-active vs pane-focused distinction.
+7. **[open]** **Frame quality under load**: damage tracking (only repaint dirty cells),
+   atlas paging/LRU (S1), renderer-loss recovery (S1), frame-time HUD behind
+   `BERTH_DEBUG`, and a CI perf budget (e.g. `seq 1 3000` < N frames, idle CPU ≈ 0).
+8. **[open]** **Plugin-facing polish**: status-bar/segment contribution API
+   (`badge`/`segment`), plugin manager panel (enable/disable, errors, reload), and
+   theme-aware accent colors handed to guests so plugin UI matches the active theme.
+9. **[open]** **Lightweight budget**: document + CI-check binary size, idle RSS, and
+   startup time; keep wgpu/winit-only stack (no webview/Electron), lazy plugin host.
 
 ## Table stakes still missing (review §4a, priority order)
 

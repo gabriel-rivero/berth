@@ -19,7 +19,7 @@ use winit::{
     window::{Cursor, CursorIcon, Window, WindowId},
 };
 
-use crate::render::{Chrome, Renderer, sidebar_width, tab_index_at, workspace_index_at};
+use crate::render::{Chrome, ChromeZone, Renderer, sidebar_width, workspace_index_at};
 
 /// How many lines one wheel tick moves.
 const WHEEL_LINES_PER_TICK: i32 = 3;
@@ -29,6 +29,32 @@ macro_rules! dlog_app {
     ($($arg:tt)*) => {
         if crate::render::debug_enabled() { crate::render::dlog_emit(&format!($($arg)*)); }
     };
+}
+
+/// How one wheel tick should be delivered to a pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WheelTarget {
+    /// Pane captured the mouse: send SGR/X10 wheel press+release bytes.
+    MouseReport,
+    /// Alternate screen + DECSET 1007: send arrow keys (xterm semantics).
+    Arrows,
+    /// Normal screen: move the pane's own scrollback viewport.
+    Viewport,
+}
+
+/// Decide wheel routing from the pane's mode bits.
+///
+/// `ALTERNATE_SCROLL` is on by default in `TermMode::default()`, so it must
+/// never be consulted alone — doing so turned every wheel tick in a normal
+/// shell into Up/Down (command history) instead of scrolling.
+fn wheel_target(mode: TermMode) -> WheelTarget {
+    if mode.intersects(TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_DRAG) {
+        WheelTarget::MouseReport
+    } else if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) {
+        WheelTarget::Arrows
+    } else {
+        WheelTarget::Viewport
+    }
 }
 
 /// Convert a pane-local viewport cell to a terminal-space selection point.
@@ -130,6 +156,8 @@ pub struct Berth {
     zoomed: Option<PaneId>,
     /// OSC title per pane (empty until the shell sets one; falls back to tab label).
     titles: HashMap<PaneId, String>,
+    /// focused tab-strip slot or sidebar entry (for hover highlights).
+    hovered: Option<crate::render::ChromeZone>,
     /// OSC 7 cwd per pane (only shells with an integration hook report).
     cwds: HashMap<PaneId, String>,
     /// Compiled keybind table (chord -> action); rebuilt on config reload.
@@ -237,8 +265,8 @@ impl Berth {
             let guard = pane.lock().expect("pane poisoned");
             let mode = guard.term_mode();
             let wheel_code = (if up { 64u8 } else { 65u8 }) | mouse_mod_bits(mods);
-            if mode.intersects(TermMode::MOUSE_REPORT_CLICK | TermMode::MOUSE_DRAG) {
-                Some(
+            match wheel_target(mode) {
+                WheelTarget::MouseReport => Some(
                     (0..clicks)
                         .flat_map(move |_| {
                             mouse_event_bytes(mode, wheel_code, row, col, true)
@@ -252,13 +280,14 @@ impl Berth {
                                 .collect::<Vec<u8>>()
                         })
                         .collect::<Vec<u8>>(),
-                )
-            } else if mode.contains(TermMode::ALTERNATE_SCROLL) {
-                // xterm alternate-scroll: the wheel becomes arrow keys.
-                let seq: &[u8] = if up { b"\x1b[A" } else { b"\x1b[B" };
-                Some(seq.repeat(clicks as usize))
-            } else {
-                None
+                ),
+                WheelTarget::Arrows => {
+                    // xterm alternate-scroll: the wheel becomes arrow keys, but
+                    // only in the alternate screen (pagers/editors).
+                    let seq: &[u8] = if up { b"\x1b[A" } else { b"\x1b[B" };
+                    Some(seq.repeat(clicks as usize))
+                }
+                WheelTarget::Viewport => None,
             }
         };
         let Some(bytes) = bytes.filter(|b| !b.is_empty()) else {
@@ -451,6 +480,7 @@ impl Berth {
                     &workspaces,
                     sb_w,
                     focus,
+                    self.hovered,
                     confirm.as_deref(),
                     w,
                 )
@@ -848,28 +878,29 @@ impl Berth {
         window.set_cursor(Cursor::Icon(icon));
     }
 
+    /// Current chrome zone under the pointer (single source of truth shared by
+    /// hover highlight, cursor icon and click dispatch).
+    fn chrome_zone(&self) -> Option<ChromeZone> {
+        let window = self.window.as_ref()?;
+        let ch = Chrome::new(window.scale_factor());
+        crate::render::chrome_zone_at(
+            self.mouse.x,
+            self.mouse.y,
+            self.config.sidebar.show,
+            self.config.sidebar.width_px,
+            self.layout.workspaces.len(),
+            self.layout
+                .active_workspace()
+                .map(|ws| ws.tabs.len())
+                .unwrap_or(0),
+            ch,
+        )
+    }
+
     /// True when the pointer is over interactive chrome (workspace rows, tab
     /// slots, close buttons) so the cursor suggests clickability.
     fn hover_chrome(&self) -> bool {
-        let Some(window) = &self.window else {
-            return false;
-        };
-        let ch = Chrome::new(window.scale_factor());
-        let sb_w = sidebar_width(
-            self.config.sidebar.show,
-            self.config.sidebar.width_px,
-            window.scale_factor(),
-        );
-        let (x, y) = (self.mouse.x, self.mouse.y);
-        // Sidebar: everything up to the right edge is a row/close/empty target.
-        if self.config.sidebar.show && x < f64::from(sb_w) {
-            return true;
-        }
-        // Tab strip: slots extend right up to the bar's full width.
-        if y < f64::from(ch.tab_bar_h) {
-            return true;
-        }
-        false
+        self.chrome_zone().is_some_and(ChromeZone::is_clickable)
     }
 
     /// Kill every pane of the tab at slot `index` of the active workspace; the
@@ -883,6 +914,20 @@ impl Berth {
             return;
         };
         let ids = tab.pane_ids_in_order();
+        // Closing the last tab of the last workspace kills the app. Arm the
+        // same quit banner as the window ✕ so one stray click can't exit.
+        if self.confirm_exit.is_none()
+            && self.layout.workspaces.len() == 1
+            && self
+                .layout
+                .active_workspace()
+                .is_some_and(|ws| ws.tabs.len() == 1)
+        {
+            dlog_app!("close last tab -> confirm quit");
+            self.confirm_exit = Some(std::time::Instant::now());
+            self.window.as_ref().inspect(|w| w.request_redraw());
+            return;
+        }
         dlog_app!("close tab slot{index} {:?} panes={ids:?}", tab.id);
         for id in ids {
             if let Some(pane) = self.panes.get(&id) {
@@ -1518,6 +1563,15 @@ impl ApplicationHandler<PaneEvent> for Berth {
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::CursorMoved { position, .. } => {
                 self.mouse = position;
+
+                let next_hover = self.chrome_zone();
+                if next_hover != self.hovered {
+                    self.hovered = next_hover;
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                }
+
                 if self.sidebar_drag {
                     // Drag x is device px; config stores logical px (scaled at draw).
                     let scale = self
@@ -1641,39 +1695,44 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 state,
                 button: MouseButton::Left,
                 ..
-            } => match state {
-                ElementState::Pressed => {
-                    let scale = self
-                        .window
-                        .as_ref()
-                        .map(|w| w.scale_factor())
-                        .unwrap_or(1.0);
-                    let ch = Chrome::new(scale);
-                    let sb_w = sidebar_width(
-                        self.config.sidebar.show,
-                        self.config.sidebar.width_px,
-                        scale,
-                    )
-                    .round() as i32;
-                    let sb_w_f = f64::from(sb_w);
-                    dlog_app!(
-                        "mouse press at ({:?},{:?}) sb_w={sb_w} y_strip={}",
-                        self.mouse.x,
-                        self.mouse.y,
-                        ch.tab_bar_h
-                    );
-                    if self.mouse.x < sb_w_f {
-                        // Sidebar click: entries select or close (right edge of
-                        // the entry is the close button); double-click below
-                        // the entries creates a workspace; `+` row below the
-                        // last entry creates one with a single click.
-                        let count = self.layout.workspaces.len();
-                        if let Some(i) = workspace_index_at(self.mouse.y as f32, count, ch) {
-                            if self.mouse.x >= sb_w_f - f64::from(ch.close_w) {
+            } => {
+                match state {
+                    ElementState::Pressed => {
+                        let scale = self
+                            .window
+                            .as_ref()
+                            .map(|w| w.scale_factor())
+                            .unwrap_or(1.0);
+                        let ch = Chrome::new(scale);
+                        dlog_app!(
+                            "mouse press at ({:?},{:?}) y_strip={}",
+                            self.mouse.x,
+                            self.mouse.y,
+                            ch.tab_bar_h
+                        );
+                        // One shared zone map drives hover, cursor and press
+                        // precedence (close-✕ > row > plus/empty > edge > pane), so
+                        // the branches can never drift apart again.
+                        let zone = crate::render::chrome_zone_at(
+                            self.mouse.x,
+                            self.mouse.y,
+                            self.config.sidebar.show,
+                            self.config.sidebar.width_px,
+                            self.layout.workspaces.len(),
+                            self.layout
+                                .active_workspace()
+                                .map(|ws| ws.tabs.len())
+                                .unwrap_or(0),
+                            ch,
+                        );
+                        dlog_app!("press zone={zone:?}");
+                        match zone {
+                            Some(ChromeZone::SidebarClose(i)) => {
                                 dlog_app!("sidebar close ws#{i}");
                                 self.rename_edit = None;
                                 self.confirm_workspace_close(i);
-                            } else {
+                            }
+                            Some(ChromeZone::SidebarEntry(i)) => {
                                 dlog_app!("sidebar click ws#{i}");
                                 if self.double_click(ClickZone::SidebarEntry(i)) {
                                     dlog_app!("sidebar double-click -> rename ws#{i}");
@@ -1683,123 +1742,114 @@ impl ApplicationHandler<PaneEvent> for Berth {
                                     self.select_workspace(i);
                                 }
                             }
-                        } else {
-                            let plus_y =
-                                f64::from(ch.sidebar_top + count as f32 * ch.sidebar_entry_h);
-                            if self.mouse.y >= plus_y
-                                && self.mouse.y < plus_y + f64::from(ch.sidebar_entry_h)
-                            {
+                            Some(ChromeZone::SidebarPlus) => {
                                 dlog_app!("sidebar plus -> new workspace");
                                 self.new_workspace();
-                            } else if self.double_click(ClickZone::SidebarEmpty) {
-                                dlog_app!("sidebar double-click -> new workspace");
-                                self.new_workspace();
                             }
-                        }
-                    } else if self.mouse.y < f64::from(ch.tab_bar_h) {
-                        // Tab strip: the right corner of a slot closes that tab;
-                        // double-click on the focused tab (or empty area) opens
-                        // a new tab; any other click selects.
-                        let count = self
-                            .layout
-                            .active_workspace()
-                            .map(|ws| ws.tabs.len())
-                            .unwrap_or(0);
-                        let focused_idx = self
-                            .layout
-                            .active_workspace()
-                            .and_then(|ws| ws.tabs.iter().position(|t| t.id == ws.focused_tab));
-                        let slot = tab_index_at(self.mouse.x as f32 - sb_w as f32, count, ch.tab_w);
-                        let x_rel = self.mouse.x as f32 - sb_w as f32;
-                        if let Some(i) = slot
-                            && x_rel >= i as f32 * ch.tab_w + (ch.tab_w - ch.close_w)
-                        {
-                            dlog_app!("tab close slot{i}");
-                            self.close_tab(i);
-                        } else if x_rel >= count as f32 * ch.tab_w
-                            && x_rel < count as f32 * ch.tab_w + ch.plus_w
-                        {
-                            // `+` button right after the last tab slot.
-                            dlog_app!("tab bar plus -> new tab");
-                            self.new_tab();
-                        } else if self.double_click(ClickZone::TabBar)
-                            && (slot.is_none() || focused_idx.is_none_or(|f| slot == Some(f)))
-                        {
-                            dlog_app!("tab bar double-click -> new tab");
-                            self.new_tab();
-                        } else if let Some(i) = slot {
-                            self.select_tab(i);
-                            if let Some(tab) =
-                                self.layout.active_workspace().and_then(|ws| ws.tabs.get(i))
-                            {
-                                dlog_app!("tab drag begin slot{i} tab {:?}", tab.id);
-                                self.tab_drag = Some(tab.id);
-                                self.tab_drag_origin = (self.mouse.x, self.mouse.y);
+                            Some(ChromeZone::SidebarEmpty) => {
+                                if self.double_click(ClickZone::SidebarEmpty) {
+                                    dlog_app!("sidebar double-click -> new workspace");
+                                    self.new_workspace();
+                                }
                             }
-                        }
-                    } else if (self.mouse.x - sb_w_f).abs() <= SIDEBAR_EDGE_GRAB * scale {
-                        // Sidebar edge grab: only arms below the tab strip so it
-                        // never swallows tab-strip clicks or close buttons.
-                        dlog_app!("sidebar grab");
-                        self.sidebar_drag = true;
-                    } else {
-                        // A TUI app that captured the mouse (1000/1002/1006)
-                        // receives the press instead of pane selection.
-                        if self.forward_mouse_button(0, true, self.modifiers) {
-                            dlog_app!("press forwarded to pane");
-                        } else {
-                            // Divider grab wins over pane focus/selection.
-                            let x = (self.mouse.x.max(0.0)) as u32;
-                            let y = (self.mouse.y.max(0.0)) as u32;
-                            let grab = self
-                                .layout
-                                .active_tab()
-                                .and_then(|t| t.grab_index_at(x, y, self.content_rect()));
-                            if let Some((idx, vertical)) = grab {
-                                dlog_app!("divider grab #{idx} vertical={vertical} at ({x},{y})");
-                                self.divider_drag = Some((idx, vertical));
-                            } else {
-                                self.dragging = true;
-                                if let Some((id, row, col)) = self.pane_at_mouse() {
-                                    self.focused_pane = id;
-                                    if let Some(tab) = self.layout.active_tab_mut() {
-                                        tab.focused = id;
+                            Some(ChromeZone::TabClose(i)) => {
+                                dlog_app!("tab close slot{i}");
+                                self.close_tab(i);
+                            }
+                            Some(ChromeZone::TabPlus) => {
+                                dlog_app!("tab bar plus -> new tab");
+                                self.new_tab();
+                            }
+                            Some(ChromeZone::Tab(i)) => {
+                                let focused_idx = self.layout.active_workspace().and_then(|ws| {
+                                    ws.tabs.iter().position(|t| t.id == ws.focused_tab)
+                                });
+                                if focused_idx == Some(i) && self.double_click(ClickZone::TabBar) {
+                                    dlog_app!("tab bar double-click -> new tab");
+                                    self.new_tab();
+                                } else {
+                                    self.select_tab(i);
+                                    if let Some(tab) =
+                                        self.layout.active_workspace().and_then(|ws| ws.tabs.get(i))
+                                    {
+                                        dlog_app!("tab drag begin slot{i} tab {:?}", tab.id);
+                                        self.tab_drag = Some(tab.id);
+                                        self.tab_drag_origin = (self.mouse.x, self.mouse.y);
                                     }
-                                    if let Some(pane) = self.panes.get(&id) {
-                                        let mut pane = pane.lock().expect("pane poisoned");
-                                        let pt = term_point(&pane, row, col);
-                                        pane.start_selection(pt);
+                                }
+                            }
+                            Some(ChromeZone::TabStripEmpty) => {
+                                if self.double_click(ClickZone::TabBar) {
+                                    dlog_app!("tab bar double-click -> new tab");
+                                    self.new_tab();
+                                }
+                            }
+                            Some(ChromeZone::SidebarEdge) => {
+                                // Only reachable below the tab strip; never steals ✕.
+                                dlog_app!("sidebar grab");
+                                self.sidebar_drag = true;
+                            }
+                            None => {
+                                // A TUI app that captured the mouse (1000/1002/1006)
+                                // receives the press instead of pane selection.
+                                if self.forward_mouse_button(0, true, self.modifiers) {
+                                    dlog_app!("press forwarded to pane");
+                                } else {
+                                    // Divider grab wins over pane focus/selection.
+                                    let x = (self.mouse.x.max(0.0)) as u32;
+                                    let y = (self.mouse.y.max(0.0)) as u32;
+                                    let grab = self
+                                        .layout
+                                        .active_tab()
+                                        .and_then(|t| t.grab_index_at(x, y, self.content_rect()));
+                                    if let Some((idx, vertical)) = grab {
+                                        dlog_app!(
+                                            "divider grab #{idx} vertical={vertical} at ({x},{y})"
+                                        );
+                                        self.divider_drag = Some((idx, vertical));
+                                    } else {
+                                        self.dragging = true;
+                                        if let Some((id, row, col)) = self.pane_at_mouse() {
+                                            self.focused_pane = id;
+                                            if let Some(tab) = self.layout.active_tab_mut() {
+                                                tab.focused = id;
+                                            }
+                                            if let Some(pane) = self.panes.get(&id) {
+                                                let mut pane = pane.lock().expect("pane poisoned");
+                                                let pt = term_point(&pane, row, col);
+                                                pane.start_selection(pt);
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                    if let Some(w) = &self.window {
-                        w.request_redraw();
-                    }
-                }
-                ElementState::Released => {
-                    self.dragging = false;
-                    self.divider_drag = None;
-                    self.sidebar_drag = false;
-                    self.tab_drag = None;
-                    // Release a captured mouse even when press+release straddle
-                    // panes: apps track buttons, not clicks.
-                    let _ = self.forward_mouse_button(0, false, self.modifiers);
-                    // Copy-on-select: a finished drag with a live selection goes
-                    // straight to the clipboard (iTerm2/Alacritty parity).
-                    if self.config.terminal.copy_on_select {
-                        let text = self
-                            .panes
-                            .get(&self.focused_pane)
-                            .and_then(|pane| pane.lock().expect("pane poisoned").selection_text());
-                        if let Some(text) = text {
-                            self.set_clipboard(text);
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
                         }
                     }
-                    self.update_cursor();
+                    ElementState::Released => {
+                        self.dragging = false;
+                        self.divider_drag = None;
+                        self.sidebar_drag = false;
+                        self.tab_drag = None;
+                        // Release a captured mouse even when press+release straddle
+                        // panes: apps track buttons, not clicks.
+                        let _ = self.forward_mouse_button(0, false, self.modifiers);
+                        // Copy-on-select: a finished drag with a live selection goes
+                        // straight to the clipboard (iTerm2/Alacritty parity).
+                        if self.config.terminal.copy_on_select {
+                            let text = self.panes.get(&self.focused_pane).and_then(|pane| {
+                                pane.lock().expect("pane poisoned").selection_text()
+                            });
+                            if let Some(text) = text {
+                                self.set_clipboard(text);
+                            }
+                        }
+                        self.update_cursor();
+                    }
                 }
-            },
+            }
             WindowEvent::MouseInput { state, button, .. } => {
                 // Middle-click closes the chrome item under the pointer (iTerm2
                 // style); other middle/right clicks go to capturing TUI apps
@@ -1811,36 +1861,35 @@ impl ApplicationHandler<PaneEvent> for Berth {
                         .map(|w| w.scale_factor())
                         .unwrap_or(1.0);
                     let ch = Chrome::new(scale);
-                    let sb_w = sidebar_width(
+                    let zone = crate::render::chrome_zone_at(
+                        self.mouse.x,
+                        self.mouse.y,
                         self.config.sidebar.show,
                         self.config.sidebar.width_px,
-                        scale,
-                    ) as i32;
-                    let (x, y) = (self.mouse.x as i32, self.mouse.y as i32);
-                    if self.config.sidebar.show && x < sb_w && y >= ch.tab_bar_h as i32 {
-                        let count = self.layout.workspaces.len();
-                        if let Some(i) =
-                            workspace_index_at(y as f32, count, ch).filter(|_| count > 1)
-                        {
-                            dlog_app!("middle click -> close workspace #{i}");
-                            let index = i;
-                            self.confirm_workspace_close(index);
-                        }
-                        return;
-                    }
-                    if y < ch.tab_bar_h as i32 {
-                        let count = self
-                            .layout
+                        self.layout.workspaces.len(),
+                        self.layout
                             .active_workspace()
-                            .map(|w| w.tabs.len())
-                            .unwrap_or(0);
-                        if let Some(i) = tab_index_at((x - sb_w).max(0) as f32, count, ch.tab_w) {
-                            dlog_app!("middle click -> close tab slot{i}");
-                            self.close_tab(i);
-                        }
+                            .map(|ws| ws.tabs.len())
+                            .unwrap_or(0),
+                        ch,
+                    );
+                    if let Some(i) = zone.and_then(ChromeZone::workspace_index)
+                        && self.layout.workspaces.len() > 1
+                    {
+                        dlog_app!("middle click -> close workspace #{i}");
+                        self.confirm_workspace_close(i);
                         return;
                     }
-                    // Not over chrome: fall through to TUI forwarding below.
+                    if let Some(i) = zone.and_then(ChromeZone::tab_index) {
+                        dlog_app!("middle click -> close tab slot{i}");
+                        self.close_tab(i);
+                        return;
+                    }
+                    if matches!(zone, Some(ChromeZone::TabPlus | ChromeZone::TabStripEmpty)) {
+                        // Chrome, not a pane: never forward.
+                        return;
+                    }
+                    // Not over a closable chrome item: fall through to TUI.
                 }
                 let code = match button {
                     MouseButton::Middle => 1u8,
@@ -2153,6 +2202,7 @@ pub fn run() -> anyhow::Result<()> {
         focused_pane,
         zoomed: None,
         titles: HashMap::new(),
+        hovered: None,
         cwds: HashMap::new(),
         bindings,
         plugins,
@@ -2166,4 +2216,33 @@ pub fn run() -> anyhow::Result<()> {
     };
     event_loop.run_app(&mut app)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wheel_in_normal_shell_scrolls_viewport_not_history() {
+        // ALTERNATE_SCROLL is part of TermMode::default(); without the ALT_SCREEN
+        // guard every wheel tick became Up/Down in a plain prompt.
+        let mode = TermMode::default();
+        assert!(mode.contains(TermMode::ALTERNATE_SCROLL));
+        assert!(!mode.contains(TermMode::ALT_SCREEN));
+        assert_eq!(wheel_target(mode), WheelTarget::Viewport);
+    }
+
+    #[test]
+    fn wheel_uses_arrows_only_in_alternate_screen() {
+        let mode = TermMode::default() | TermMode::ALT_SCREEN;
+        assert_eq!(wheel_target(mode), WheelTarget::Arrows);
+    }
+
+    #[test]
+    fn wheel_mouse_reporting_wins_over_alternate_scroll() {
+        let mode = TermMode::default() | TermMode::ALT_SCREEN | TermMode::MOUSE_REPORT_CLICK;
+        assert_eq!(wheel_target(mode), WheelTarget::MouseReport);
+        let drag = TermMode::default() | TermMode::MOUSE_DRAG;
+        assert_eq!(wheel_target(drag), WheelTarget::MouseReport);
+    }
 }

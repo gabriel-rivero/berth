@@ -76,6 +76,32 @@ macro_rules! dlog {
     };
 }
 
+/// Enumerate every wgpu adapter this build can see, without a window.
+/// Backs `berth --gpu-info` so users can verify hardware acceleration and
+/// report which backend/driver was actually available.
+pub fn gpu_report() -> String {
+    let instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+    if adapters.is_empty() {
+        return "gpu: no wgpu adapters found (no GPU driver / unsupported backend)\n".to_string();
+    }
+    let mut out = String::new();
+    for adapter in adapters {
+        let info = adapter.get_info();
+        let accel = if info.device_type == wgpu::DeviceType::Cpu {
+            "SOFTWARE"
+        } else {
+            "hardware"
+        };
+        out.push_str(&format!(
+            "gpu: {accel} name={:?} backend={:?} type={:?}\n     driver={:?} driver_info={:?} vendor=0x{:x} device=0x{:x}\n",
+            info.name, info.backend, info.device_type, info.driver, info.driver_info, info.vendor, info.device
+        ));
+    }
+    out
+}
+
 /// BERTH_FRAME_DUMP=1: read back every presented frame to
 /// /tmp/opencode/berth-frame-N.ppm (rootless render-truth check).
 fn frame_dump_enabled() -> bool {
@@ -88,20 +114,31 @@ fn frame_dump_index() -> u32 {
     N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
 }
 
-const PANEL_BG: [f32; 4] = [0.05, 0.05, 0.06, 1.0];
+fn srgb_to_linear(c: [f32; 4]) -> [f32; 4] {
+    let f = |x: f32| {
+        if x <= 0.04045 {
+            x / 12.92
+        } else {
+            ((x + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    [f(c[0]), f(c[1]), f(c[2]), c[3]]
+}
+
+const PANEL_BG: [f32; 4] = [0.00394, 0.00394, 0.00490, 1.0];
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
-    r: 0.05,
-    g: 0.05,
-    b: 0.06,
+    r: 0.0039,
+    g: 0.0039,
+    b: 0.0051,
     a: 1.0,
 };
-const CURSOR_BG: [f32; 4] = [0.85, 0.85, 0.82, 1.0];
-const DIVIDER_COLOR: [f32; 4] = [0.25, 0.25, 0.28, 1.0];
+const CURSOR_BG: [f32; 4] = [0.69207, 0.69207, 0.63828, 1.0];
+const DIVIDER_COLOR: [f32; 4] = [0.05088, 0.05088, 0.06372, 1.0];
 /// Focused-pane outline (iTerm-style indicator that keyboard input follows).
-const FOCUS_OUTLINE: [f32; 4] = [0.35, 0.55, 1.0, 1.0];
+const FOCUS_OUTLINE: [f32; 4] = [0.10048, 0.26327, 1.0, 1.0];
 /// Outline thickness ~1.5 device px, independent of chrome scale.
 const FOCUS_OUTLINE_PX: f32 = 1.5;
-const FG_DEFAULT: [f32; 4] = [0.847, 0.847, 0.847, 1.0];
+const FG_DEFAULT: [f32; 4] = [0.68658, 0.68658, 0.68658, 1.0];
 const BG_DEFAULT: [f32; 4] = PANEL_BG;
 const DIM_FACTOR: f32 = 0.62;
 const ATLAS_W: u32 = 2048;
@@ -123,21 +160,126 @@ pub const UI_PLUS_W: f32 = 26.0;
 pub const SIDEBAR_ENTRY_H: f32 = 32.0;
 const SIDEBAR_PAD: f32 = 12.0;
 
-const BAR_BG: [f32; 4] = [0.03, 0.03, 0.04, 1.0];
-const TAB_BG: [f32; 4] = [0.09, 0.09, 0.1, 1.0];
-const TAB_ACTIVE_BG: [f32; 4] = [0.14, 0.14, 0.16, 1.0];
-const TAB_TEXT: [f32; 4] = [0.65, 0.65, 0.68, 1.0];
-const TAB_TEXT_ACTIVE: [f32; 4] = [0.95, 0.95, 0.95, 1.0];
+const BAR_BG: [f32; 4] = [0.00232, 0.00232, 0.00310, 1.0];
+const TAB_BG: [f32; 4] = [0.00854, 0.00854, 0.01002, 1.0];
+const TAB_ACTIVE_BG: [f32; 4] = [0.01739, 0.01739, 0.02198, 1.0];
+const TAB_TEXT: [f32; 4] = [0.38006, 0.38006, 0.42003, 1.0];
+const TAB_TEXT_ACTIVE: [f32; 4] = [0.89001, 0.89001, 0.89001, 1.0];
 
-const SIDEBAR_BG: [f32; 4] = [0.04, 0.04, 0.05, 1.0];
-const SIDEBAR_ENTRY_BG: [f32; 4] = [0.07, 0.07, 0.08, 1.0];
-const SIDEBAR_ENTRY_ACTIVE_BG: [f32; 4] = [0.12, 0.12, 0.14, 1.0];
-const SIDEBAR_TEXT: [f32; 4] = [0.6, 0.6, 0.62, 1.0];
-const SIDEBAR_TEXT_ACTIVE: [f32; 4] = [0.95, 0.95, 0.95, 1.0];
+const SIDEBAR_BG: [f32; 4] = [0.00310, 0.00310, 0.00394, 1.0];
+const SIDEBAR_ENTRY_BG: [f32; 4] = [0.00598, 0.00598, 0.00719, 1.0];
+const SIDEBAR_ENTRY_ACTIVE_BG: [f32; 4] = [0.01341, 0.01341, 0.01739, 1.0];
+const SIDEBAR_TEXT: [f32; 4] = [0.31855, 0.31855, 0.34239, 1.0];
+const SIDEBAR_TEXT_ACTIVE: [f32; 4] = [0.89001, 0.89001, 0.89001, 1.0];
+
+const TAB_HOVER_BG: [f32; 4] = [0.012, 0.012, 0.015, 1.0];
+const SIDEBAR_ENTRY_HOVER_BG: [f32; 4] = [0.009, 0.009, 0.01, 1.0];
+const UI_TEXT_HOVER: [f32; 4] = [0.65, 0.65, 0.70, 1.0];
+
 /// Quit-confirm banner (bottom strip shown when closing with live shells).
-const CONFIRM_BG: [f32; 4] = [0.42, 0.30, 0.08, 1.0];
-const CONFIRM_TEXT: [f32; 4] = [0.97, 0.94, 0.86, 1.0];
+const CONFIRM_BG: [f32; 4] = [0.14732, 0.07324, 0.00719, 1.0];
+const CONFIRM_TEXT: [f32; 4] = [0.93311, 0.86890, 0.71057, 1.0];
 pub const CONFIRM_H: f32 = 34.0;
+
+/// Interactive zones in the chrome (shared by input dispatch and hover renderer).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChromeZone {
+    /// A tab slot index.
+    Tab(usize),
+    /// The ✕ close button on a tab slot.
+    TabClose(usize),
+    /// The `+` new-tab button in the strip.
+    TabPlus,
+    /// A workspace entry in the sidebar.
+    SidebarEntry(usize),
+    /// The ✕ close button on a workspace entry.
+    SidebarClose(usize),
+    /// The `+` new-workspace button in the sidebar.
+    SidebarPlus,
+    /// Empty sidebar space below the `+` row (double-click creates a workspace).
+    SidebarEmpty,
+    /// Empty tab-strip space right of the `+` button (double-click creates a tab).
+    TabStripEmpty,
+    /// The sidebar resize-drag edge band.
+    SidebarEdge,
+}
+
+impl ChromeZone {
+    /// True for zones that should show the pointer cursor (not the resize edge).
+    pub fn is_clickable(self) -> bool {
+        !matches!(self, ChromeZone::SidebarEdge)
+    }
+
+    /// The tab slot index this zone belongs to, if any.
+    pub fn tab_index(self) -> Option<usize> {
+        match self {
+            ChromeZone::Tab(i) | ChromeZone::TabClose(i) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// The workspace row index this zone belongs to, if any.
+    pub fn workspace_index(self) -> Option<usize> {
+        match self {
+            ChromeZone::SidebarEntry(i) | ChromeZone::SidebarClose(i) => Some(i),
+            _ => None,
+        }
+    }
+}
+
+/// Identify which chrome item sits under physical px (x,y).
+pub fn chrome_zone_at(
+    x: f64,
+    y: f64,
+    sb_show: bool,
+    sb_w_logical: f32,
+    ws_count: usize,
+    tab_count: usize,
+    ch: Chrome,
+) -> Option<ChromeZone> {
+    let sb_w = sidebar_width(sb_show, sb_w_logical, ch.scale as f64) as f64;
+    let (x, y) = (x, y);
+
+    // 1. Sidebar precedence (if shown)
+    if sb_show && x < sb_w {
+        // Close buttons win over entry selection.
+        if let Some(i) = workspace_index_at(y as f32, ws_count, ch) {
+            if x >= sb_w - ch.close_w as f64 {
+                return Some(ChromeZone::SidebarClose(i));
+            }
+            return Some(ChromeZone::SidebarEntry(i));
+        }
+        // Sidebar header/empty space double-click or plus button.
+        let plus_y = f64::from(ch.sidebar_top + ws_count as f32 * ch.sidebar_entry_h);
+        if y >= plus_y && y < plus_y + ch.sidebar_entry_h as f64 {
+            return Some(ChromeZone::SidebarPlus);
+        }
+        return Some(ChromeZone::SidebarEmpty);
+    }
+
+    // 2. Tab strip precedence
+    if y < ch.tab_bar_h as f64 {
+        let x_rel = (x - sb_w) as f32;
+        let slot = tab_index_at(x_rel, tab_count, ch.tab_w);
+        if let Some(i) = slot {
+            if x_rel >= i as f32 * ch.tab_w + (ch.tab_w - ch.close_w) {
+                return Some(ChromeZone::TabClose(i));
+            }
+            return Some(ChromeZone::Tab(i));
+        }
+        if x_rel >= tab_count as f32 * ch.tab_w && x_rel < tab_count as f32 * ch.tab_w + ch.plus_w {
+            return Some(ChromeZone::TabPlus);
+        }
+        return Some(ChromeZone::TabStripEmpty);
+    }
+
+    // 3. Edge grab (only below the tab strip, ±4 logical px).
+    if sb_show && (x - sb_w).abs() <= 4.0 * ch.scale as f64 {
+        return Some(ChromeZone::SidebarEdge);
+    }
+
+    None
+}
 
 /// Which fixed-width tab slot sits under device-px `x` (None past the last tab).
 /// `x` is sidebar-relative (the app subtracts the sidebar width first).
@@ -206,18 +348,18 @@ pub fn sidebar_width(show: bool, width_px: f32, scale: f64) -> f32 {
 /// xterm-style 16 color palette (0-7 dim, 8-15 bright).
 const PALETTE: [[f32; 4]; 16] = [
     [0.0, 0.0, 0.0, 1.0],
-    [0.8, 0.0, 0.0, 1.0],
-    [0.0, 0.8, 0.0, 1.0],
-    [0.8, 0.8, 0.0, 1.0],
-    [0.0, 0.0, 0.8, 1.0],
-    [0.8, 0.0, 0.8, 1.0],
-    [0.0, 0.8, 0.8, 1.0],
-    [0.898, 0.898, 0.898, 1.0],
-    [0.5, 0.5, 0.5, 1.0],
+    [0.604, 0.0, 0.0, 1.0], // 0.8 srgb -> 0.604 linear
+    [0.0, 0.604, 0.0, 1.0],
+    [0.604, 0.604, 0.0, 1.0],
+    [0.0, 0.0, 0.604, 1.0],
+    [0.604, 0.0, 0.604, 1.0],
+    [0.0, 0.604, 0.604, 1.0],
+    [0.78346, 0.78346, 0.78346, 1.0], // 0.898 srgb -> 0.78346 linear
+    [0.214, 0.214, 0.214, 1.0],       // 0.5 srgb -> 0.214 linear
     [1.0, 0.0, 0.0, 1.0],
     [0.0, 1.0, 0.0, 1.0],
     [1.0, 1.0, 0.0, 1.0],
-    [0.36, 0.36, 1.0, 1.0],
+    [0.10654, 0.10654, 1.0, 1.0], // 0.36 srgb -> 0.10654 linear
     [1.0, 0.0, 1.0, 1.0],
     [0.0, 1.0, 1.0, 1.0],
     [1.0, 1.0, 1.0, 1.0],
@@ -668,11 +810,25 @@ impl Renderer {
                 window, window,
             )?)?
         };
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            ..Default::default()
-        }))?;
+        let adapter =
+            match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+                ..Default::default()
+            })) {
+                Ok(adapter) => adapter,
+                Err(err) => {
+                    dlog_emit(&format!(
+                        "gpu: no high-performance adapter ({err}); retrying software fallback"
+                    ));
+                    pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::LowPower,
+                        force_fallback_adapter: true,
+                        compatible_surface: Some(&surface),
+                        ..Default::default()
+                    }))?
+                }
+            };
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
         // Surface backend validation errors loudly: glyphs/atlas issues show up here.
@@ -681,11 +837,45 @@ impl Renderer {
         }));
 
         let size = window.inner_size();
-        let config = surface
+        let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .ok_or_else(|| anyhow::anyhow!("no matching surface configuration"))?;
+        // The renderer's colors are linear (see `srgb_to_linear`), so the target
+        // MUST be an sRGB format; otherwise every quad is written raw and the UI
+        // looks washed out. get_default_config usually picks one, but some
+        // backends/Windows compositions return a UNORM format first.
+        let caps = surface.get_capabilities(&adapter);
+        if !config.format.is_srgb()
+            && let Some(fmt) = caps.formats.iter().copied().find(|f| f.is_srgb())
+        {
+            config.format = fmt;
+        }
+        let info = adapter.get_info();
+        dlog_emit(&format!(
+            "gpu: name={:?} backend={:?} type={:?} driver={:?} {}/{}",
+            info.name, info.backend, info.device_type, info.driver, info.driver_info, info.vendor
+        ));
+        dlog_emit(&format!(
+            "surface: format={:?} srgb={} present={:?} size={}x{}",
+            config.format,
+            config.format.is_srgb(),
+            config.present_mode,
+            config.width,
+            config.height
+        ));
+        if info.device_type == wgpu::DeviceType::Cpu {
+            eprintln!(
+                "berth: adapter {:?} is software rendering ({:?}); install a GPU driver or set WGPU_BACKEND",
+                info.name, info.backend
+            );
+        }
+        if !config.format.is_srgb() {
+            eprintln!(
+                "berth: no sRGB surface format available ({:?}); colors may be washed out",
+                config.format
+            );
+        }
         // COPY_SRC enables BERTH_FRAME_DUMP readbacks.
-        let mut config = config;
         config.usage |= wgpu::TextureUsages::COPY_SRC;
 
         let atlas_tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -935,6 +1125,7 @@ impl Renderer {
         metrics: Metrics,
         ch: Chrome,
         sb_w: f32,
+        hovered: Option<ChromeZone>,
         sink: &mut QuadSink,
     ) {
         let bar_w = self.config.width as f32 - sb_w;
@@ -946,7 +1137,11 @@ impl Renderer {
         let baseline = (ch.tab_bar_h - metrics.cell_h) * 0.5 + metrics.ascent;
         for (i, (title, active)) in tabs.iter().enumerate() {
             let x0 = sb_w + i as f32 * ch.tab_w;
-            let bg = if *active { TAB_ACTIVE_BG } else { TAB_BG };
+            let is_hovered = matches!(hovered, Some(ChromeZone::Tab(idx) | ChromeZone::TabClose(idx)) if idx == i);
+            let mut bg = if *active { TAB_ACTIVE_BG } else { TAB_BG };
+            if is_hovered && !*active {
+                bg = TAB_HOVER_BG;
+            }
             sink.push(x0, 0.0, x0 + ch.tab_w, ch.tab_bar_h, bg, None);
             let max_chars = (((ch.tab_w - ch.close_w - 16.0 * ch.scale) / metrics.cell_w).floor()
                 as usize)
@@ -959,27 +1154,42 @@ impl Renderer {
                 };
                 let gx = pen + g.left as f32;
                 let gy = baseline - g.top as f32;
-                let color = if *active { TAB_TEXT_ACTIVE } else { TAB_TEXT };
+                let mut color = if *active { TAB_TEXT_ACTIVE } else { TAB_TEXT };
+                if is_hovered && !*active {
+                    color = UI_TEXT_HOVER;
+                }
                 sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
                 pen += metrics.cell_w;
             }
+            let close_hovered = matches!(hovered, Some(ChromeZone::TabClose(idx)) if idx == i);
+            let close_color = if close_hovered {
+                TAB_TEXT_ACTIVE
+            } else {
+                TAB_TEXT
+            };
             self.draw_close(
                 x0 + ch.tab_w - ch.close_w * 0.5,
                 ch.tab_bar_h * 0.5,
                 metrics,
-                TAB_TEXT,
+                close_color,
                 sink,
             );
         }
         // `+` new-tab button when the strip has room for it.
         let plus_x = sb_w + tabs.len() as f32 * ch.tab_w;
         if plus_x + ch.plus_w <= sb_w + bar_w {
+            let is_plus_hovered = matches!(hovered, Some(ChromeZone::TabPlus));
+            let plus_color = if is_plus_hovered {
+                TAB_TEXT_ACTIVE
+            } else {
+                TAB_TEXT
+            };
             self.draw_char_c(
                 '+',
                 plus_x + ch.plus_w * 0.5,
                 ch.tab_bar_h * 0.5,
                 metrics,
-                TAB_TEXT,
+                plus_color,
                 sink,
             );
         }
@@ -992,6 +1202,7 @@ impl Renderer {
         sb_w: f32,
         ch: Chrome,
         metrics: Metrics,
+        hovered: Option<ChromeZone>,
         sink: &mut QuadSink,
     ) {
         if sb_w <= 0.0 {
@@ -1001,11 +1212,15 @@ impl Renderer {
         sink.push(0.0, 0.0, sb_w, full_h, SIDEBAR_BG, None);
         for (i, (label, active)) in workspaces.iter().enumerate() {
             let y0 = ch.sidebar_top + i as f32 * ch.sidebar_entry_h;
-            let bg = if *active {
+            let is_hovered = matches!(hovered, Some(ChromeZone::SidebarEntry(idx) | ChromeZone::SidebarClose(idx)) if idx == i);
+            let mut bg = if *active {
                 SIDEBAR_ENTRY_ACTIVE_BG
             } else {
                 SIDEBAR_ENTRY_BG
             };
+            if is_hovered && !*active {
+                bg = SIDEBAR_ENTRY_HOVER_BG;
+            }
             sink.push(0.0, y0, sb_w, y0 + ch.sidebar_entry_h, bg, None);
             let baseline = (ch.sidebar_entry_h - metrics.cell_h) * 0.5 + metrics.ascent;
             let baseline = y0 + baseline;
@@ -1020,31 +1235,46 @@ impl Renderer {
                 };
                 let gx = pen + g.left as f32;
                 let gy = baseline - g.top as f32;
-                let color = if *active {
+                let mut color = if *active {
                     SIDEBAR_TEXT_ACTIVE
                 } else {
                     SIDEBAR_TEXT
                 };
+                if is_hovered && !*active {
+                    color = UI_TEXT_HOVER;
+                }
                 sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
                 pen += metrics.cell_w;
             }
+            let close_hovered = matches!(hovered, Some(ChromeZone::SidebarClose(idx)) if idx == i);
+            let close_color = if close_hovered {
+                SIDEBAR_TEXT_ACTIVE
+            } else {
+                SIDEBAR_TEXT
+            };
             self.draw_close(
                 sb_w - ch.close_w * 0.5,
                 y0 + ch.sidebar_entry_h * 0.5,
                 metrics,
-                SIDEBAR_TEXT,
+                close_color,
                 sink,
             );
         }
         // `+` new-workspace button: one free row band below the last entry.
         let plus_y = ch.sidebar_top + workspaces.len() as f32 * ch.sidebar_entry_h;
         if plus_y + ch.sidebar_entry_h <= full_h {
+            let is_plus_hovered = matches!(hovered, Some(ChromeZone::SidebarPlus));
+            let plus_color = if is_plus_hovered {
+                SIDEBAR_TEXT_ACTIVE
+            } else {
+                SIDEBAR_TEXT
+            };
             self.draw_char_c(
                 '+',
                 ch.sidebar_pad + ch.close_w * 0.5,
                 plus_y + ch.sidebar_entry_h * 0.5,
                 metrics,
-                SIDEBAR_TEXT,
+                plus_color,
                 sink,
             );
         }
@@ -1164,6 +1394,7 @@ impl Renderer {
         workspaces: &[(&str, bool)],
         sb_w: f32,
         focus: Option<Rect>,
+        hovered: Option<ChromeZone>,
         confirm: Option<&str>,
         window: &Window,
     ) -> anyhow::Result<()> {
@@ -1190,8 +1421,8 @@ impl Renderer {
 
         let ch = Chrome::new(window.scale_factor());
         let mut sink = QuadSink::default();
-        self.draw_sidebar(workspaces, sb_w, ch, metrics, &mut sink);
-        self.draw_tab_bar(tabs, metrics, ch, sb_w, &mut sink);
+        self.draw_sidebar(workspaces, sb_w, ch, metrics, hovered, &mut sink);
+        self.draw_tab_bar(tabs, metrics, ch, sb_w, hovered, &mut sink);
         if let Some(msg) = confirm {
             self.draw_confirm(msg, screen_w, screen_h, ch, &mut sink);
         }
@@ -1531,7 +1762,9 @@ fn color_of(c: Color) -> [f32; 4] {
             NamedColor::DimForeground => dim(FG_DEFAULT),
             _ => PALETTE[7],
         },
-        Color::Spec(Rgb { r, g, b }) => [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0],
+        Color::Spec(Rgb { r, g, b }) => {
+            srgb_to_linear([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0])
+        }
         Color::Indexed(i) => indexed(i),
     }
 }
@@ -1539,12 +1772,7 @@ fn color_of(c: Color) -> [f32; 4] {
 /// xterm-256 palette into PALETTE slot range.
 fn indexed(i: u8) -> [f32; 4] {
     let (r, g, b) = if i < 16 {
-        let c = PALETTE[i as usize];
-        (
-            (c[0] * 255.0) as u8,
-            (c[1] * 255.0) as u8,
-            (c[2] * 255.0) as u8,
-        )
+        return PALETTE[i as usize];
     } else if i < 232 {
         let i = i as u32 - 16;
         let lvl = |v: u32| if v == 0 { 0 } else { 55 + v * 40 };
@@ -1553,7 +1781,7 @@ fn indexed(i: u8) -> [f32; 4] {
         let v = ((i as u32 - 232) * 10 + 8) as u8;
         (v, v, v)
     };
-    [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
+    srgb_to_linear([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0])
 }
 
 fn dim(c: [f32; 4]) -> [f32; 4] {
@@ -1625,3 +1853,83 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-3
+    }
+
+    #[test]
+    fn srgb_linear_endpoints_and_midpoint() {
+        assert_eq!(srgb_to_linear([0.0, 0.0, 0.0, 1.0]), [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(srgb_to_linear([1.0, 1.0, 1.0, 1.0]), [1.0, 1.0, 1.0, 1.0]);
+        let mid = srgb_to_linear([0.5, 0.5, 0.5, 1.0]);
+        assert!(
+            close(mid[0], 0.2140),
+            "0.5 sRGB -> 0.2140 linear, got {}",
+            mid[0]
+        );
+        // 0.847 sRGB is the default-ish foreground; linear ~0.687.
+        let fg = srgb_to_linear([0.847, 0.847, 0.847, 1.0]);
+        assert!(close(fg[0], 0.6866), "got {}", fg[0]);
+        assert_eq!(mid[3], 1.0);
+    }
+
+    #[test]
+    fn top_level_ui_constants_match_their_srgb_design_values() {
+        // Each chrome constant must be the *linear* form of the sRGB value the
+        // palette was designed against; a bare sRGB literal here washes out.
+        let cases: [(&str, [f32; 4], [f32; 4]); 6] = [
+            ("PANEL_BG", PANEL_BG, [0.05, 0.05, 0.06, 1.0]),
+            ("BAR_BG", BAR_BG, [0.03, 0.03, 0.04, 1.0]),
+            ("SIDEBAR_BG", SIDEBAR_BG, [0.04, 0.04, 0.05, 1.0]),
+            ("FG_DEFAULT", FG_DEFAULT, [0.847, 0.847, 0.847, 1.0]),
+            ("TAB_TEXT", TAB_TEXT, [0.65, 0.65, 0.68, 1.0]),
+            ("CONFIRM_BG", CONFIRM_BG, [0.42, 0.30, 0.08, 1.0]),
+        ];
+        for (name, linear, srgb) in cases {
+            let want = srgb_to_linear(srgb);
+            for ch in 0..3 {
+                assert!(
+                    (linear[ch] - want[ch]).abs() < 5e-4,
+                    "{name}[{ch}]: constant {} vs linear({}) = {}",
+                    linear[ch],
+                    srgb[ch],
+                    want[ch]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn palette_is_linear_not_srgb() {
+        // 0.8 sRGB -> 0.604 linear; the pre-fix constants leaked sRGB values
+        // straight into the linear pipeline and washed every color out.
+        assert!(close(PALETTE[1][0], 0.604), "red={}", PALETTE[1][0]);
+        assert!(close(PALETTE[7][0], 0.78346), "white={}", PALETTE[7][0]);
+        assert_eq!(PALETTE[9], [1.0, 0.0, 0.0, 1.0]);
+        // Indexed slots 0-15 must not be gamma-converted twice.
+        assert_eq!(indexed(1), PALETTE[1]);
+        assert_eq!(indexed(9), PALETTE[9]);
+    }
+
+    #[test]
+    fn truecolor_spec_is_converted_once() {
+        let white = color_of(Color::Spec(Rgb {
+            r: 255,
+            g: 255,
+            b: 255,
+        }));
+        assert_eq!(white, [1.0, 1.0, 1.0, 1.0]);
+        let grey = color_of(Color::Spec(Rgb {
+            r: 128,
+            g: 128,
+            b: 128,
+        }));
+        // 128/255 = 0.502 sRGB -> ~0.2158 linear.
+        assert!(close(grey[0], 0.2158), "got {}", grey[0]);
+    }
+}

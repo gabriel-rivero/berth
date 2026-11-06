@@ -24,7 +24,11 @@ cargo build --release
 Events and full tracking: **[docs/ROADMAP.md](docs/ROADMAP.md)** (includes the
 Nov 2026 external review's findings and their status).
 
-v0.11.0 — M1 done, M2 done except polish, M3 mostly done, M4 not started.
+v0.24.0 — M1–M3 shipped (details below), M4 plugin host in progress.
+Post-0.24.0 fixes: correct sRGB→linear color pipeline, mouse wheel scrolls the
+viewport instead of walking shell history, real hover states, one shared
+chrome hit-test for every press (close buttons stable across DPI/OS), and
+per-launch GPU diagnostics in `berth.log`.
 
 ### Shipped
 
@@ -108,8 +112,8 @@ reported on stderr at load. Changes hot-reload like the rest of the config.
 - sidebar: rename is done (**double-click a workspace entry** to rename it
   inline; Enter commits, Esc cancels); still missing drag tabs between
   workspaces, drag tabs between panes
-- polish: no window-title-based quit guard, no close-confirmation, scrolling
-  selection interplay; wide-glyph spacing beyond the fallback chain
+- polish: window-title-based quit guard, scrolling/selection interplay;
+  wide-glyph spacing beyond the fallback chain
 - advanced TUIs: kitty keyboard protocol probe/responses (TERM=xterm-256color
   + COLORTERM=truecolor already cover the common palette cases)
 - platform: keep ConPTY path honest on Windows (CI compiles but manual QA pending)
@@ -133,6 +137,29 @@ Broken plugins log and are skipped. Demo guest: `crates/plugins/guest`
 App icon ships everywhere: embedded in the window (winit),
 `berth.icns` in the macOS bundle (`CFBundleIconFile`), `berth.ico` linked
 into the Windows exe (`winresource`). Source art in `assets/`.
+
+### Debugging GPU / colors
+
+Every launch appends one diagnostic line (GPU name, backend, device type,
+surface format, sRGB flag) to `berth.log` in the config dir — on
+Windows/macOS that is the only reliable sink for GUI builds:
+
+```
+tail -n 20 ~/.config/berth/berth.log
+```
+
+To list every adapter wgpu can see (no window, works in CI), run:
+
+```
+berth --gpu-info
+```
+
+`BERTH_DEBUG=1` adds per-event lines (input routing, wheel, font raster
+probes) to the same file and stderr. If the log says `type=Cpu`, wgpu fell
+back to software rendering (lavapipe/SwiftShader) — install the GPU driver or
+force a backend with `WGPU_BACKEND=vulkan|metal|dx12`. A `srgb=false` line
+means the compositor offered no sRGB surface; colors are converted but may
+look slightly off.
 
 ### macOS notes
 
