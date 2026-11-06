@@ -1,1 +1,0 @@
-/home/grivero/projects/berth/crates/plugins/guest/target/wasm32-wasip2/release/berth_plugin_guest.wasm: /home/grivero/projects/berth/crates/plugins/guest/src/lib.rs /home/grivero/projects/berth/crates/plugins/guest/wit/berth-plugin.wit

@@ -3,3 +3,5 @@ Cargo.lock.bak
 *.wasm
 .DS_Store
 Thumbs.db
+
+crates/plugins/guest/target
