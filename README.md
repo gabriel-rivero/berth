@@ -161,8 +161,9 @@ only.
 - advanced TUIs: kitty keyboard protocol probe/responses (TERM=xterm-256color
   + COLORTERM=truecolor already cover the common palette cases)
 - platform: keep ConPTY path honest on Windows (CI compiles but manual QA pending)
-- **M4** — plugin host (`crates/plugins`, slice 1 shipped, growing): fuel
-  limits + capability gating + error surfacing; pane-output taps; keybind
+- **M4** — plugin host (`crates/plugins`, slice 1 shipped, growing): fuel +
+  memory limits, guest-trap surfacing/auto-disable, per-plugin config flags;
+  capability gating, status-bar segments and pane-output taps next; keybind
   presets via plugins
 
 ### Plugins (slice 1)
@@ -172,7 +173,11 @@ the `berth/config dir` per OS). Plugins use the WIT world `berth:plugin`
 (`crates/plugins/wit/berth-plugin.wit`): they receive a workspace/tab
 snapshot (`get-workspaces`/`get-tabs` via the exported `on-layout-change`
 callback) and may queue workspace renames with `set-workspace-label`.
-Broken plugins log and are skipped. Demo guest: `crates/plugins/guest`
+Broken plugins log and are skipped. Guests are sandboxed by fuel metering
+(50 M units per callback) and a 64 MiB linear-memory cap: a `loop {}`, O(n²)
+bug or memory runaway traps the guest, logs `plugin '<name>' trapped; disabled
+for this session`, and the plugin is skipped until the next launch — the UI
+never freezes. Demo guest: `crates/plugins/guest`
 (auto-namer: `ws 2` → `ws-02`), compiled with
 `cargo build -p berth-plugin-guest --release --target wasm32-wasip2`.
 

@@ -100,8 +100,13 @@ Three pillars for "1.0":
 Current tier 1 (shipped): `get-workspaces`/`get-tabs` snapshot + `set-workspace-label` + `on-layout-change`, host wired, auto-namer guest shipped.
 
 Safety/pipeline, in risk order:
-1. **[open]** Fuel/epoch limits + off-thread execution (a guest `loop{}` hangs the UI today); marshal results via proxy (same shape as reader threads).
-2. **[open]** Guest error logging/surfacing (`let _ = call_on_layout_change` swallows traps silently — `plugins/lib.rs:96`) + disable affordance.
+1. **[done 2026-11]** Fuel + memory limits: 50 M fuel per `on-layout-change`
+   and a 64 MiB guest memory cap; a trapping guest is logged and skipped for the
+   session (no UI freeze). Guest calls still run on the UI thread, but metering
+   bounds them; off-thread marshaling only matters for slow *legit* guests.
+2. **[done 2026-11]** Guest error surfacing: `call_on_layout_change` results are
+   checked, logged with the plugin name, and faulted plugins are not retried
+   (`LoadedPlugin::is_faulted`). Remaining: in-app error list/disable toggle.
 3. **[open]** `[[plugin]]` capability manifest (`layout.read`, `layout.rename`, …) before tier 2 adds power; unknown capability = load error.
 4. **[open]** Change-event diff payload (or guests O(n²)-diff snapshots); rename conflict policy (first-writer-wins?); rename validation (empty/oversized/dup).
 5. **[open]** Lifecycle/versioning: host-version advertisement, WIT semver policy, single-source WIT (guest copy will drift).
@@ -156,9 +161,11 @@ like one) while staying small and GPU-cheap. Ordered by perceived impact per eff
    repaint dirty cells), atlas paging/LRU (exhaustion currently clears the glyph
    cache mid-frame), GPU-timestamp timing, and a CI perf budget
    (e.g. `seq 1 3000` < N frames, idle CPU ≈ 0).
-8. **[open]** **Plugin-facing polish**: status-bar/segment contribution API
-   (`badge`/`segment`), plugin manager panel (enable/disable, errors, reload), and
-   theme-aware accent colors handed to guests so plugin UI matches the active theme.
+8. **[partial 2026-11]** **Plugin-facing polish**: guest safety is done (fuel +
+   memory caps, trap logging/auto-disable); still open: status-bar/segment
+   contribution API (`badge`/`segment`), plugin manager panel (enable/disable,
+   errors, reload), capability manifest, and theme-aware accent colors handed to
+   guests so plugin UI matches the active theme.
 9. **[open]** **Lightweight budget**: document + CI-check binary size, idle RSS, and
    startup time; keep wgpu/winit-only stack (no webview/Electron), lazy plugin host.
 
@@ -198,7 +205,7 @@ tab/workspace context (qwen U-12).
 
 1. **"Trust it" S1 release** — core cluster **[done]**; stragglers tracked above.
 2. **Finish workspace identity** — drag **[done]**, persistence/config/switcher/badges **[open]**.
-3. **Wire plugins with a safety model, prove with 2 guests** — host + auto-namer **[done]**; limits/capabilities/errors & badge-plugin guest **[open]**.
+3. **Wire plugins with a safety model, prove with 2 guests** — host + auto-namer **[done]**; safety limits + error surfacing **[done 2026-11]**; capability manifest, status segments & second (badge) guest **[open]**.
 
 ## qwen review's "next 3 work items" (Nov 2026, in order)
 

@@ -13,6 +13,14 @@ use wasmtime::Store;
 use wasmtime::component::{Component, HasSelf, Linker, ResourceTable};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 
+/// Fuel granted to one `on-layout-change` call. Instrumented guests trap after
+/// this much work, so `loop {}` (or accidental O(n²)) can no longer freeze the
+/// UI; the guest is then logged and skipped.
+const FUEL_PER_SYNC: u64 = 50_000_000;
+
+/// Guest linear-memory ceiling (a runaway guest cannot balloon the host RSS).
+const GUEST_MEMORY_LIMIT: usize = 64 << 20;
+
 wasmtime::component::bindgen!({
     path: "wit",
     world: "plugin",
@@ -28,6 +36,8 @@ pub struct HostState {
     /// WASI p2 state; guests are plain std shims that import clocks/io/cli.
     table: ResourceTable,
     wasi: WasiCtx,
+    /// Caps guest memory growth (fuel limits CPU, this limits RSS).
+    limits: wasmtime::StoreLimits,
 }
 
 impl WasiView for HostState {
@@ -55,13 +65,30 @@ impl berth::plugin::host::Host for HostState {
 
 /// One loaded plugin instance (component bound to its own sandbox store).
 pub struct LoadedPlugin {
+    name: String,
     store: Store<HostState>,
     exports: Plugin,
+    /// Set after a guest trap (fuel/memory/panic); a faulted plugin is skipped
+    /// instead of being retried on every layout change.
+    faulted: bool,
+}
+
+/// What one `on-layout-change` run produced.
+#[derive(Default)]
+pub struct SyncReport {
+    pub renames: Vec<WorkspaceRename>,
+    /// Trap message when the guest was stopped; the plugin is faulted then.
+    pub error: Option<String>,
 }
 
 impl LoadedPlugin {
     /// Compile + instantiate `path` (a `.wasm` component file).
     pub fn load(engine: &Engine, path: &Path) -> anyhow::Result<Self> {
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unnamed")
+            .to_string();
         let component = Component::from_file(engine, path)?;
         let mut store = Store::new(
             engine,
@@ -71,38 +98,72 @@ impl LoadedPlugin {
                 pending_renames: HashMap::new(),
                 table: ResourceTable::new(),
                 wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
+                limits: wasmtime::StoreLimitsBuilder::new()
+                    .memory_size(GUEST_MEMORY_LIMIT)
+                    .build(),
             },
         );
+        store.limiter(|state| &mut state.limits);
+        // Instantiation itself runs wasm (start functions, data segments), so the
+        // store needs fuel before `Plugin::instantiate` or it traps at 0.
+        store.set_fuel(FUEL_PER_SYNC)?;
         let mut linker = Linker::<HostState>::new(engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
         Plugin::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
         let exports = Plugin::instantiate(&mut store, &component, &linker)?;
-        Ok(Self { store, exports })
+        Ok(Self {
+            name,
+            store,
+            exports,
+            faulted: false,
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn is_faulted(&self) -> bool {
+        self.faulted
     }
 
     /// Push a fresh layout snapshot and run the guest's `on-layout-change`.
-    /// Returns the renames the plugin queued.
+    /// Returns the renames the plugin queued and any trap (which faults it).
     pub fn sync(
         &mut self,
         workspaces: Vec<berth::plugin::host::WorkspaceInfo>,
         tabs: Vec<berth::plugin::host::TabInfo>,
-    ) -> Vec<WorkspaceRename> {
+    ) -> SyncReport {
+        if self.faulted {
+            return SyncReport::default();
+        }
         {
             let state = self.store.data_mut();
             state.workspaces = workspaces;
             state.tabs = tabs;
             state.pending_renames.clear();
         }
-        let _ = self.exports.call_on_layout_change(&mut self.store);
-        let state = self.store.data();
-        state
-            .pending_renames
-            .iter()
-            .map(|(&id, label)| WorkspaceRename {
-                id,
-                label: label.clone(),
-            })
-            .collect()
+        self.store.set_fuel(FUEL_PER_SYNC).ok();
+        let result = self.exports.call_on_layout_change(&mut self.store);
+        let renames = {
+            let state = self.store.data();
+            state
+                .pending_renames
+                .iter()
+                .map(|(&id, label)| WorkspaceRename {
+                    id,
+                    label: label.clone(),
+                })
+                .collect()
+        };
+        let error = match result {
+            Ok(()) => None,
+            Err(e) => {
+                self.faulted = true;
+                Some(format!("{e:#}"))
+            }
+        };
+        SyncReport { renames, error }
     }
 }
 
@@ -148,9 +209,11 @@ pub fn load_plugins(
     out
 }
 
-/// One engine per app; component-model on (guests compile to components).
+/// One engine per app; component-model on (guests compile to components),
+/// fuel metering on so a runaway guest traps instead of freezing the UI.
 pub fn plugin_engine() -> anyhow::Result<Engine> {
     let mut cfg = wasmtime::Config::new();
     cfg.wasm_component_model(true);
+    cfg.consume_fuel(true);
     Ok(Engine::new(&cfg)?)
 }

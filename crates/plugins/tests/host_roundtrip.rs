@@ -45,8 +45,13 @@ fn auto_namer_renames_default_labels_only() {
         active: true,
     }];
 
-    let renames = plugin.sync(workspaces, tabs);
-    let mut names: Vec<(u64, String)> = renames.into_iter().map(|r| (r.id, r.label)).collect();
+    let report = plugin.sync(workspaces, tabs);
+    assert!(report.error.is_none(), "guest trapped: {:?}", report.error);
+    let mut names: Vec<(u64, String)> = report
+        .renames
+        .into_iter()
+        .map(|r| (r.id, r.label))
+        .collect();
     // Plugin-internal pending-rename ordering isn't stable; compare as a set.
     names.sort();
     assert_eq!(
@@ -67,6 +72,10 @@ fn auto_namer_renames_default_labels_only() {
             active: false,
         },
     ];
-    let renames = plugin.sync(workspaces, vec![]);
-    assert!(renames.is_empty(), "idempotent: {renames:?}");
+    let report = plugin.sync(workspaces, vec![]);
+    assert!(
+        report.renames.is_empty(),
+        "idempotent: {:?}",
+        report.renames
+    );
 }

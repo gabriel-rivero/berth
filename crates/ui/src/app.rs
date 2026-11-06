@@ -2251,7 +2251,16 @@ impl Berth {
 
         let mut renames: Vec<WorkspaceRename> = Vec::new();
         for plugin in &mut self.plugins {
-            renames.extend(plugin.sync(workspaces.clone(), tabs.clone()));
+            let report = plugin.sync(workspaces.clone(), tabs.clone());
+            if let Some(err) = report.error {
+                // A trap means the guest was stopped (fuel/memory/panic). It is
+                // skipped from now on instead of retried every layout change.
+                crate::render::dlog_emit(&format!(
+                    "plugin '{}' trapped; disabled for this session: {err}",
+                    plugin.name()
+                ));
+            }
+            renames.extend(report.renames);
         }
         let mut changed = false;
         for r in renames {
