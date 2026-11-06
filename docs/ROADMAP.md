@@ -177,8 +177,9 @@ scrollback search (`ctrl+shift+f`/`cmd+f`, incremental case-insensitive
 highlight + hit cycling) **[done 2026-11]** ·
 word/line selection (double/triple-click → semantic/lines selection,
 qwen BUGS-9) **[done 2026-11]** ·
-**[open]**: clickable links (OSC 8 +
-regex, `cmd+click`); fullscreen +
+clickable links (OSC 8 + scheme-scan, safe-scheme allowlist, hover underline +
+`cmd`/`ctrl`-click opening through the OS handler) **[done 2026-11]** ·
+**[open]**: fullscreen +
 clear-to-scrollback binds;
 IME; DECCKM + kitty keyboard probe; bell→attention;
 exit-status surfacing; wide-glyph advance audit; selection drag auto-scroll

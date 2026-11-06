@@ -90,6 +90,7 @@ Defaults follow iTerm2 (`cmd`/super chords work on all platforms); legacy
 | copy / paste selection | `cmd+c` / `cmd+v` (`ctrl+shift+c` / `ctrl+v`) |
 | scroll | mouse wheel, `shift+PgUp` / `shift+PgDn`, `cmd+PgUp` / `cmd+PgDn` |
 | search scrollback | `cmd+f` (`ctrl+shift+f`); type to filter, `enter`/`shift+enter` cycles hits, `esc` closes |
+| open link | `cmd+click` (`ctrl+click` on Linux/Windows) over OSC 8 or `http(s)://`/`file://`/`mailto:` text |
 
 Every chord above is reassignable in `config.toml`; a user entry replaces all
 defaults for that action:

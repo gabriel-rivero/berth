@@ -5,7 +5,7 @@ use alacritty_terminal::term::TermMode;
 use berth_core::config::{Backspace, Config};
 use berth_core::keybinds::{Action, Chord, build_bindings};
 use berth_core::layout::{Layout, PaneId, Rect, Session, Tab, TabId, Workspace, WorkspaceId};
-use berth_emulation::pane::{Pane, PaneEvent, SelectionKind, TermPoint};
+use berth_emulation::pane::{LinkSpan, Pane, PaneEvent, SelectionKind, TermPoint};
 use berth_plugins::{LoadedPlugin, WorkspaceRename, plugin_engine};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -54,6 +54,26 @@ fn wheel_target(mode: TermMode) -> WheelTarget {
         WheelTarget::Arrows
     } else {
         WheelTarget::Viewport
+    }
+}
+
+/// Open a validated link with the platform handler. No shell is involved, so
+/// terminal output can never turn into a command injection.
+fn open_url(uri: &str) {
+    use std::process::Command;
+    let res = if cfg!(target_os = "macos") {
+        Command::new("open").arg(uri).spawn()
+    } else if cfg!(target_os = "windows") {
+        Command::new("cmd")
+            .args(["/C", "start", ""])
+            .arg(uri)
+            .spawn()
+    } else {
+        Command::new("xdg-open").arg(uri).spawn()
+    };
+    match res {
+        Ok(_) => dlog_app!("opened link: {uri}"),
+        Err(e) => dlog_app!("link open failed for {uri}: {e}"),
     }
 }
 
@@ -171,6 +191,9 @@ pub struct Berth {
     titles: HashMap<PaneId, String>,
     /// focused tab-strip slot or sidebar entry (for hover highlights).
     hovered: Option<crate::render::ChromeZone>,
+    /// Link under the pointer (pane + row/col span + URI), for Pointer cursor,
+    /// underline highlight and modifier-click opening.
+    hover_link: Option<(PaneId, LinkSpan)>,
     /// Active scrollback search overlay (None = closed).
     search: Option<SearchState>,
     /// Sub-line wheel remainder so trackpad pixel scrolling isn't rounded
@@ -507,6 +530,11 @@ impl Berth {
                 .unwrap_or(1.0),
         );
         let focus = rect_map.get(&self.focused_pane).copied();
+        // Hovered link span for underline highlighting (pane rect + span).
+        let hover_link = self
+            .hover_link
+            .as_ref()
+            .and_then(|(id, span)| rect_map.get(id).map(|r| (*r, span.clone())));
 
         let mut guards = Vec::new();
         for (id, rect) in rect_map {
@@ -577,6 +605,7 @@ impl Berth {
                         matches: &s.matches,
                         current: s.current,
                     }),
+                    hover_link,
                     self.hovered,
                     confirm.as_deref(),
                     w,
@@ -1079,6 +1108,15 @@ impl Berth {
 
     /// Mirror hover/drag state into the OS cursor icon (resize arrows on both
     /// sides of resize targets so the affordance exists without any chrome).
+    /// Link under the pointer, if the pointer is over a pane cell with an OSC 8
+    /// hyperlink or a URL-looking span.
+    fn link_at_mouse(&self) -> Option<(PaneId, LinkSpan)> {
+        let (id, row, col) = self.pane_at_mouse()?;
+        let pane = self.panes.get(&id)?;
+        let guard = pane.lock().ok()?;
+        guard.link_span_at(row, col).map(|span| (id, span))
+    }
+
     fn update_cursor(&self) {
         let Some(window) = &self.window else {
             return;
@@ -1110,7 +1148,7 @@ impl Berth {
             } else {
                 CursorIcon::EwResize
             }
-        } else if self.hover_chrome() {
+        } else if self.hover_chrome() || self.hover_link.is_some() {
             CursorIcon::Pointer
         } else {
             CursorIcon::Default
@@ -1881,6 +1919,23 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     }
                 }
 
+                // Link hover is only meaningful when no chrome/drag owns the mouse.
+                let next_link = if self.sidebar_drag
+                    || self.tab_drag.is_some()
+                    || self.divider_drag.is_some()
+                {
+                    None
+                } else {
+                    self.link_at_mouse()
+                };
+                if next_link != self.hover_link {
+                    self.hover_link = next_link;
+                    self.update_cursor();
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                }
+
                 if self.sidebar_drag {
                     // Drag x is device px; config stores logical px (scaled at draw).
                     let scale = self
@@ -2117,6 +2172,20 @@ impl ApplicationHandler<PaneEvent> for Berth {
                                             self.focused_pane = id;
                                             if let Some(tab) = self.layout.active_tab_mut() {
                                                 tab.focused = id;
+                                            }
+                                            // Modifier+click opens a hovered link instead of
+                                            // starting a selection (cmd on mac, ctrl elsewhere).
+                                            let open_click = if cfg!(target_os = "macos") {
+                                                self.modifiers.super_key()
+                                            } else {
+                                                self.modifiers.control_key()
+                                            };
+                                            if open_click
+                                                && let Some((lid, span)) = self.hover_link.clone()
+                                                && lid == id
+                                            {
+                                                open_url(&span.uri);
+                                                return;
                                             }
                                             let kind = self.selection_kind_for(id, row, col);
                                             if let Some(pane) = self.panes.get(&id) {
@@ -2546,6 +2615,7 @@ pub fn run() -> anyhow::Result<()> {
         zoomed: None,
         titles: HashMap::new(),
         hovered: None,
+        hover_link: None,
         search: None,
         wheel_accum: 0.0,
         pane_click: None,

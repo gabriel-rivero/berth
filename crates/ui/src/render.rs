@@ -9,7 +9,7 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Term, point_to_viewport, viewport_to_point};
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
 use berth_core::layout::Rect;
-use berth_emulation::pane::{GridMatch, TermListener};
+use berth_emulation::pane::{GridMatch, LinkSpan, TermListener};
 use bytemuck::{Pod, Zeroable};
 use fontdb::{Database, Family, Query, Stretch, Style, Weight};
 use std::collections::HashMap;
@@ -2070,6 +2070,7 @@ impl Renderer {
         scroll: Option<ScrollInfo>,
         cursor: CursorPaint,
         search: Option<SearchView<'_>>,
+        link: Option<(Rect, LinkSpan)>,
         hovered: Option<ChromeZone>,
         confirm: Option<&str>,
         window: &Window,
@@ -2113,6 +2114,10 @@ impl Renderer {
                 ..cursor
             };
             let pane_search = if focus == Some(*rect) { search } else { None };
+            let pane_link = link
+                .as_ref()
+                .filter(|(r, _)| *r == *rect)
+                .map(|(_, l)| l.clone());
             let (n_g, n_b, n_u) = self.draw_term(
                 term,
                 *rect,
@@ -2120,6 +2125,7 @@ impl Renderer {
                 quad_trace,
                 paint,
                 pane_search,
+                pane_link,
                 &mut sink,
             );
             quads_glyph += n_g;
@@ -2334,6 +2340,7 @@ impl Renderer {
         quad_trace: bool,
         cursor: CursorPaint,
         search: Option<SearchView<'_>>,
+        link: Option<LinkSpan>,
         sink: &mut QuadSink,
     ) -> (usize, usize, usize) {
         let content = term.renderable_content();
@@ -2501,7 +2508,13 @@ impl Renderer {
             // SGR 4/21/24/53: underline and strikeout rects in the text color.
             let thickness = (metrics.cell_h * 0.055).max(1.0);
             let baseline = py + metrics.ascent;
-            if cell.flags.intersects(Flags::ALL_UNDERLINES) {
+            let link_hovered = link
+                .as_ref()
+                .is_some_and(|l| l.row == row && col >= l.start && col < l.end);
+            if cell.flags.intersects(Flags::ALL_UNDERLINES)
+                || cell.hyperlink().is_some()
+                || link_hovered
+            {
                 let uy = (baseline + thickness).min(py + metrics.cell_h - thickness);
                 sink.push(px, uy, px + metrics.cell_w, uy + thickness, fg, None);
                 if cell.flags.contains(Flags::DOUBLE_UNDERLINE) {

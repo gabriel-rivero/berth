@@ -99,6 +99,64 @@ pub struct GridMatch {
 
 /// Case-insensitive per-line substring search over scrollback + screen.
 /// Cross-line matches are intentionally not supported (keeps offsets stable).
+/// A clickable link on one row of the visible grid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkSpan {
+    /// Viewport row (0 = top of the visible grid).
+    pub row: usize,
+    /// Start/end columns (end exclusive).
+    pub start: usize,
+    pub end: usize,
+    pub uri: String,
+}
+
+/// URL schemes we are willing to hand to the OS opener. OSC 8 URIs are
+/// terminal-controlled, so anything else (javascript:, custom handlers) is
+/// deliberately not clickable.
+pub fn is_safe_uri(uri: &str) -> bool {
+    let lower = uri.to_ascii_lowercase();
+    ["https://", "http://", "file://", "mailto:"]
+        .iter()
+        .any(|s| lower.starts_with(s))
+}
+
+/// Locate the URL spanning `col` in one row of characters (no regex dependency).
+/// Scans for known schemes, consumes until whitespace/quote, trims trailing
+/// punctuation, and returns the (start, end) range only if `col` is inside it.
+pub fn url_at(chars: &[char], col: usize) -> Option<(usize, usize)> {
+    const SCHEMES: [&str; 4] = ["https://", "http://", "file://", "mailto:"];
+    let lower: Vec<char> = chars.iter().map(|c| c.to_ascii_lowercase()).collect();
+    let mut best: Option<(usize, usize)> = None;
+    for scheme in SCHEMES {
+        let needle: Vec<char> = scheme.chars().collect();
+        if needle.len() > lower.len() {
+            continue;
+        }
+        for start in 0..=lower.len() - needle.len() {
+            if lower[start..start + needle.len()] != needle[..] {
+                continue;
+            }
+            let mut end = start + needle.len();
+            while end < chars.len() && !chars[end].is_whitespace() && !"<>\"'`".contains(chars[end])
+            {
+                end += 1;
+            }
+            // Trailing sentence punctuation is not part of the URL.
+            while end > start && ".,;:!?)]}".contains(chars[end - 1]) {
+                end -= 1;
+            }
+            if col >= start && col < end {
+                // Prefer the earliest/longest enclosing match.
+                best = match best {
+                    Some((s, e)) if s <= start && e >= end => Some((s, e)),
+                    _ => Some((start, end)),
+                };
+            }
+        }
+    }
+    best
+}
+
 fn find_in_term(term: &Term<TermListener>, query: &str) -> Vec<GridMatch> {
     if query.is_empty() {
         return Vec::new();
@@ -412,6 +470,55 @@ impl Pane {
         }
     }
 
+    /// Link under a viewport cell: an OSC 8 hyperlink (expanded across the
+    /// contiguous cells sharing its URI) or a URL detected in the row text.
+    pub fn link_span_at(&self, row: usize, col: usize) -> Option<LinkSpan> {
+        let grid = self.term.grid();
+        let line = row as i32 - self.display_offset() as i32;
+        if line >= grid.screen_lines() as i32 || line < -(self.term.history_size() as i32) {
+            return None;
+        }
+        let grid_row = &grid[Line(line)];
+        let cols = grid.columns();
+        if col >= cols {
+            return None;
+        }
+        if let Some(link) = grid_row[Column(col)].hyperlink() {
+            let uri = link.uri().to_owned();
+            if !is_safe_uri(&uri) {
+                return None;
+            }
+            let same = |c: usize| {
+                grid_row[Column(c)]
+                    .hyperlink()
+                    .is_some_and(|h| h.uri() == uri)
+            };
+            let mut start = col;
+            while start > 0 && same(start - 1) {
+                start -= 1;
+            }
+            let mut end = col + 1;
+            while end < cols && same(end) {
+                end += 1;
+            }
+            return Some(LinkSpan {
+                row,
+                start,
+                end,
+                uri,
+            });
+        }
+        let chars: Vec<char> = (0..cols).map(|c| grid_row[Column(c)].c).collect();
+        let (start, end) = url_at(&chars, col)?;
+        let uri: String = chars[start..end].iter().collect();
+        is_safe_uri(&uri).then_some(LinkSpan {
+            row,
+            start,
+            end,
+            uri,
+        })
+    }
+
     /// Begin/replace the drag selection anchored at `point`.
     pub fn start_selection(&mut self, point: TermPoint) {
         self.start_selection_kind(point, SelectionKind::Simple);
@@ -581,7 +688,42 @@ mod osc7_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::expand_tilde;
+    use super::{expand_tilde, is_safe_uri, url_at};
+
+    fn chars(s: &str) -> Vec<char> {
+        s.chars().collect()
+    }
+
+    #[test]
+    fn url_at_finds_span_and_trims_punctuation() {
+        let row = chars("see https://example.com/a?b=1. now");
+        let (s, e) = url_at(&row, 10).expect("inside link");
+        assert_eq!(
+            row[s..e].iter().collect::<String>(),
+            "https://example.com/a?b=1"
+        );
+        // Outside the span (the trailing period / prose) there is no link.
+        assert_eq!(url_at(&row, 0), None);
+        assert_eq!(url_at(&row, e), None);
+
+        let row = chars("(http://a.io/path), ok");
+        let (s, e) = url_at(&row, 3).unwrap();
+        assert_eq!(row[s..e].iter().collect::<String>(), "http://a.io/path");
+    }
+
+    #[test]
+    fn url_at_handles_mailto_and_rejects_unknown_schemes() {
+        let row = chars("mail bob@example.com or mailto:bob@example.com");
+        let (s, e) = url_at(&row, 30).unwrap();
+        assert_eq!(
+            row[s..e].iter().collect::<String>(),
+            "mailto:bob@example.com"
+        );
+        let js = chars("javascript:alert(1)");
+        assert_eq!(url_at(&js, 2), None);
+        assert!(!is_safe_uri("javascript:alert(1)"));
+        assert!(is_safe_uri("HTTPS://Example.com"));
+    }
 
     #[test]
     fn expands_leading_tilde_against_home() {
