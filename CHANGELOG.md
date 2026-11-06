@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.25.0](https://github.com/gabriel-rivero/berth/compare/v0.24.0...v0.25.0) (2026-11-06)
+
+
+### Features
+
+* **config:** [shell] program/args/env/working_dir + [terminal] scrollback ([dea96e7](https://github.com/gabriel-rivero/berth/commit/dea96e77569c5fad41661265cd6d46d14530039b))
+* **plugins:** fuel + memory caps, trap surfacing, auto-disable ([aadbd3d](https://github.com/gabriel-rivero/berth/commit/aadbd3db519b5732fb59a92c41d5d8d95b8ee683))
+* **render:** faux bold/italic + underline/strikeout, honor SGR reverse/dim ([44326f9](https://github.com/gabriel-rivero/berth/commit/44326f9df1ebe9a424783153a0d5c0ded840cfe0))
+* **ui:** chrome polish — rounded pills, shrink-to-fit tabs, hover-only ✕ ([1d12eaf](https://github.com/gabriel-rivero/berth/commit/1d12eaf6ead2062b0a8a7d8c779b6e14e7567fa3))
+* **ui:** clickable links — OSC 8 + URL detection, hover underline, modified click ([fa9421c](https://github.com/gabriel-rivero/berth/commit/fa9421cad3c08296f94d8a323b0b766f5959be09))
+* **ui:** cursor shapes, blink config, focused-pane-only + hollow unfocused cursor ([33fd501](https://github.com/gabriel-rivero/berth/commit/33fd50163b1dff38003cbc59945d7a76c1511ce1))
+* **ui:** double-click selects a word, triple-click selects the line ([abd72d4](https://github.com/gabriel-rivero/berth/commit/abd72d41f2da2db817d6c3afbe043a9fe7cbd71c))
+* **ui:** fullscreen toggle, clear-scrollback, zoom badge + rich window title ([0be64f8](https://github.com/gabriel-rivero/berth/commit/0be64f8bc0f7710fbe821ce06e5f33daffc9b8bd))
+* **ui:** real font faces, line-height config, theme presets + overrides ([8fd8967](https://github.com/gabriel-rivero/berth/commit/8fd8967a9a7f310f8e66e9552111444a76124d0c))
+* **ui:** recover from lost surfaces, debug frame HUD, draw confirm last ([7e42e5c](https://github.com/gabriel-rivero/berth/commit/7e42e5ceced203b8284e20e3c1d23f3b3e66c8e1))
+* **ui:** scrollback search with incremental query and hit navigation ([387ee78](https://github.com/gabriel-rivero/berth/commit/387ee782b7952c15af895efe5da3da60574f0dd3))
+* **ui:** scrolling feel — sub-line wheel accumulation, tail snap, scroll overlay ([35f4ed5](https://github.com/gabriel-rivero/berth/commit/35f4ed52979208a47d6fdb08f9c71616a73467b3))
+
+
+### Bug Fixes
+
+* **ui:** unify chrome hit-testing, fix wheel routing and color pipeline ([3b36c12](https://github.com/gabriel-rivero/berth/commit/3b36c121a0cd2fb6cd589245d3eec3a651ca16b6))
+
+
+### Documentation
+
+* session handover for the Nov 2026 fix/quality wave ([6b0970a](https://github.com/gabriel-rivero/berth/commit/6b0970ac6d8395f1aa38a98382273f3a2ebf2b0d))
+
 ## [0.24.0](https://github.com/gabriel-rivero/berth/compare/v0.23.0...v0.24.0) (2026-11-04)
 
 
