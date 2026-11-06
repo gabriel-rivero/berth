@@ -149,6 +149,17 @@ pub struct Pane {
 /// Terminal-space point (Line = viewport row minus display offset).
 pub type TermPoint = Point<alacritty_terminal::index::Line>;
 
+/// Selection granularity for a press (click count).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionKind {
+    /// Freeform drag selection.
+    Simple,
+    /// Whole word under the pointer.
+    Word,
+    /// Whole line (triple click).
+    Line,
+}
+
 /// Cell geometry for the alacritty grid; lives next to its Term (Term borrows dims only at new()).
 ///
 /// NOTE: Dimensions::total_lines includes scrollback per grid semantics.
@@ -403,7 +414,17 @@ impl Pane {
 
     /// Begin/replace the drag selection anchored at `point`.
     pub fn start_selection(&mut self, point: TermPoint) {
-        self.term.selection = Some(Selection::new(SelectionType::Simple, point, Side::Left));
+        self.start_selection_kind(point, SelectionKind::Simple);
+    }
+
+    /// Begin a selection with explicit granularity (double/triple click).
+    pub fn start_selection_kind(&mut self, point: TermPoint, kind: SelectionKind) {
+        let ty = match kind {
+            SelectionKind::Simple => SelectionType::Simple,
+            SelectionKind::Word => SelectionType::Semantic,
+            SelectionKind::Line => SelectionType::Lines,
+        };
+        self.term.selection = Some(Selection::new(ty, point, Side::Left));
     }
 
     /// Extend the selection to `point` (drag).
@@ -679,6 +700,38 @@ mod shell_config_tests {
         assert!(pane.display_offset() > 0, "reveal should scroll back");
         let offset = pane.display_offset() as i32;
         assert!((-10 + offset) >= 0 && (-10 + offset) < 24);
+        pane.kill();
+    }
+
+    #[test]
+    fn double_and_triple_click_select_word_and_line() {
+        let shell = Shell {
+            program: Some("/bin/sh".into()),
+            args: vec![
+                "-c".into(),
+                "printf 'alpha beta gamma\\nsecond line\\n'".into(),
+            ],
+            ..Default::default()
+        };
+        let mut pane = Pane::spawn(
+            berth_core::layout::PaneId(3),
+            Some("/tmp"),
+            &shell,
+            500,
+            Arc::new(|_| {}),
+        )
+        .expect("spawn selection shell");
+        wait_for(&mut pane, "second line");
+
+        // Column 8 sits inside "beta" on the first row.
+        let inside_beta = Point::new(Line(0), Column(8));
+        pane.start_selection_kind(inside_beta, SelectionKind::Word);
+        let word = pane.selection_text().expect("word selection");
+        assert_eq!(word.trim(), "beta", "semantic selection: {word:?}");
+
+        pane.start_selection_kind(inside_beta, SelectionKind::Line);
+        let line = pane.selection_text().expect("line selection");
+        assert_eq!(line.trim(), "alpha beta gamma", "line selection: {line:?}");
         pane.kill();
     }
 }

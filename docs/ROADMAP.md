@@ -64,7 +64,7 @@ Three pillars for "1.0":
 | S2 | **No middle-click close of tabs/workspaces** *(user-reported — CONFIRMED, probe: total no-op; qwen BUGS-5)* — non-left buttons only forward to capturing panes (`app.rs:1575-1594`) | **[done 0.21.8]** — Middle-Pressed over tab slot → `close_tab`, over workspace row → `close_workspace_at` (never the only workspace), else forwards to TUI; xvfb-verified end-to-end |
 | S2 | **`close-tab` keybind is a trap** *(qwen BUGS-7; upgrades the old S3 "close-tab no-ops")* — action returns false (`app.rs:960-963`); binding it silently steals the chord's old action AND the fall-through **types the letter into the shell** | **[done 0.21.6]** — closes active tab (kills its panes); refuses on the only tab of the only workspace (`last tab -> ignored`); user keybind verified via `close-tab = [ctrl+alt+t]` |
 | S2 | **Windows: broken config = silent launch failure** *(qwen BUGS-8)* — `Config::load()?` in `main.rs:6` errors to a nonexistent stderr (GUI subsystem); dlog sink starts only inside `run()` | **[open]** — init dlog in main; msgbox/log before exit, or boot with defaults + banner |
-| S2 | **No word/line selection: double/triple-click inert in panes** *(qwen BUGS-9)* — `double_click` tracks chrome zones only; pane always `SelectionType::Simple` | **[open]** — alacritty `Selection` Semantic/Linear + grid word-boundary walk |
+| S2 | **Word/line selection: double/triple-click** *(qwen BUGS-9)* — pane presses now carry a click streak (same pane+cell, 500 ms) into `SelectionKind::{Simple,Word,Line}` → alacritty `Simple`/`Semantic`/`Lines`; drag still extends the same mode | **[done 2026-11]** |
 | S3 | rename blur discards buffer; F1–F4 modifiers; kitty keyboard protocol; 750ms wakeup + font rescan on UI thread; `--version`; config docs; `FontCtx` unsafe-transmute hygiene; guest crate in host builds | **[open]** (kitty keyboard protocol: user-requested) |
 | S3 | **Stale OSC titles** *(qwen BUGS-10)* — `titles` never pruned on Closed + PaneId reuse mislabels fresh tabs with dead panes' titles (`app.rs:1244-1288`, `layout.rs:563-573`) | **[open]** — `titles.remove(&id)` in the Closed handler |
 | S3 | **Second `resumed()` panics** *(qwen BUGS-11)* — duplicate `spawn_pane(PaneId(0))` hits `panic!("duplicate PaneId")` (`app.rs:440-442`) | **[open]** — guard on `window.is_some()` |
@@ -175,8 +175,9 @@ Mouse reporting **[done]** · bracketed paste/copy-on-select **[done]** ·
 `[shell]` program/args/env + `working_dir` + `[terminal] scrollback` **[done 2026-11]** ·
 scrollback search (`ctrl+shift+f`/`cmd+f`, incremental case-insensitive
 highlight + hit cycling) **[done 2026-11]** ·
-**[open]**: **word/line selection
-(double/triple-click — qwen BUGS-9)**; clickable links (OSC 8 +
+word/line selection (double/triple-click → semantic/lines selection,
+qwen BUGS-9) **[done 2026-11]** ·
+**[open]**: clickable links (OSC 8 +
 regex, `cmd+click`); fullscreen +
 clear-to-scrollback binds;
 IME; DECCKM + kitty keyboard probe; bell→attention;

@@ -5,7 +5,7 @@ use alacritty_terminal::term::TermMode;
 use berth_core::config::{Backspace, Config};
 use berth_core::keybinds::{Action, Chord, build_bindings};
 use berth_core::layout::{Layout, PaneId, Rect, Session, Tab, TabId, Workspace, WorkspaceId};
-use berth_emulation::pane::{Pane, PaneEvent, TermPoint};
+use berth_emulation::pane::{Pane, PaneEvent, SelectionKind, TermPoint};
 use berth_plugins::{LoadedPlugin, WorkspaceRename, plugin_engine};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -176,6 +176,14 @@ pub struct Berth {
     /// Sub-line wheel remainder so trackpad pixel scrolling isn't rounded
     /// away on every event (fractional lines accumulate across events).
     wheel_accum: f32,
+    /// Last pane press for double/triple-click selection streaks.
+    pane_click: Option<(
+        std::time::Instant,
+        berth_core::layout::PaneId,
+        usize,
+        usize,
+        u8,
+    )>,
     /// Window focus (unfocused windows get a hollow cursor).
     window_focused: bool,
     /// Cursor blink phase (on/off) and next flip deadline.
@@ -928,6 +936,35 @@ impl Berth {
         });
         self.last_click = if dbl { None } else { Some((now, zone)) };
         dbl
+    }
+
+    /// Selection granularity for a pane press: 1 click = freeform, 2 = word,
+    /// 3 = line. A fourth click starts a new streak. Streaks require the same
+    /// pane and cell inside the double-click window.
+    fn selection_kind_for(
+        &mut self,
+        pane: berth_core::layout::PaneId,
+        row: usize,
+        col: usize,
+    ) -> SelectionKind {
+        let now = std::time::Instant::now();
+        let count = match self.pane_click {
+            Some((t, p, r, c, n))
+                if p == pane
+                    && r == row
+                    && c == col
+                    && now.duration_since(t).as_millis() <= DOUBLE_CLICK_MS =>
+            {
+                (n % 3) + 1
+            }
+            _ => 1,
+        };
+        self.pane_click = Some((now, pane, row, col, count));
+        match count {
+            2 => SelectionKind::Word,
+            3 => SelectionKind::Line,
+            _ => SelectionKind::Simple,
+        }
     }
 
     /// Spawn a fresh shell tab in the active workspace and focus it.
@@ -2081,10 +2118,11 @@ impl ApplicationHandler<PaneEvent> for Berth {
                                             if let Some(tab) = self.layout.active_tab_mut() {
                                                 tab.focused = id;
                                             }
+                                            let kind = self.selection_kind_for(id, row, col);
                                             if let Some(pane) = self.panes.get(&id) {
                                                 let mut pane = pane.lock().expect("pane poisoned");
                                                 let pt = term_point(&pane, row, col);
-                                                pane.start_selection(pt);
+                                                pane.start_selection_kind(pt, kind);
                                             }
                                         }
                                     }
@@ -2510,6 +2548,7 @@ pub fn run() -> anyhow::Result<()> {
         hovered: None,
         search: None,
         wheel_accum: 0.0,
+        pane_click: None,
         renderer_retry_at: std::time::Instant::now(),
         window_focused: true,
         blink_on: true,
