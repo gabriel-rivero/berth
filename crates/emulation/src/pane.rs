@@ -7,11 +7,30 @@ use alacritty_terminal::index::{Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::{Config as TermConfig, Term, TermMode};
 use alacritty_terminal::vte::ansi::Processor;
+use berth_core::config::Shell;
 use berth_core::layout::PaneId;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::Read;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
+
+/// Expand a leading `~`/`~/` against HOME (USERPROFILE on Windows); other paths
+/// pass through unchanged.
+fn expand_tilde(path: &str) -> PathBuf {
+    let home = || std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+    if path == "~"
+        && let Some(home) = home()
+    {
+        return PathBuf::from(home);
+    }
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Some(home) = home()
+    {
+        return PathBuf::from(home).join(rest);
+    }
+    PathBuf::from(path)
+}
 
 /// Events the pane pushes to the UI loop (extend incrementally: titles, exit status, OSC cwd...).
 #[derive(Debug, Clone)]
@@ -110,8 +129,14 @@ impl Pane {
     /// Spawn a pane running the default user shell at 80x24 cells; `notify` is called from the
     /// reader thread whenever fresh output lands (call `pump()` afterwards). Pane ids come from
     /// `Layout::alloc_pane_id` (global counter) and tag every emitted event.
-    pub fn spawn(id: PaneId, cwd: Option<&str>, notify: Notifier) -> anyhow::Result<Self> {
-        match Self::spawn_inner(id, cwd, &notify) {
+    pub fn spawn(
+        id: PaneId,
+        cwd: Option<&str>,
+        shell: &Shell,
+        scrollback: usize,
+        notify: Notifier,
+    ) -> anyhow::Result<Self> {
+        match Self::spawn_inner(id, cwd, shell, scrollback, &notify) {
             Ok(pane) => Ok(pane),
             Err(e) => {
                 notify(PaneEvent::Log(format!("pty: spawn FAILED: {e:#}")));
@@ -120,7 +145,13 @@ impl Pane {
         }
     }
 
-    fn spawn_inner(id: PaneId, cwd: Option<&str>, notify: &Notifier) -> anyhow::Result<Self> {
+    fn spawn_inner(
+        id: PaneId,
+        cwd: Option<&str>,
+        shell: &Shell,
+        scrollback: usize,
+        notify: &Notifier,
+    ) -> anyhow::Result<Self> {
         let pty_system = native_pty_system();
 
         // NOTE: rows/cols/scrollback must stay in sync with `size` below.
@@ -132,15 +163,26 @@ impl Pane {
         })?;
         let master = pair.master;
 
-        let mut cmd = CommandBuilder::new_default_prog();
+        let mut cmd = match shell.program.as_deref().map(str::trim) {
+            Some(prog) if !prog.is_empty() => CommandBuilder::new(prog),
+            _ => CommandBuilder::new_default_prog(),
+        };
+        if !shell.args.is_empty() {
+            cmd.args(shell.args.iter());
+        }
         // Full-capability terminfo: most children inherit a minimal/dumb TERM
         // from the PTY session, which degrades TUI palettes (claude/vim...) to
         // one color. Only what we actually implement goes here.
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("TERM_PROGRAM", "berth");
-        if let Some(cwd) = cwd {
-            cmd.cwd(cwd);
+        // User env comes last so it can override the defaults above.
+        for (key, value) in &shell.env {
+            cmd.env(key, value);
+        }
+        // Explicit `[shell] working_dir` wins over the tab's inherited cwd.
+        if let Some(dir) = shell.working_dir.as_deref().or(cwd) {
+            cmd.cwd(expand_tilde(dir));
         }
         let child = pair.slave.spawn_command(cmd)?;
         let writer = master.take_writer()?;
@@ -171,16 +213,17 @@ impl Pane {
                 }
             })?;
 
+        let scrollback = scrollback.min(1_000_000);
         let size = PaneSize {
             cols: 80,
             rows: 24,
-            scrollback: 10_000,
+            scrollback,
         };
-        let term = Term::new(
-            TermConfig::default(),
-            &size,
-            TermListener::new(id, notify.clone()),
-        );
+        let term_cfg = TermConfig {
+            scrolling_history: scrollback,
+            ..TermConfig::default()
+        };
+        let term = Term::new(term_cfg, &size, TermListener::new(id, notify.clone()));
 
         // Reader thread: PTY -> bytes channel; never touches Term (grid lives on the UI side).
         let (tx, rx) = channel::<Vec<u8>>();
@@ -449,5 +492,80 @@ mod osc7_tests {
         );
         //Non-OSC-7 payload ignored
         assert_eq!(extract_osc7(b"\x1b]2;title\x07", &mut tail), None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::expand_tilde;
+
+    #[test]
+    fn expands_leading_tilde_against_home() {
+        let Some(home) = std::env::var_os("HOME") else {
+            return; // no HOME in this environment; nothing meaningful to assert
+        };
+        assert_eq!(
+            expand_tilde("~/code"),
+            std::path::PathBuf::from(&home).join("code")
+        );
+        assert_eq!(expand_tilde("~"), std::path::PathBuf::from(&home));
+        assert_eq!(expand_tilde("/tmp"), std::path::PathBuf::from("/tmp"));
+        assert_eq!(
+            expand_tilde("relative/dir"),
+            std::path::PathBuf::from("relative/dir")
+        );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod shell_config_tests {
+    use super::*;
+    use berth_core::config::Shell;
+    use std::time::{Duration, Instant};
+
+    fn grid_text(pane: &Pane) -> String {
+        let mut out = String::new();
+        for indexed in pane.term().renderable_content().display_iter {
+            if !indexed
+                .flags
+                .contains(alacritty_terminal::term::cell::Flags::HIDDEN)
+            {
+                out.push(indexed.c);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn custom_shell_program_env_and_scrollback_apply() {
+        let mut shell = Shell {
+            program: Some("/bin/sh".into()),
+            args: vec!["-c".into(), "printf CFG-$BERTH_TEST_VAR".into()],
+            ..Default::default()
+        };
+        shell.env.insert("BERTH_TEST_VAR".into(), "ok".into());
+        let mut pane = Pane::spawn(
+            berth_core::layout::PaneId(1),
+            Some("/tmp"),
+            &shell,
+            123,
+            Arc::new(|_| {}),
+        )
+        .expect("spawn custom shell");
+        assert_eq!(pane.size.scrollback, 123);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            pane.pump();
+            if grid_text(&pane).contains("CFG-ok") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "shell output missing: {:?}",
+                grid_text(&pane)
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        pane.kill();
     }
 }

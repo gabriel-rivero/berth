@@ -151,6 +151,28 @@ Typing resets the blink to solid; when the window loses focus the block cursor
 becomes a hollow outline. Multi-pane layouts draw a cursor in the focused pane
 only.
 
+### Shell & startup
+
+New panes run your login shell by default. Pin a different program, its
+arguments, environment, and starting directory:
+
+```toml
+[shell]
+program = "/usr/bin/fish"        # omit for the platform login shell
+args = ["-l"]                     # passed only when program is set
+working_dir = "~/code"            # leading ~/ expands; defaults to the tab's cwd
+
+[shell.env]                       # overrides inherited variables
+EDITOR = "hx"
+RUST_BACKTRACE = "1"
+
+[terminal]
+scrollback = 10000                # lines kept per pane (0 disables, capped at 1M)
+```
+
+`working_dir` beats the tab's remembered cwd (OSC 7). Scrollback size applies
+to panes created after the config reload — existing panes keep their grid.
+
 ### Remaining
 
 - sidebar: rename is done (**double-click a workspace entry** to rename it

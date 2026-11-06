@@ -578,6 +578,8 @@ impl Berth {
         match Pane::spawn(
             id,
             cwd,
+            &self.config.shell,
+            self.config.terminal.scrollback,
             Arc::new(move |ev| {
                 let _ = proxy.send_event(ev);
             }),

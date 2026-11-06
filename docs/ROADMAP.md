@@ -172,12 +172,12 @@ like one) while staying small and GPU-cheap. Ordered by perceived impact per eff
 ## Table stakes still missing (review §4a, priority order)
 
 Mouse reporting **[done]** · bracketed paste/copy-on-select **[done]** ·
+`[shell]` program/args/env + `working_dir` + `[terminal] scrollback` **[done 2026-11]** ·
 **[open]**: scrollback search (`ctrl+shift+f`
 overlay, incremental highlight via a second Selection); **word/line selection
 (double/triple-click — qwen BUGS-9)**; clickable links (OSC 8 +
 regex, `cmd+click`); fullscreen +
-clear-to-scrollback binds; `[shell]`/`command`+`args`+`env` config (can't start
-fish/login shells today), `working-dir`, `scrollback` size;
+clear-to-scrollback binds;
 IME; DECCKM + kitty keyboard probe; bell→attention;
 exit-status surfacing; wide-glyph advance audit; selection drag auto-scroll
 past window edges (qwen U-13); zoomed-pane indicator + window title carrying

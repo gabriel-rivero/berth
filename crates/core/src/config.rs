@@ -18,8 +18,26 @@ pub struct Config {
     pub plugins: Plugins,
     /// PTY/keyboard compatibility knobs.
     pub terminal: Terminal,
+    /// Program + environment started in each new pane.
+    pub shell: Shell,
     /// Terminal color preset + overrides.
     pub theme: Theme,
+}
+
+/// `[shell]` table: what to run in new panes and the environment it gets.
+/// Empty defaults keep the platform login shell (and its environment).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Shell {
+    /// Program to run; `None` = default login shell.
+    pub program: Option<String>,
+    /// Arguments passed to `program` (ignored when `program` is unset).
+    pub args: Vec<String>,
+    /// Extra environment variables; override inherited ones.
+    pub env: HashMap<String, String>,
+    /// Starting directory for new panes (supports a leading `~/`). When unset,
+    /// the tab's known cwd (OSC 7 / inherited) is used.
+    pub working_dir: Option<String>,
 }
 
 /// Built-in color presets.
@@ -164,6 +182,8 @@ pub struct Terminal {
     pub cursor_blink: bool,
     /// Full blink cycle length in ms (clamped to 200..=2000 on use).
     pub cursor_blink_ms: u64,
+    /// Scrollback lines kept above the viewport (per pane, clamped 0..=1_000_000).
+    pub scrollback: usize,
 }
 
 impl Default for Terminal {
@@ -174,6 +194,7 @@ impl Default for Terminal {
             cursor_style: CursorStyle::Block,
             cursor_blink: true,
             cursor_blink_ms: 530,
+            scrollback: 10_000,
         }
     }
 }
@@ -289,5 +310,42 @@ mod tests {
     fn unknown_cursor_style_is_rejected() {
         let err = toml::from_str::<Config>("[terminal]\ncursor_style = \"box\"\n");
         assert!(err.is_err(), "unknown cursor shape should fail loudly");
+    }
+
+    #[test]
+    fn parses_shell_program_args_env_and_working_dir() {
+        let cfg: Config = toml::from_str(
+            r#"
+            [shell]
+            program = "/usr/bin/fish"
+            args = ["-l", "-C", "set -gx FOO 1"]
+            working_dir = "~/code"
+
+            [shell.env]
+            EDITOR = "hx"
+            TERM = "screen-256color"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.shell.program.as_deref(), Some("/usr/bin/fish"));
+        assert_eq!(cfg.shell.args.len(), 3);
+        assert_eq!(cfg.shell.working_dir.as_deref(), Some("~/code"));
+        assert_eq!(cfg.shell.env.get("EDITOR").map(String::as_str), Some("hx"));
+    }
+
+    #[test]
+    fn shell_defaults_run_the_login_shell_and_keep_scrollback() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert!(cfg.shell.program.is_none());
+        assert!(cfg.shell.args.is_empty());
+        assert!(cfg.shell.env.is_empty());
+        assert!(cfg.shell.working_dir.is_none());
+        assert_eq!(cfg.terminal.scrollback, 10_000);
+    }
+
+    #[test]
+    fn parses_scrollback_size() {
+        let cfg: Config = toml::from_str("[terminal]\nscrollback = 2500\n").unwrap();
+        assert_eq!(cfg.terminal.scrollback, 2500);
     }
 }
