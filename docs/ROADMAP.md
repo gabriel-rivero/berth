@@ -198,7 +198,7 @@ clickable links (OSC 8 + scheme-scan, safe-scheme allowlist, hover underline +
 ## Distribution / branding (review §4d)
 
 - **[done]** App icon everywhere (window icon, .ico, .icns + Info.plist, ad-hoc codesign).
-- **[open]** README screenshot/GIF (sidebar+workspaces demo); winget manifest; cargo-binstall metadata; config reference doc (per-OS paths — the #1 new-user question); CHANGELOG 0.15.0 dedupe. Linux `.desktop` + AppStream metadata, `sha256sums.txt` on releases, and `--version` **[done 2026-11]** (validated in CI; AppImage/deb later).
+- **[open]** README screenshot/GIF (sidebar+workspaces demo); winget manifest; cargo-binstall metadata; CHANGELOG 0.15.0 dedupe. Config reference **[done 2026-11]** (`docs/CONFIG.md`: all keys/defaults/per-OS paths/log location). Linux `.desktop` + AppStream metadata, `sha256sums.txt` on releases, and `--version` **[done 2026-11]** (validated in CI; AppImage/deb later).
 - **[open]** **In-app config access** *(user-reported "no config panel"; qwen U-5)*: `Config` has no `save()` — nothing writes back today. Staging: `open-config` action ($EDITOR / reveal path + copy) → settings panel (font/theme/keybinds; needs a config writer + schema). The "(later) settings UI" from the competitive notes, formalized.
 - **[open]** **README drift** *(qwen U-14)*: status line says **v0.11.0** while releases ship v0.21.4; the keybinds table documents `ctrl+alt+←/→` (dead — S1 BUGS-1) and "Remaining" duplicates this roadmap. Point README status at ROADMAP.md; fix after BUGS-1 lands.
 - **[deferred]** macOS notarization ($99/yr) — right-click→Open documented meanwhile.

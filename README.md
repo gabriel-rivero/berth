@@ -22,7 +22,8 @@ cargo build --release
 ## Status
 
 Events and full tracking: **[docs/ROADMAP.md](docs/ROADMAP.md)** (includes the
-Nov 2026 external review's findings and their status).
+Nov 2026 external review's findings and their status). Every config key,
+default and per-OS path: **[docs/CONFIG.md](docs/CONFIG.md)**.
 
 v0.24.0 — M1–M3 shipped (details below), M4 plugin host in progress.
 Post-0.24.0 fixes: correct sRGB→linear color pipeline, mouse wheel scrolls the
