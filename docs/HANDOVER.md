@@ -5,10 +5,12 @@ the short version: what landed, what to run, what is next.
 
 ## Branch state
 
-`main` at `0be64f8`, pushed to origin. 14 commits since the v0.24.0 release
+`main` at `83112cd`, pushed to origin. 16 commits since the v0.24.0 release
 (`bc620e8`), all tests/clippy green at the time of writing:
 
 ```
+83112cd lightweight budget probe, --version, CI 60 MiB size gate
+6b0970a session handover doc
 0be64f8 fullscreen, clear-scrollback, zoom badge + rich window title
 fa9421c clickable links (OSC 8 + URL detection, hover underline, cmd/ctrl+click)
 abd72d4 double-click word / triple-click line selection
@@ -88,15 +90,16 @@ takes ~9 min cold.
    segments/badges (currently only `on-layout-change` + host imports), plugin
    manager panel (list, enable/disable, last error, reload), capability
    manifest, theme-aware accent colors passed to guests.
-2. **Lightweight budget (item 9)** — measure binary size, idle RSS, startup;
-   add a `scripts/` budget check + CI gate (none exists yet). Release binary
-   was built before the latest commits, so re-measure.
-3. **Table stakes still open** — IME; DECCKM + kitty keyboard probe;
+2. **Table stakes still open** — IME; DECCKM + kitty keyboard probe;
    bell→attention; exit-status surfacing; wide-glyph advance audit; selection
    drag auto-scroll past window edges (qwen U-13).
-4. **Distribution** — README screenshot/GIF, `.desktop` + AppStream, winget,
+3. **Distribution** — README screenshot/GIF, `.desktop` + AppStream, winget,
    `sha256sums.txt`, cargo-binstall metadata, config reference doc, CHANGELOG
-   dedupe, `--version`, in-app config access (`Config` still has no `save()`).
+   dedupe, in-app config access (`Config` still has no `save()`).
+
+Lightweight budget is measured and gated: 49 MB binary, 365 ms to first frame,
+~178 MiB idle RSS (Linux/ADL-N/Xvfb; real GPU is faster). Re-run
+`scripts/lightweight.sh` after big renderer changes.
 
 ## Known gaps / gotchas
 
