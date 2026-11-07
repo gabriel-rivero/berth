@@ -44,3 +44,23 @@ jobs:
           rustup target add wasm32-wasip2
           cargo build --manifest-path crates/plugins/guest/Cargo.toml --release --target wasm32-wasip2
       - run: cargo test --workspace
+
+  budget:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p berth
+      - name: binary size budget
+        run: |
+          size=$(stat -c %s target/release/berth)
+          echo "berth binary: ${size} bytes"
+          # 60 MiB ceiling: the 2026-11 measurement is ~49 MB; catch wgpu/plugin
+          # stack bloat early without failing on minor dependency growth.
+          limit=$((60 * 1024 * 1024))
+          if [ "$size" -gt "$limit" ]; then
+            echo "::error::berth binary exceeds the 60 MiB budget (${size} bytes)"
+            exit 1
+          fi
+      - run: ./target/release/berth --version

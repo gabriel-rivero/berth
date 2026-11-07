@@ -65,7 +65,7 @@ Three pillars for "1.0":
 | S2 | **`close-tab` keybind is a trap** *(qwen BUGS-7; upgrades the old S3 "close-tab no-ops")* — action returns false (`app.rs:960-963`); binding it silently steals the chord's old action AND the fall-through **types the letter into the shell** | **[done 0.21.6]** — closes active tab (kills its panes); refuses on the only tab of the only workspace (`last tab -> ignored`); user keybind verified via `close-tab = [ctrl+alt+t]` |
 | S2 | **Windows: broken config = silent launch failure** *(qwen BUGS-8)* — `Config::load()?` in `main.rs:6` errors to a nonexistent stderr (GUI subsystem); dlog sink starts only inside `run()` | **[open]** — init dlog in main; msgbox/log before exit, or boot with defaults + banner |
 | S2 | **Word/line selection: double/triple-click** *(qwen BUGS-9)* — pane presses now carry a click streak (same pane+cell, 500 ms) into `SelectionKind::{Simple,Word,Line}` → alacritty `Simple`/`Semantic`/`Lines`; drag still extends the same mode | **[done 2026-11]** |
-| S3 | rename blur discards buffer; F1–F4 modifiers; kitty keyboard protocol; 750ms wakeup + font rescan on UI thread; `--version`; config docs; `FontCtx` unsafe-transmute hygiene; guest crate in host builds | **[open]** (kitty keyboard protocol: user-requested) |
+| S3 | rename blur discards buffer; F1–F4 modifiers; kitty keyboard protocol; 750ms wakeup + font rescan on UI thread; config docs; `FontCtx` unsafe-transmute hygiene; guest crate in host builds | **[open]** (kitty keyboard protocol: user-requested) |
 | S3 | **Stale OSC titles** *(qwen BUGS-10)* — `titles` never pruned on Closed + PaneId reuse mislabels fresh tabs with dead panes' titles (`app.rs:1244-1288`, `layout.rs:563-573`) | **[open]** — `titles.remove(&id)` in the Closed handler |
 | S3 | **Second `resumed()` panics** *(qwen BUGS-11)* — duplicate `spawn_pane(PaneId(0))` hits `panic!("duplicate PaneId")` (`app.rs:440-442`) | **[open]** — guard on `window.is_some()` |
 | S3 | **Rename editor quirks** *(qwen BUGS-12)* — ArrowDown commits (`app.rs:598-602`); no caret motion/paste/IME; swallows all chords while open | **[open]** |
@@ -166,8 +166,13 @@ like one) while staying small and GPU-cheap. Ordered by perceived impact per eff
    contribution API (`badge`/`segment`), plugin manager panel (enable/disable,
    errors, reload), capability manifest, and theme-aware accent colors handed to
    guests so plugin UI matches the active theme.
-9. **[open]** **Lightweight budget**: document + CI-check binary size, idle RSS, and
-   startup time; keep wgpu/winit-only stack (no webview/Electron), lazy plugin host.
+9. **[done 2026-11, self-hosted GPU budget open]** **Lightweight budget**: `--version`,
+   `scripts/lightweight.sh` (binary size, first-frame latency, idle RSS under
+   Xvfb) and a CI release-size gate (60 MiB) exist; keep the wgpu/winit-only
+   stack (no webview/Electron) and lazy plugin host. Reference numbers (Linux,
+   Intel ADL-N, Xvfb/lavapipe): 49 MB binary, 365 ms to first frame, ~178 MiB
+   idle RSS. Remaining: startup/RSS budget on a self-hosted GPU runner and
+   per-release regression tracking.
 
 ## Table stakes still missing (review §4a, priority order)
 
@@ -190,7 +195,7 @@ clickable links (OSC 8 + scheme-scan, safe-scheme allowlist, hover underline +
 ## Distribution / branding (review §4d)
 
 - **[done]** App icon everywhere (window icon, .ico, .icns + Info.plist, ad-hoc codesign).
-- **[open]** README screenshot/GIF (sidebar+workspaces demo); Linux `.desktop` + AppStream (AppImage/deb later); winget manifest; `sha256sums.txt`; cargo-binstall metadata; config reference doc (per-OS paths — the #1 new-user question); CHANGELOG 0.15.0 dedupe; `--version`.
+- **[open]** README screenshot/GIF (sidebar+workspaces demo); Linux `.desktop` + AppStream (AppImage/deb later); winget manifest; `sha256sums.txt`; cargo-binstall metadata; config reference doc (per-OS paths — the #1 new-user question); CHANGELOG 0.15.0 dedupe. (`--version` **[done 2026-11]**.)
 - **[open]** **In-app config access** *(user-reported "no config panel"; qwen U-5)*: `Config` has no `save()` — nothing writes back today. Staging: `open-config` action ($EDITOR / reveal path + copy) → settings panel (font/theme/keybinds; needs a config writer + schema). The "(later) settings UI" from the competitive notes, formalized.
 - **[open]** **README drift** *(qwen U-14)*: status line says **v0.11.0** while releases ship v0.21.4; the keybinds table documents `ctrl+alt+←/→` (dead — S1 BUGS-1) and "Remaining" duplicates this roadmap. Point README status at ROADMAP.md; fix after BUGS-1 lands.
 - **[deferred]** macOS notarization ($99/yr) — right-click→Open documented meanwhile.

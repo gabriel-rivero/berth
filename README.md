@@ -238,6 +238,23 @@ force a backend with `WGPU_BACKEND=vulkan|metal|dx12`. A `srgb=false` line
 means the compositor offered no sRGB surface; colors are converted but may
 look slightly off.
 
+### Lightweight budget
+
+`berth --version` prints the crate version; `scripts/lightweight.sh` reports
+binary size, time to first rendered frame, and idle RSS (Linux, needs Xvfb):
+
+```
+cargo build --release -p berth
+scripts/lightweight.sh
+```
+
+Reference numbers (Linux, Intel ADL-N laptop, debug Vulkan/lavapipe under
+Xvfb — real GPU startup is faster): **49 MB binary, 365 ms to first frame,
+~178 MiB idle RSS**. The RSS figure includes wgpu+Vulkan and the lazily
+loaded plugin host; CI builds the release binary and fails past **60 MiB**
+(`.github/workflows/ci.yml`). Startup/RSS stay manual: GitHub runners have no
+GPU, so frame-time numbers there are meaningless.
+
 ### macOS notes
 
 The `Berth.app` bundle is ad-hoc signed, not notarized: on first launch use
