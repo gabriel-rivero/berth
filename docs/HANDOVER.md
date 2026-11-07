@@ -5,10 +5,12 @@ the short version: what landed, what to run, what is next.
 
 ## Branch state
 
-`main` at `3b15f26`, not yet pushed. 19 commits since the v0.24.0 release
+`main` at `31a793c`, pushed. 21 commits since the v0.24.0 release
 (`bc620e8`), all tests/clippy green at the time of writing:
 
 ```
+31a793c bell in a background tab lights an attention dot
+4997045 refresh handover after exit-notice/bell work
 3b15f26 non-zero shell exit notice (transient bottom strip)
 cd11eb6 plugin status segments + accent() host import
 3ea636c refresh handover after budget work
@@ -59,7 +61,7 @@ aadbd3d plugin fuel (50M) + memory cap (64 MiB), trap surfacing, auto-disable
 Useful new APIs: `chrome_zone_at`/`Chrome` (shared hit-test), `wheel_target`,
 `ColorScheme::from_config`, `CursorPaint`/`cursor_rect`, `ScrollInfo`,
 `SearchView`, `LinkSpan`/`url_at`/`is_safe_uri`, `GridMatch`/`find_matches`/
-`reveal_line`, `SelectionKind`, `ScrollInfo`, `Pane::clear_scrollback`.
+`reveal_line`, `SelectionKind`, `Pane::clear_scrollback`.
 
 ## Verification
 
@@ -94,7 +96,7 @@ takes ~9 min cold.
    enable/disable, last error, reload), capability manifest, richer segment
    metadata (badges/icons/click actions).
 2. **Table stakes still open** — IME; DECCKM + kitty keyboard probe;
-   bell→attention; wide-glyph advance audit; selection
+   wide-glyph advance audit; selection
    drag auto-scroll past window edges (qwen U-13).
 3. **Distribution** — README screenshot/GIF, `.desktop` + AppStream, winget,
    `sha256sums.txt`, cargo-binstall metadata, config reference doc, CHANGELOG
