@@ -65,7 +65,7 @@ Three pillars for "1.0":
 | S2 | **`close-tab` keybind is a trap** *(qwen BUGS-7; upgrades the old S3 "close-tab no-ops")* — action returns false (`app.rs:960-963`); binding it silently steals the chord's old action AND the fall-through **types the letter into the shell** | **[done 0.21.6]** — closes active tab (kills its panes); refuses on the only tab of the only workspace (`last tab -> ignored`); user keybind verified via `close-tab = [ctrl+alt+t]` |
 | S2 | **Windows: broken config = silent launch failure** *(qwen BUGS-8)* — `Config::load()?` in `main.rs:6` errors to a nonexistent stderr (GUI subsystem); dlog sink starts only inside `run()` | **[open]** — init dlog in main; msgbox/log before exit, or boot with defaults + banner |
 | S2 | **Word/line selection: double/triple-click** *(qwen BUGS-9)* — pane presses now carry a click streak (same pane+cell, 500 ms) into `SelectionKind::{Simple,Word,Line}` → alacritty `Simple`/`Semantic`/`Lines`; drag still extends the same mode | **[done 2026-11]** |
-| S3 | rename blur discards buffer; F1–F4 modifiers; kitty keyboard protocol; 750ms wakeup + font rescan on UI thread; config docs; `FontCtx` unsafe-transmute hygiene; guest crate in host builds | **[open]** (kitty keyboard protocol: user-requested) |
+| S3 | rename blur discards buffer; F1–F4 modifiers; 750ms wakeup + font rescan on UI thread; config docs; `FontCtx` unsafe-transmute hygiene; guest crate in host builds | **[open]** (kitty keyboard protocol **[done 2026-11]**) |
 | S3 | **Stale OSC titles** *(qwen BUGS-10)* — `titles` never pruned on Closed + PaneId reuse mislabels fresh tabs with dead panes' titles (`app.rs:1244-1288`, `layout.rs:563-573`) | **[open]** — `titles.remove(&id)` in the Closed handler |
 | S3 | **Second `resumed()` panics** *(qwen BUGS-11)* — duplicate `spawn_pane(PaneId(0))` hits `panic!("duplicate PaneId")` (`app.rs:440-442`) | **[open]** — guard on `window.is_some()` |
 | S3 | **Rename editor quirks** *(qwen BUGS-12)* — ArrowDown commits (`app.rs:598-602`); no caret motion/paste/IME; swallows all chords while open | **[open]** |
@@ -192,8 +192,14 @@ clickable links (OSC 8 + scheme-scan, safe-scheme allowlist, hover underline +
  `[zoom]` marker **[done 2026-11]** · non-zero shell exit notice **[done 2026-11]** ·
  drag-selection auto-scroll past pane edges (40 ms timer, edge-anchored
  extension — qwen U-13) **[done 2026-11]** ·
- **[open]**: kitty keyboard protocol probe. Wide-glyph audit **[done 2026-11]**
- (glyph advance from swash; underline/strikeout decorations now span both cells).
+kitty keyboard protocol (query/push/pop flags accepted; CSI-u encoding with
+modifier/event params, disambiguated Esc/Enter/Tab/Backspace; alternate-key and
+associated-text parameters still to come) **[done 2026-11]** ·
+wide-glyph audit (glyph advance from swash; underline/strikeout decorations
+now span both cells) **[done 2026-11]**.
+
+All terminal table stakes from the Nov 2026 review are shipped; remaining work
+is plugin polish and distribution (below).
 
 ## Distribution / branding (review §4d)
 
