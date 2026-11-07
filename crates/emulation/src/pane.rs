@@ -421,6 +421,15 @@ impl Pane {
         matches!(self.child.try_wait(), Ok(None))
     }
 
+    /// Exit code once the child has been reaped (None while running or if it
+    /// died from a signal). Used to surface unexpected shell exits.
+    pub fn exit_code(&mut self) -> Option<u32> {
+        match self.child.try_wait() {
+            Ok(Some(status)) if !status.success() => Some(status.exit_code()),
+            _ => None,
+        }
+    }
+
     /// Kill the child shell; the reader thread sees EOF and emits Closed afterwards
     /// (tree cleanup happens on the UI side when that event lands).
     pub fn kill(&mut self) {
@@ -816,6 +825,60 @@ mod shell_config_tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         pane.kill();
+    }
+
+    #[test]
+    fn nonzero_exit_code_is_reported_and_clean_exit_is_not() {
+        let shell = Shell {
+            program: Some("/bin/sh".into()),
+            args: vec!["-c".into(), "exit 7".into()],
+            ..Default::default()
+        };
+        let mut pane = Pane::spawn(
+            berth_core::layout::PaneId(9),
+            Some("/tmp"),
+            &shell,
+            100,
+            Arc::new(|_| {}),
+        )
+        .expect("spawn exiting shell");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            pane.pump();
+            if let Some(code) = pane.exit_code() {
+                assert_eq!(code, 7);
+                break;
+            }
+            assert!(Instant::now() < deadline, "exit code never observed");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let shell = Shell {
+            program: Some("/bin/sh".into()),
+            args: vec!["-c".into(), "exit 0".into()],
+            ..Default::default()
+        };
+        let mut pane = Pane::spawn(
+            berth_core::layout::PaneId(10),
+            Some("/tmp"),
+            &shell,
+            100,
+            Arc::new(|_| {}),
+        )
+        .expect("spawn exiting shell");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            pane.pump();
+            assert!(
+                pane.exit_code().is_none(),
+                "clean exit must not raise a notice"
+            );
+            if !pane.is_alive() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "clean exit never reaped");
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]

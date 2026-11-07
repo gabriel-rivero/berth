@@ -179,6 +179,9 @@ scrollback = 10000                # lines kept per pane (0 disables, capped at 1
 `working_dir` beats the tab's remembered cwd (OSC 7). Scrollback size applies
 to panes created after the config reload — existing panes keep their grid.
 
+A shell that exits non-zero shows a transient `shell exited (code N)` strip at
+the bottom of the window (clean exits close the pane silently).
+
 ### Remaining
 
 - sidebar: rename is done (**double-click a workspace entry** to rename it

@@ -2132,6 +2132,7 @@ impl Renderer {
         hovered: Option<ChromeZone>,
         status: &[String],
         confirm: Option<&str>,
+        notice: Option<&str>,
         window: &Window,
     ) -> anyhow::Result<()> {
         let frame_start = std::time::Instant::now();
@@ -2216,12 +2217,20 @@ impl Renderer {
         }
         if self.hud {
             let label = format!("{:.1} ms · {} quads", self.ema_ms, sink.verts.len() / 6);
-            let confirm_h = if confirm.is_some() { ch.confirm_h } else { 0.0 };
+            let confirm_h = if confirm.is_some() || notice.is_some() {
+                ch.confirm_h
+            } else {
+                0.0
+            };
             self.draw_hud(&label, screen_w, screen_h, ch, confirm_h, &mut sink);
         }
         // Confirm banner last: panes skip default-bg quads, so an earlier banner
         // showed through the grid but lost to any glyph/selection painted over it.
+        // Transient notices (e.g. a shell exiting non-zero) use the same strip but
+        // yield to an active confirmation.
         if let Some(msg) = confirm {
+            self.draw_confirm(msg, screen_w, screen_h, ch, &mut sink);
+        } else if let Some(msg) = notice {
             self.draw_confirm(msg, screen_w, screen_h, ch, &mut sink);
         }
 

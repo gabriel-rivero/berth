@@ -56,7 +56,7 @@ Three pillars for "1.0":
 | S2 | No IME handling (`WindowEvent::Ime`) | **[open]** — CJK input blocker |
 | S2 | Tab/sidebar overflow past ~6/25 entries unreachable | **[open]** — shrink-to-fit + ellipsis + chevrons/scroll |
 | S2 | Palette math: sRGB constants through linear pipeline (washed) | **[done 2026-11]** — see the S1 colors row: constants + `Color::Spec`/indexed 16-255 converted once via `srgb_to_linear()`; host palette returned pre-linearized; sRGB surface format enforced |
-| S2 | PTY write errors ignored → typing into dead pane; no exit-status surface | **[open]** — "process exited (N)" pane state; also Bell → attention + OSC 52 clipboard |
+| S2 | PTY write errors ignored → typing into dead pane; no exit-status surface | **[partial]** — non-zero shell exits raise a transient `shell exited (code N)` notice (2026-11); dead-pane input guard, Bell → attention + OSC 52 clipboard still open |
 | S2 | No scroll-to-bottom on keypress | **[open]** |
 | S2 | **Redraw storm: full redraw per PTY Output event** *(qwen BUGS-3, verified: `seq 1 3000` → 689 presents)* — `user_event` calls `redraw()` directly (`app.rs:1216-1221`); vsync-blocked presents stall input under output floods | **[done 0.21.8]** — `PaneEvent::Output` now pumps + `request_redraw()` only (title/closed redraws kept synchronous; damage tracking later). Verified: `seq 1 3000` → 37 draw frames (was 689) |
 | S2 | **No tab-drag threshold: clicks teleport tabs + delete the emptied origin workspace** *(qwen BUGS-4)* — press arms `tab_drag` (`app.rs:1508-1515`); first CursorMoved over sidebar moves the tab and drops the origin ws (`app.rs:1381-1384`); 2px jitter = data loss, no undo | **[done 0.21.6]** — `TAB_DRAG_THRESHOLD` 6 logical px; origin recorded on press; drag arm early-returns before threshold (xvfb-verified: jitter no-ops, real drag moves) |
@@ -189,9 +189,9 @@ clickable links (OSC 8 + scheme-scan, safe-scheme allowlist, hover underline +
  fullscreen (`f11`/`alt+enter`, borderless toggle) and clear-scrollback
  (ED 3, keeps the visible screen) **[done 2026-11]** ·
  zoomed-pane badge + window title carrying workspace/tab/pane context and a
- `[zoom]` marker **[done 2026-11]** ·
+ `[zoom]` marker **[done 2026-11]** · non-zero shell exit notice **[done 2026-11]** ·
  **[open]**: IME; DECCKM + kitty keyboard probe; bell→attention;
- exit-status surfacing; wide-glyph advance audit; selection drag auto-scroll
+ wide-glyph advance audit; selection drag auto-scroll
  past window edges (qwen U-13).
 
 ## Distribution / branding (review §4d)

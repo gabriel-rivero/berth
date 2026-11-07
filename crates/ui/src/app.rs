@@ -222,6 +222,9 @@ pub struct Berth {
     plugins: Vec<LoadedPlugin>,
     /// Status segments republished by plugins (`host.set-status`), tab strip.
     status_segments: Vec<String>,
+    /// Transient bottom-strip message (non-zero shell exit, plugin errors) and
+    /// when it should disappear.
+    notice: Option<(String, std::time::Instant)>,
     /// Set when the app decided to exit; about_to_wait stops the loop.
     exiting: bool,
     /// Where the layout session snapshot lives (None = no config dir).
@@ -614,6 +617,7 @@ impl Berth {
                     self.hovered,
                     &self.status_segments,
                     confirm.as_deref(),
+                    self.notice.as_ref().map(|(msg, _)| msg.as_str()),
                     w,
                 )
                 .is_err(),
@@ -1863,7 +1867,21 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 self.redraw();
             }
             PaneEvent::Closed(id) => {
+                // Reap the child first: reader EOF fires for both a clean `exit`
+                // and a crash, and a non-zero code is worth surfacing before the
+                // pane/tab disappears.
+                let exit_code = self
+                    .panes
+                    .get(&id)
+                    .and_then(|p| p.lock().expect("pane poisoned").exit_code());
                 let _ = self.panes.remove(&id);
+                if let Some(code) = exit_code {
+                    dlog_app!("pane {:?} exited with code {code}", id);
+                    self.notice = Some((
+                        format!("shell exited (code {code})"),
+                        std::time::Instant::now(),
+                    ));
+                }
                 // Prune the OSC title so a future PaneId reuse can't inherit it.
                 self.titles.remove(&id);
                 if self.zoomed == Some(id) {
@@ -2433,6 +2451,13 @@ impl ApplicationHandler<PaneEvent> for Berth {
             self.confirm_ws = None;
             self.window.as_ref().inspect(|w| w.request_redraw());
         }
+        // Auto-dismiss a transient notice (e.g. shell exited non-zero).
+        if let Some((_, t)) = &self.notice
+            && t.elapsed() >= NOTICE_TIMEOUT
+        {
+            self.notice = None;
+            self.window.as_ref().inspect(|w| w.request_redraw());
+        }
         // Cursor blink: only while the window is focused and config allows it.
         let mut wait_until =
             std::time::Instant::now() + std::time::Duration::from_millis(CONFIG_POLL_MS);
@@ -2445,6 +2470,10 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 self.window.as_ref().inspect(|w| w.request_redraw());
             }
             wait_until = wait_until.min(self.blink_next);
+        }
+        // Wake up when the transient notice expires so it clears on its own.
+        if let Some((_, t)) = &self.notice {
+            wait_until = wait_until.min(*t + NOTICE_TIMEOUT);
         }
         // Renderer rebuild retry after a lost surface/device (backoff, driven by
         // the wait timer so a broken GPU doesn't spin the event loop).
@@ -2465,6 +2494,8 @@ const CONFIG_POLL_MS: u64 = 750;
 const SESSION_SAVE_MS: u64 = 4000;
 /// How long the quit-confirm banner stays up before auto-cancelling.
 const CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long a transient notice (non-zero shell exit) stays on screen.
+const NOTICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
 /// Default cursor blink interval until config is consulted (530 ms ≈ xterm).
 const BLINK_DEFAULT: std::time::Duration = std::time::Duration::from_millis(530);
 
@@ -2719,6 +2750,7 @@ pub fn run() -> anyhow::Result<()> {
         bindings,
         plugins,
         status_segments: Vec::new(),
+        notice: None,
         exiting: false,
         session_path: session_file,
         last_save: std::time::Instant::now(),
