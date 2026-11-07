@@ -91,7 +91,7 @@ key-event path, never the IME.
 | resize sidebar | drag its right edge (hover shows ⟷ cursor) |
 | pane focus | `alt+arrows` (`focus-pane-*` action, rebindable) |
 | drag tab to another workspace | drag a tab slot onto a sidebar entry |
-| select text | drag = freeform · double-click = word · triple-click = line (copy-on-select) |
+| select text | drag = freeform · double-click = word · triple-click = line (copy-on-select; dragging past the pane edge auto-scrolls) |
 | copy / paste selection | `cmd+c` / `cmd+v` (`ctrl+shift+c` / `ctrl+v`) |
 | scroll | mouse wheel, `shift+PgUp` / `shift+PgDn`, `cmd+PgUp` / `cmd+PgDn` |
 | search scrollback | `cmd+f` (`ctrl+shift+f`); type to filter, `enter`/`shift+enter` cycles hits, `esc` closes |

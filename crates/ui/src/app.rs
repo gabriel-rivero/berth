@@ -164,6 +164,13 @@ pub struct Berth {
     mouse: PhysicalPosition<f64>,
     /// True while left button held over a pane.
     dragging: bool,
+    /// Pane owning the current drag selection (kept while the pointer leaves
+    /// the pane so the selection can auto-scroll at the edges).
+    drag_pane: Option<PaneId>,
+    /// Auto-scroll direction/edge while a drag selection is outside its pane.
+    drag_autoscroll: Option<DragScroll>,
+    /// Next auto-scroll tick for the active drag selection.
+    drag_scroll_next: std::time::Instant,
     /// DFS index + axis of the split whose divider is being dragged (Some = dragging).
     divider_drag: Option<(usize, bool)>,
     /// True while dragging the sidebar's right edge to resize it.
@@ -278,6 +285,31 @@ const SIDEBAR_EDGE_GRAB: f64 = 4.0;
 const TAB_DRAG_THRESHOLD: f64 = 6.0;
 /// Upper bound of wheel clicks forwarded per event (flood guard).
 const MAX_WHEEL_CLICKS: u32 = 16;
+/// Auto-scroll cadence while a selection drag sits past a pane edge.
+const DRAG_SCROLL_MS: std::time::Duration = std::time::Duration::from_millis(40);
+
+/// Auto-scroll state while dragging a selection outside its pane.
+#[derive(Debug, Clone, Copy)]
+struct DragScroll {
+    /// alacritty `Scroll::Delta` to apply each tick (negative = newer lines).
+    delta: i32,
+    /// Anchor the selection on the bottom row (true) or top row (false).
+    bottom: bool,
+    /// Column the selection keeps extending to (clamped to the pane width).
+    col: usize,
+}
+
+/// Which way a selection drag beyond `top..bottom` should scroll.
+/// Positive delta reveals older lines (pointer above), negative newer.
+fn autoscroll_delta(mouse_y: f64, top: f64, bottom: f64) -> Option<i32> {
+    if mouse_y < top {
+        Some(1)
+    } else if mouse_y >= bottom {
+        Some(-1)
+    } else {
+        None
+    }
+}
 
 impl Berth {
     /// Forward a mouse press/release to the hovered pane when it captured the
@@ -1394,6 +1426,16 @@ impl Berth {
         self.clipboard.as_mut().and_then(|cb| cb.get_text().ok())
     }
 
+    /// Device-px rect of a pane in the active tab.
+    fn pane_rect(&self, id: PaneId) -> Option<berth_core::layout::Rect> {
+        let area = self.content_rect();
+        let tab = self.layout.active_tab()?;
+        tab.pane_rects(area)
+            .into_iter()
+            .find(|(pid, _)| *pid == id)
+            .map(|(_, rect)| rect)
+    }
+
     /// Locate the pane under `self.mouse`; returns (PaneId, row, col) pane-local.
     fn pane_at_mouse(&self) -> Option<(PaneId, usize, usize)> {
         let area = self.content_rect();
@@ -2262,12 +2304,30 @@ impl ApplicationHandler<PaneEvent> for Berth {
                         w.request_redraw();
                     }
                 } else if self.dragging
-                    && let Some((id, row, col)) = self.pane_at_mouse()
+                    && let Some(id) = self.drag_pane
                 {
-                    if let Some(pane) = self.panes.get(&id) {
-                        let mut pane = pane.lock().expect("pane poisoned");
-                        let pt = term_point(&pane, row, col);
-                        pane.update_selection(pt);
+                    if let (Some(pane), Some(rect)) = (self.panes.get(&id), self.pane_rect(id)) {
+                        let (cw, ch) = self.cell_metrics();
+                        let (rx, ry) = (rect.x as f64, rect.y as f64);
+                        let rows = ((rect.h as f32 / ch).floor() as usize).max(1);
+                        let cols = ((rect.w as f32 / cw).floor() as usize).max(1);
+                        // Pointer outside the pane still extends to the nearest
+                        // edge cell; the timer in about_to_wait scrolls the grid.
+                        let lx = (self.mouse.x - rx).max(0.0).min(rect.w as f64 - 1.0);
+                        let ly = (self.mouse.y - ry).max(0.0).min(rect.h as f64 - 1.0);
+                        let col = ((lx / cw as f64) as usize).min(cols - 1);
+                        let row = ((ly / ch as f64) as usize).min(rows - 1);
+                        {
+                            let mut p = pane.lock().expect("pane poisoned");
+                            let pt = term_point(&p, row, col);
+                            p.update_selection(pt);
+                        }
+                        let dir = autoscroll_delta(self.mouse.y, ry, ry + rect.h as f64);
+                        self.drag_autoscroll = dir.map(|delta| DragScroll {
+                            delta,
+                            bottom: delta < 0,
+                            col,
+                        });
                     }
                     if let Some(w) = &self.window {
                         w.request_redraw();
@@ -2408,6 +2468,9 @@ impl ApplicationHandler<PaneEvent> for Berth {
                                                 return;
                                             }
                                             let kind = self.selection_kind_for(id, row, col);
+                                            self.drag_pane = Some(id);
+                                            self.drag_autoscroll = None;
+                                            self.drag_scroll_next = std::time::Instant::now();
                                             if let Some(pane) = self.panes.get(&id) {
                                                 let mut pane = pane.lock().expect("pane poisoned");
                                                 let pt = term_point(&pane, row, col);
@@ -2424,6 +2487,8 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     }
                     ElementState::Released => {
                         self.dragging = false;
+                        self.drag_pane = None;
+                        self.drag_autoscroll = None;
                         self.divider_drag = None;
                         self.sidebar_drag = false;
                         self.tab_drag = None;
@@ -2598,6 +2663,27 @@ impl ApplicationHandler<PaneEvent> for Berth {
             self.notice = None;
             self.window.as_ref().inspect(|w| w.request_redraw());
         }
+        // Selection drag past the pane edge: scroll the grid on a timer and keep
+        // extending the selection at the edge row (qwen U-13).
+        if self.dragging
+            && let Some(edge) = self.drag_autoscroll
+            && std::time::Instant::now() >= self.drag_scroll_next
+            && let Some(id) = self.drag_pane
+            && let Some(pane) = self.panes.get(&id)
+            && let Some(rect) = self.pane_rect(id)
+        {
+            let (cw, ch) = self.cell_metrics();
+            let rows = ((rect.h as f32 / ch).floor() as usize).max(1);
+            let cols = ((rect.w as f32 / cw).floor() as usize).max(1);
+            let mut p = pane.lock().expect("pane poisoned");
+            p.scroll_display(alacritty_terminal::grid::Scroll::Delta(edge.delta));
+            let row = if edge.bottom { rows - 1 } else { 0 };
+            let pt = term_point(&p, row, edge.col.min(cols - 1));
+            p.update_selection(pt);
+            drop(p);
+            self.drag_scroll_next = std::time::Instant::now() + DRAG_SCROLL_MS;
+            self.window.as_ref().inspect(|w| w.request_redraw());
+        }
         // Cursor blink: only while the window is focused and config allows it.
         let mut wait_until =
             std::time::Instant::now() + std::time::Duration::from_millis(CONFIG_POLL_MS);
@@ -2623,6 +2709,9 @@ impl ApplicationHandler<PaneEvent> for Berth {
             } else {
                 wait_until = wait_until.min(self.renderer_retry_at);
             }
+        }
+        if self.dragging && self.drag_autoscroll.is_some() {
+            wait_until = wait_until.min(self.drag_scroll_next);
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(wait_until));
     }
@@ -2865,6 +2954,9 @@ pub fn run() -> anyhow::Result<()> {
         modifiers: ModifiersState::default(),
         mouse: PhysicalPosition::new(0.0, 0.0),
         dragging: false,
+        drag_pane: None,
+        drag_autoscroll: None,
+        drag_scroll_next: std::time::Instant::now(),
         divider_drag: None,
         sidebar_drag: false,
         tab_drag: None,
@@ -2974,5 +3066,16 @@ mod tests {
         // Named keys (arrows, enter) never come from the IME.
         let enter = Key::Named(NamedKey::Enter);
         assert!(!ime_owns_text(true, &enter, ModifiersState::empty()));
+    }
+
+    #[test]
+    fn drag_beyond_pane_edges_scrolls_toward_the_pointer() {
+        // Above the pane reveals older lines (+), below reveals newer (-).
+        assert_eq!(autoscroll_delta(10.0, 40.0, 400.0), Some(1));
+        assert_eq!(autoscroll_delta(450.0, 40.0, 400.0), Some(-1));
+        assert_eq!(autoscroll_delta(200.0, 40.0, 400.0), None);
+        // Edges are half-open: exactly top is inside, exactly bottom is outside.
+        assert_eq!(autoscroll_delta(40.0, 40.0, 400.0), None);
+        assert_eq!(autoscroll_delta(400.0, 40.0, 400.0), Some(-1));
     }
 }

@@ -190,9 +190,10 @@ clickable links (OSC 8 + scheme-scan, safe-scheme allowlist, hover underline +
  (ED 3, keeps the visible screen) **[done 2026-11]** ·
  zoomed-pane badge + window title carrying workspace/tab/pane context and a
  `[zoom]` marker **[done 2026-11]** · non-zero shell exit notice **[done 2026-11]** ·
+ drag-selection auto-scroll past pane edges (40 ms timer, edge-anchored
+ extension — qwen U-13) **[done 2026-11]** ·
  **[open]**: kitty keyboard protocol probe;
- wide-glyph advance audit; selection drag auto-scroll
- past window edges (qwen U-13).
+ wide-glyph advance audit.
 
 ## Distribution / branding (review §4d)
 
