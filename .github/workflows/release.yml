@@ -68,6 +68,7 @@ jobs:
           esac
           root=berth_${ver}_${arch}
           mkdir -p "$root"/DEBIAN "$root"/usr/bin "$root"/usr/share/applications \
+            "$root"/usr/share/metainfo \
             "$root"/usr/share/icons/hicolor/64x64/apps \
             "$root"/usr/share/icons/hicolor/128x128/apps \
             "$root"/usr/share/icons/hicolor/256x256/apps
@@ -84,15 +85,10 @@ jobs:
             ' sidebar, split panes, a clickable tab bar and hot-reloading TOML' \
             ' config. Static musl build: no dependencies on the host.' \
             > "$root"/DEBIAN/control
-          printf '%s\n' \
-            '[Desktop Entry]' \
-            'Type=Application' \
-            'Name=berth' \
-            'Exec=berth' \
-            'Icon=berth' \
-            'Categories=System;TerminalEmulator;' \
-            'Terminal=false' \
-            > "$root"/usr/share/applications/berth.desktop
+          # Single source of truth: packaging/berth.desktop (not an inline copy).
+          install -m 644 packaging/berth.desktop "$root"/usr/share/applications/berth.desktop
+          install -m 644 packaging/io.github.gabriel_rivero.berth.metainfo.xml \
+            "$root"/usr/share/metainfo/
           install -m 644 assets/berth-64.png "$root"/usr/share/icons/hicolor/64x64/apps/berth.png
           install -m 644 assets/berth-128.png "$root"/usr/share/icons/hicolor/128x128/apps/berth.png
           install -m 644 assets/berth-256.png "$root"/usr/share/icons/hicolor/256x256/apps/berth.png
@@ -158,3 +154,25 @@ jobs:
             berth_*.deb
             berth-*.rpm
           generate_release_notes: true
+
+  # Runs after every platform job so the checksum file covers all assets
+  # (deb/rpm/app.zip included), not just the ones this runner built.
+  checksums:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release assets
+        run: |
+          mkdir dist
+          gh release download "$GITHUB_REF_NAME" --repo gabriel-rivero/berth --dir dist --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Write sha256sums.txt
+        run: |
+          cd dist
+          sha256sum * > ../sha256sums.txt
+          cat ../sha256sums.txt
+      - name: Attach checksums
+        run: gh release upload "$GITHUB_REF_NAME" sha256sums.txt --repo gabriel-rivero/berth --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

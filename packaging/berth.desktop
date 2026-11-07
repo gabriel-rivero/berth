@@ -7,5 +7,5 @@ Comment=A Ghostty-like cross-platform terminal with a left tab sidebar and works
 Exec=/usr/bin/berth
 Icon=berth
 Terminal=false
-Categories=System;TerminalEmulator;Utility;
+Categories=System;TerminalEmulator;
 Keywords=terminal;shell;workspace;

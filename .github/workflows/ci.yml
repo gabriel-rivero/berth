@@ -45,6 +45,17 @@ jobs:
           cargo build --manifest-path crates/plugins/guest/Cargo.toml --release --target wasm32-wasip2
       - run: cargo test --workspace
 
+  packaging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: validate AppStream metadata
+        run: sudo apt-get update && sudo apt-get install -y appstream && appstreamcli validate --no-net packaging/io.github.gabriel_rivero.berth.metainfo.xml
+      - name: validate desktop entry
+        run: |
+          sudo apt-get install -y desktop-file-utils
+          desktop-file-validate packaging/berth.desktop
+
   budget:
     runs-on: ubuntu-latest
     steps:
