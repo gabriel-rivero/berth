@@ -5,10 +5,11 @@ the short version: what landed, what to run, what is next.
 
 ## Branch state
 
-`main` at `b30f0aa`, pushed. 23 commits since the v0.24.0 release
+`main` at `9c9d96b`, pushed. 24 commits since the v0.24.0 release
 (`bc620e8`), all tests/clippy green at the time of writing:
 
 ```
+9c9d96b selection drag auto-scrolls past pane edges (qwen U-13)
 b30f0aa DECCKM application arrows + platform IME routing
 9cac149 refresh handover header/next-up after bell work
 31a793c bell in a background tab lights an attention dot
