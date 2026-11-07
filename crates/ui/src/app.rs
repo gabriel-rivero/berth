@@ -220,6 +220,8 @@ pub struct Berth {
     bindings: HashMap<Chord, Action>,
     /// WASM plugins (tier-1 layout ABI), synced each tick.
     plugins: Vec<LoadedPlugin>,
+    /// Status segments republished by plugins (`host.set-status`), tab strip.
+    status_segments: Vec<String>,
     /// Set when the app decided to exit; about_to_wait stops the loop.
     exiting: bool,
     /// Where the layout session snapshot lives (None = no config dir).
@@ -610,6 +612,7 @@ impl Berth {
                     hover_link,
                     self.zoomed.is_some(),
                     self.hovered,
+                    &self.status_segments,
                     confirm.as_deref(),
                     w,
                 )
@@ -2523,8 +2526,21 @@ impl Berth {
     /// renames they queue up. Runs on each wait tick (~750 ms).
     fn tick_plugins(&mut self) {
         if self.plugins.is_empty() {
+            if !self.status_segments.is_empty() {
+                self.status_segments.clear();
+                self.window.as_ref().inspect(|w| w.request_redraw());
+            }
             return;
         }
+        let accent =
+            self.config
+                .theme
+                .accent
+                .clone()
+                .unwrap_or_else(|| match self.config.theme.preset {
+                    berth_core::config::ThemePreset::Light => "#0969da".to_string(),
+                    berth_core::config::ThemePreset::Dark => "#4f8cff".to_string(),
+                });
         let active_ws = self.layout.active;
         let workspaces: Vec<_> = self
             .layout
@@ -2553,7 +2569,9 @@ impl Berth {
             .collect();
 
         let mut renames: Vec<WorkspaceRename> = Vec::new();
+        let mut segments: Vec<String> = Vec::new();
         for plugin in &mut self.plugins {
+            plugin.set_accent(&accent);
             let report = plugin.sync(workspaces.clone(), tabs.clone());
             if let Some(err) = report.error {
                 // A trap means the guest was stopped (fuel/memory/panic). It is
@@ -2563,7 +2581,15 @@ impl Berth {
                     plugin.name()
                 ));
             }
+            let status = plugin.status();
+            if !status.is_empty() {
+                segments.push(status.to_string());
+            }
             renames.extend(report.renames);
+        }
+        if segments != self.status_segments {
+            self.status_segments = segments;
+            self.window.as_ref().inspect(|w| w.request_redraw());
         }
         let mut changed = false;
         for r in renames {
@@ -2692,6 +2718,7 @@ pub fn run() -> anyhow::Result<()> {
         cwds: HashMap::new(),
         bindings,
         plugins,
+        status_segments: Vec::new(),
         exiting: false,
         session_path: session_file,
         last_save: std::time::Instant::now(),

@@ -162,10 +162,12 @@ like one) while staying small and GPU-cheap. Ordered by perceived impact per eff
    cache mid-frame), GPU-timestamp timing, and a CI perf budget
    (e.g. `seq 1 3000` < N frames, idle CPU ≈ 0).
 8. **[partial 2026-11]** **Plugin-facing polish**: guest safety is done (fuel +
-   memory caps, trap logging/auto-disable); still open: status-bar/segment
-   contribution API (`badge`/`segment`), plugin manager panel (enable/disable,
-   errors, reload), capability manifest, and theme-aware accent colors handed to
-   guests so plugin UI matches the active theme.
+   memory caps, trap logging/auto-disable); `set-status` lets guests publish a
+   short right-aligned tab-strip segment (clipped, refreshed each callback) and
+   `accent` hands them the theme's `#rrggbb` accent (new `[theme] accent`, preset
+   fallback), so plugin UI can match berth. Still open: plugin manager panel
+   (enable/disable, error list, reload), capability manifest, richer segment
+   metadata (badges/icons, click actions).
 9. **[done 2026-11, self-hosted GPU budget open]** **Lightweight budget**: `--version`,
    `scripts/lightweight.sh` (binary size, first-frame latency, idle RSS under
    Xvfb) and a CI release-size gate (60 MiB) exist; keep the wgpu/winit-only

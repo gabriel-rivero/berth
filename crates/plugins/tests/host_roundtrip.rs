@@ -47,6 +47,7 @@ fn auto_namer_renames_default_labels_only() {
 
     let report = plugin.sync(workspaces, tabs);
     assert!(report.error.is_none(), "guest trapped: {:?}", report.error);
+    assert_eq!(plugin.status(), "3 ws", "guest status segment");
     let mut names: Vec<(u64, String)> = report
         .renames
         .into_iter()

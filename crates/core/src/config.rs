@@ -58,6 +58,8 @@ pub struct Theme {
     pub background: Option<String>,
     pub foreground: Option<String>,
     pub cursor: Option<String>,
+    /// Accent handed to plugins (`host.accent`) as `#rrggbb`; defaults per preset.
+    pub accent: Option<String>,
     /// ANSI 0-15 overrides, e.g. `[theme.palette] red = "#ff5555"`.
     pub palette: Palette,
 }
@@ -261,6 +263,7 @@ mod tests {
             preset = "light"
             background = "#101010"
             cursor = "#ff0000"
+            accent = "#66ccff"
 
             [theme.palette]
             red = "#aa0000"
@@ -272,6 +275,7 @@ mod tests {
         assert_eq!(cfg.font.line_height, 1.2);
         assert_eq!(cfg.theme.preset, ThemePreset::Light);
         assert_eq!(cfg.theme.background.as_deref(), Some("#101010"));
+        assert_eq!(cfg.theme.accent.as_deref(), Some("#66ccff"));
         assert_eq!(cfg.theme.palette.red.as_deref(), Some("#aa0000"));
         assert_eq!(cfg.theme.palette.bright_cyan.as_deref(), Some("#00ffff"));
         assert!(cfg.theme.palette.green.is_none());
@@ -282,6 +286,7 @@ mod tests {
         let cfg: Config = toml::from_str("").unwrap();
         assert_eq!(cfg.theme.preset, ThemePreset::Dark);
         assert!(cfg.theme.background.is_none());
+        assert!(cfg.theme.accent.is_none());
         assert_eq!(cfg.font.line_height, 1.0);
     }
 

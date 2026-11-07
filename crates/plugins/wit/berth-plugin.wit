@@ -23,6 +23,14 @@ interface host {
     /// Queue a workspace rename; applied by the host after the callback returns
     /// (this way plugins cannot observe torn state mid-guest-call).
     set-workspace-label: func(id: u64, label: string);
+
+    /// Publish a short plain-text status segment for the tab strip (e.g. git
+    /// branch, battery, build state). The host clears it before every
+    /// `on-layout-change`; call this again each time to keep it visible.
+    set-status: func(text: string);
+
+    /// Active theme accent as `#rrggbb`, so plugin-owned UI can match berth.
+    accent: func() -> string;
 }
 
 world plugin {

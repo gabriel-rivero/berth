@@ -33,6 +33,10 @@ pub struct HostState {
     tabs: Vec<berth::plugin::host::TabInfo>,
     /// Renames queued by the guest, drained after the callback returns.
     pending_renames: HashMap<u64, String>,
+    /// Status segment the guest published this run (shown in the tab strip).
+    status: String,
+    /// Theme accent exposed to guests as `#rrggbb`.
+    accent: String,
     /// WASI p2 state; guests are plain std shims that import clocks/io/cli.
     table: ResourceTable,
     wasi: WasiCtx,
@@ -60,6 +64,16 @@ impl berth::plugin::host::Host for HostState {
 
     fn set_workspace_label(&mut self, id: u64, label: String) {
         self.pending_renames.insert(id, label);
+    }
+
+    fn set_status(&mut self, text: String) {
+        // Bound the payload: guests should publish short segments, and this
+        // text is laid out in the tab strip every frame.
+        self.status = text.chars().take(80).collect();
+    }
+
+    fn accent(&mut self) -> String {
+        self.accent.clone()
     }
 }
 
@@ -96,6 +110,8 @@ impl LoadedPlugin {
                 workspaces: Vec::new(),
                 tabs: Vec::new(),
                 pending_renames: HashMap::new(),
+                status: String::new(),
+                accent: String::new(),
                 table: ResourceTable::new(),
                 wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
                 limits: wasmtime::StoreLimitsBuilder::new()
@@ -127,6 +143,16 @@ impl LoadedPlugin {
         self.faulted
     }
 
+    /// Status segment published during the last `sync` (empty if none).
+    pub fn status(&self) -> &str {
+        &self.store.data().status
+    }
+
+    /// Theme accent handed to the guest's `accent()` import.
+    pub fn set_accent(&mut self, accent: &str) {
+        self.store.data_mut().accent = accent.to_string();
+    }
+
     /// Push a fresh layout snapshot and run the guest's `on-layout-change`.
     /// Returns the renames the plugin queued and any trap (which faults it).
     pub fn sync(
@@ -142,6 +168,8 @@ impl LoadedPlugin {
             state.workspaces = workspaces;
             state.tabs = tabs;
             state.pending_renames.clear();
+            // A segment is only shown while the guest keeps republishing it.
+            state.status.clear();
         }
         self.store.set_fuel(FUEL_PER_SYNC).ok();
         let result = self.exports.call_on_layout_change(&mut self.store);

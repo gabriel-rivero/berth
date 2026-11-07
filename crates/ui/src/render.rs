@@ -1752,6 +1752,7 @@ impl Renderer {
 
     /// Draw the top tab strip (starting right of the sidebar): one fixed-width
     /// slot per tab, active slot brighter, plus a `+` button to the right.
+    #[allow(clippy::too_many_arguments)]
     fn draw_tab_bar(
         &mut self,
         tabs: &[(&str, bool)],
@@ -1759,6 +1760,7 @@ impl Renderer {
         ch: Chrome,
         sb_w: f32,
         hovered: Option<ChromeZone>,
+        status: &[String],
         sink: &mut QuadSink,
     ) {
         let bar_w = self.config.width as f32 - sb_w;
@@ -1847,6 +1849,34 @@ impl Renderer {
                 plus_color,
                 sink,
             );
+        }
+
+        // Plugin status segments: right-aligned in the strip, clipped from the
+        // left so long guest text never covers the tabs or the `+` button.
+        if status.is_empty() {
+            return;
+        }
+        let label = status.join("  ·  ");
+        let right = sb_w + bar_w - 8.0 * ch.scale;
+        let left_limit = (plus_x + ch.plus_w + 8.0 * ch.scale).min(right);
+        let max_chars = ((right - left_limit) / metrics.cell_w).floor() as usize;
+        if max_chars == 0 {
+            return;
+        }
+        let chars: Vec<char> = label.chars().collect();
+        let start = chars.len().saturating_sub(max_chars);
+        let text: String = chars[start..].iter().collect();
+        let text_w = text.chars().count() as f32 * metrics.cell_w;
+        let mut pen = right - text_w;
+        let baseline = (ch.tab_bar_h - metrics.cell_h) * 0.5 + metrics.ascent;
+        for c in text.chars() {
+            let Some(g) = self.rasterize(c, false, false, sink) else {
+                continue;
+            };
+            let gx = pen + g.left as f32;
+            let gy = baseline - g.top as f32;
+            sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], colors.tab_text, Some(g));
+            pen += metrics.cell_w;
         }
     }
 
@@ -2100,6 +2130,7 @@ impl Renderer {
         link: Option<(Rect, LinkSpan)>,
         zoomed: bool,
         hovered: Option<ChromeZone>,
+        status: &[String],
         confirm: Option<&str>,
         window: &Window,
     ) -> anyhow::Result<()> {
@@ -2132,7 +2163,7 @@ impl Renderer {
         };
         let mut sink = QuadSink::default();
         self.draw_sidebar(workspaces, sb_w, ch, metrics, hovered, &mut sink);
-        self.draw_tab_bar(tabs, metrics, ch, sb_w, hovered, &mut sink);
+        self.draw_tab_bar(tabs, metrics, ch, sb_w, hovered, status, &mut sink);
         let mut uploads_pending = 0usize;
         let mut quads_bg = 0usize;
         let mut quads_glyph = 0usize;
@@ -2764,6 +2795,7 @@ mod tests {
             background: Some("#112233".into()),
             foreground: Some("#eeeeee".into()),
             cursor: None,
+            accent: None,
             palette: Palette {
                 red: Some("#ff0000".into()),
                 ..Default::default()

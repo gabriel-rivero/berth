@@ -12,7 +12,7 @@ wit_bindgen::generate!({
     world: "plugin",
 });
 
-use crate::berth::plugin::host::{get_workspaces, set_workspace_label};
+use crate::berth::plugin::host::{accent, get_workspaces, set_status, set_workspace_label};
 
 struct AutoNamer;
 
@@ -37,6 +37,10 @@ impl Guest for AutoNamer {
                 set_workspace_label(ws.id, &format!("ws-{n:02}"));
             }
         }
+        // Publish a tab-strip segment and exercise the theme-accent import;
+        // guests republish every callback (the host clears it each time).
+        let _accent = accent();
+        set_status(&format!("{} ws", get_workspaces().len()));
     }
 }
 

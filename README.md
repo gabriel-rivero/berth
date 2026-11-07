@@ -130,6 +130,7 @@ preset = "dark"             # "dark" (default) or "light"
 background = "#121317"      # optional overrides
 foreground = "#e6e6e6"
 cursor = "#f0e6c8"
+accent = "#7aa2ff"           # handed to plugins (host.accent)
 
 [theme.palette]             # ANSI 0-15, any subset
 red = "#ff5f5f"
@@ -199,13 +200,16 @@ Drop `.wasm` components into `~/.config/berth/plugins/` (Windows/macOS:
 the `berth/config dir` per OS). Plugins use the WIT world `berth:plugin`
 (`crates/plugins/wit/berth-plugin.wit`): they receive a workspace/tab
 snapshot (`get-workspaces`/`get-tabs` via the exported `on-layout-change`
-callback) and may queue workspace renames with `set-workspace-label`.
+callback), queue workspace renames with `set-workspace-label`, publish a short
+tab-strip segment with `set-status`, and read the active theme color with
+`accent` (`#rrggbb`). Status segments are cleared before every callback, so
+guests republish them each run.
 Broken plugins log and are skipped. Guests are sandboxed by fuel metering
 (50 M units per callback) and a 64 MiB linear-memory cap: a `loop {}`, O(n²)
 bug or memory runaway traps the guest, logs `plugin '<name>' trapped; disabled
 for this session`, and the plugin is skipped until the next launch — the UI
 never freezes. Demo guest: `crates/plugins/guest`
-(auto-namer: `ws 2` → `ws-02`), compiled with
+(auto-namer: `ws 2` → `ws-02`, plus a `N ws` status segment), compiled with
 `cargo build -p berth-plugin-guest --release --target wasm32-wasip2`.
 
 ### Branding
