@@ -72,6 +72,11 @@ add-zsh-hook precmd report_cwd
 Defaults follow iTerm2 (`cmd`/super chords work on all platforms); legacy
 `ctrl` combos ship as aliases. Everything is user-overridable.
 
+Text input goes through the platform IME: CJK/dead-key composition is shown at
+the cursor until commit, and DECCKM application-cursor mode (`ESC O A…`) is
+honored for arrows/Home/End. Ctrl/alt/super shortcuts still go through the
+key-event path, never the IME.
+
 | action | keys |
 | --- | --- |
 | split vertically / horizontally | `cmd+d` (`ctrl+shift+Enter`) / `cmd+shift+d` (`ctrl+shift+\`) |

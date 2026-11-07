@@ -2146,6 +2146,7 @@ impl Renderer {
         status: &[String],
         confirm: Option<&str>,
         notice: Option<&str>,
+        preedit: Option<&str>,
         window: &Window,
     ) -> anyhow::Result<()> {
         let frame_start = std::time::Instant::now();
@@ -2199,6 +2200,7 @@ impl Renderer {
                 paint,
                 pane_search,
                 pane_link,
+                if focus == Some(*rect) { preedit } else { None },
                 &mut sink,
             );
             quads_glyph += n_g;
@@ -2425,6 +2427,7 @@ impl Renderer {
         cursor: CursorPaint,
         search: Option<SearchView<'_>>,
         link: Option<LinkSpan>,
+        preedit: Option<&str>,
         sink: &mut QuadSink,
     ) -> (usize, usize, usize) {
         let content = term.renderable_content();
@@ -2612,6 +2615,43 @@ impl Renderer {
                 sink.push(px, sy, px + metrics.cell_w, sy + thickness, fg, None);
                 quads_bg += 1;
             }
+        }
+
+        // IME composition: draw the pending text at the cursor cell with an
+        // accent underline so the candidate/preedit is visible before commit.
+        if let Some(text) = preedit
+            && !text.is_empty()
+            && let Some(vp) = cursor_vp
+        {
+            let px = rect.x as f32 + vp.column.0 as f32 * metrics.cell_w;
+            let py = rect.y as f32 + vp.line as f32 * metrics.cell_h;
+            let tw = (text.chars().count() as f32 * metrics.cell_w).max(metrics.cell_w);
+            sink.push(
+                px,
+                py,
+                px + tw,
+                py + metrics.cell_h,
+                scheme.chrome.sidebar_entry_active_bg,
+                None,
+            );
+            let baseline = py + metrics.ascent;
+            for (i, c) in text.chars().enumerate() {
+                let Some(g) = self.rasterize(c, false, false, sink) else {
+                    continue;
+                };
+                let gx = px + i as f32 * metrics.cell_w + g.left as f32;
+                let gy = baseline - g.top as f32;
+                sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], scheme.fg, Some(g));
+            }
+            let t = (metrics.cell_h * 0.06).max(1.5);
+            sink.push(
+                px,
+                py + metrics.cell_h - t,
+                px + tw,
+                py + metrics.cell_h,
+                scheme.chrome.focus_outline,
+                None,
+            );
         }
 
         if !dump_rows.is_empty() {

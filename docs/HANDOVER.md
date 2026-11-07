@@ -95,7 +95,7 @@ takes ~9 min cold.
    host `set-status`/`accent` imports; still open: plugin manager panel (list,
    enable/disable, last error, reload), capability manifest, richer segment
    metadata (badges/icons/click actions).
-2. **Table stakes still open** — IME; DECCKM + kitty keyboard probe;
+2. **Table stakes still open** — kitty keyboard protocol probe;
    wide-glyph advance audit; selection
    drag auto-scroll past window edges (qwen U-13).
 3. **Distribution** — README screenshot/GIF, `.desktop` + AppStream, winget,

@@ -1,6 +1,7 @@
 //! Window/eventloop: winit 0.30 ApplicationHandler + keyboard/clipboard/selection wiring.
 //! M3: workspaces + sidebar — the layout tree (`berth-core::Layout`) decides geometry; live
 //! `Pane`s are keyed by PaneId. Sidebar lists workspaces; tab strip + panes tile beside it.
+use crate::render::{Chrome, ChromeZone, Renderer, sidebar_width, workspace_index_at};
 use alacritty_terminal::term::TermMode;
 use berth_core::config::{Backspace, Config};
 use berth_core::keybinds::{Action, Chord, build_bindings};
@@ -13,13 +14,11 @@ use std::sync::{Arc, Mutex};
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalPosition,
-    event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
+    event::{ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey},
     window::{Cursor, CursorIcon, Window, WindowId},
 };
-
-use crate::render::{Chrome, ChromeZone, Renderer, sidebar_width, workspace_index_at};
 
 /// How many lines one wheel tick moves.
 const WHEEL_LINES_PER_TICK: i32 = 3;
@@ -198,6 +197,12 @@ pub struct Berth {
     hover_link: Option<(PaneId, LinkSpan)>,
     /// Active scrollback search overlay (None = closed).
     search: Option<SearchState>,
+    /// True while the platform IME owns text input (Wayland text-input, XIM).
+    /// In that case `Ime::Commit` supplies characters and `KeyboardInput` text
+    /// is ignored to avoid double typing.
+    ime_enabled: bool,
+    /// In-progress IME composition shown at the terminal cursor until commit.
+    preedit: String,
     /// Sub-line wheel remainder so trackpad pixel scrolling isn't rounded
     /// away on every event (fractional lines accumulate across events).
     wheel_accum: f32,
@@ -624,6 +629,10 @@ impl Berth {
                     &self.status_segments,
                     confirm.as_deref(),
                     self.notice.as_ref().map(|(msg, _)| msg.as_str()),
+                    (!self.preedit.is_empty()
+                        && self.search.is_none()
+                        && self.rename_edit.is_none())
+                    .then_some(self.preedit.as_str()),
                     w,
                 )
                 .is_err(),
@@ -904,6 +913,30 @@ impl Berth {
     }
 
     /// Cycle to the next/previous hit and scroll it into view.
+    /// Route text produced by the IME to whatever owns input right now:
+    /// the search query, the rename editor, or the focused shell.
+    fn commit_text(&mut self, text: &str) {
+        if let Some(state) = &mut self.search {
+            state.query.push_str(text);
+            self.refresh_search();
+            return;
+        }
+        if let Some(edit) = &mut self.rename_edit {
+            edit.buf.push_str(text);
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+            return;
+        }
+        if let Some(pane) = self.panes.get(&self.focused_pane) {
+            let mut pane = pane.lock().expect("pane poisoned");
+            let _ = pane.write(text.as_bytes());
+            if pane.scroll_to_bottom() {
+                self.wheel_accum = 0.0;
+            }
+        }
+    }
+
     fn search_next(&mut self, forward: bool) {
         let Some(state) = self.search.as_mut() else {
             return;
@@ -1684,7 +1717,33 @@ fn chord_key_name(event: &KeyEvent) -> Option<String> {
 }
 
 /// KeyDown -> PTY bytes (None = nothing to write).
-fn encode_key(event: &KeyEvent, mods: ModifiersState, backspace: Backspace) -> Option<Vec<u8>> {
+/// True when the platform IME, not the key event, is responsible for this
+/// character. Keeps plain typing working on X11 (no IME) while avoiding double
+/// input on Wayland/XIM, where both `Ime::Commit` and `KeyboardInput` fire.
+fn ime_owns_text(ime_enabled: bool, key: &Key, mods: ModifiersState) -> bool {
+    ime_enabled
+        && matches!(key, Key::Character(_))
+        && !(mods.control_key() || mods.alt_key() || mods.super_key())
+}
+
+/// Encode one cursor key. `DECCKM` (application cursor keys) switches the
+/// unmodified form from `CSI A` to `SS3 A`; modified keys always stay CSI.
+fn cursor_key(tail: &'static str, csi_mod: u8, modified: bool, app_cursor: bool) -> Vec<u8> {
+    if modified {
+        format!("\x1b[1;{csi_mod}{tail}").into_bytes()
+    } else if app_cursor {
+        format!("\x1bO{tail}").into_bytes()
+    } else {
+        format!("\x1b[{tail}").into_bytes()
+    }
+}
+
+fn encode_key(
+    event: &KeyEvent,
+    mods: ModifiersState,
+    backspace: Backspace,
+    app_cursor: bool,
+) -> Option<Vec<u8>> {
     if event.state != ElementState::Pressed {
         return None;
     }
@@ -1719,12 +1778,12 @@ fn encode_key(event: &KeyEvent, mods: ModifiersState, backspace: Backspace) -> O
                 }
             }
             NamedKey::Escape => Some(vec![0x1b]),
-            NamedKey::ArrowUp => Some(csi("A")),
-            NamedKey::ArrowDown => Some(csi("B")),
-            NamedKey::ArrowRight => Some(csi("C")),
-            NamedKey::ArrowLeft => Some(csi("D")),
-            NamedKey::Home => Some(csi("H")),
-            NamedKey::End => Some(csi("F")),
+            NamedKey::ArrowUp => Some(cursor_key("A", csi_mod, modified, app_cursor)),
+            NamedKey::ArrowDown => Some(cursor_key("B", csi_mod, modified, app_cursor)),
+            NamedKey::ArrowRight => Some(cursor_key("C", csi_mod, modified, app_cursor)),
+            NamedKey::ArrowLeft => Some(cursor_key("D", csi_mod, modified, app_cursor)),
+            NamedKey::Home => Some(cursor_key("H", csi_mod, modified, app_cursor)),
+            NamedKey::End => Some(cursor_key("F", csi_mod, modified, app_cursor)),
             NamedKey::Insert => Some(csi("2~")),
             NamedKey::Delete => Some(csi("3~")),
             NamedKey::PageUp => Some(csi("5~")),
@@ -1792,6 +1851,9 @@ impl ApplicationHandler<PaneEvent> for Berth {
             .with_window_icon(load_window_icon())
             .with_min_inner_size(winit::dpi::LogicalSize::new(400.0, 200.0));
         let window = event_loop.create_window(attrs).expect("window creation");
+        // Text input goes through the platform IME; `Ime::Commit` then feeds the
+        // shell and `KeyboardInput` text is suppressed while IME is active.
+        window.set_ime_allowed(true);
         let renderer = self.build_renderer(&window).expect("renderer init");
 
         self.window = Some(window);
@@ -1996,9 +2058,27 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 }
                 let consumed = event.state == ElementState::Pressed
                     && self.handle_chord(&event, self.modifiers);
+                // DECCKM: the focused pane decides arrow-key encoding.
+                let app_cursor = self
+                    .panes
+                    .get(&self.focused_pane)
+                    .map(|p| {
+                        p.lock()
+                            .expect("pane poisoned")
+                            .term_mode()
+                            .contains(TermMode::APP_CURSOR)
+                    })
+                    .unwrap_or(false);
+                let ime_owns_text =
+                    ime_owns_text(self.ime_enabled, &event.logical_key, self.modifiers);
                 if !consumed
-                    && let Some(bytes) =
-                        encode_key(&event, self.modifiers, self.config.terminal.backspace)
+                    && !ime_owns_text
+                    && let Some(bytes) = encode_key(
+                        &event,
+                        self.modifiers,
+                        self.config.terminal.backspace,
+                        app_cursor,
+                    )
                     && let Some(pane) = self.panes.get(&self.focused_pane)
                 {
                     dlog_app!("kbd write: pane={:?} bytes={:?}", self.focused_pane, bytes);
@@ -2020,6 +2100,33 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     w.request_redraw();
                 }
             }
+            WindowEvent::Ime(ime) => match ime {
+                Ime::Enabled => self.ime_enabled = true,
+                Ime::Disabled => {
+                    self.ime_enabled = false;
+                    self.preedit.clear();
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                }
+                Ime::Preedit(text, _) => {
+                    if self.preedit != text {
+                        self.preedit = text;
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
+                        }
+                    }
+                }
+                Ime::Commit(text) => {
+                    if !text.is_empty() {
+                        self.commit_text(&text);
+                    }
+                    self.preedit.clear();
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                }
+            },
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::CursorMoved { position, .. } => {
                 self.mouse = position;
@@ -2773,6 +2880,8 @@ pub fn run() -> anyhow::Result<()> {
         fullscreen: false,
         hover_link: None,
         search: None,
+        ime_enabled: false,
+        preedit: String::new(),
         wheel_accum: 0.0,
         pane_click: None,
         renderer_retry_at: std::time::Instant::now(),
@@ -2844,5 +2953,26 @@ mod tests {
         assert_eq!(accumulate_wheel(&mut acc, -0.5), 0);
         assert!((acc + 0.5).abs() < 1e-6);
         assert_eq!(accumulate_wheel(&mut acc, -0.5), -1);
+    }
+
+    #[test]
+    fn decckm_switches_arrows_to_ss3_but_modified_keys_stay_csi() {
+        assert_eq!(cursor_key("A", 1, false, false), b"\x1b[A");
+        assert_eq!(cursor_key("A", 1, false, true), b"\x1bOA");
+        assert_eq!(cursor_key("D", 1, false, true), b"\x1bOD");
+        // Shift/alt/ctrl keep the CSI modifier form even in application mode.
+        assert_eq!(cursor_key("A", 2, true, true), b"\x1b[1;2A");
+    }
+
+    #[test]
+    fn ime_owns_plain_text_only_while_enabled() {
+        let text = Key::Character("a".into());
+        assert!(!ime_owns_text(false, &text, ModifiersState::empty()));
+        assert!(ime_owns_text(true, &text, ModifiersState::empty()));
+        // Ctrl/alt/super shortcuts stay on the key-event path.
+        assert!(!ime_owns_text(true, &text, ModifiersState::CONTROL));
+        // Named keys (arrows, enter) never come from the IME.
+        let enter = Key::Named(NamedKey::Enter);
+        assert!(!ime_owns_text(true, &enter, ModifiersState::empty()));
     }
 }
