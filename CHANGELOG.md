@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.25.0](https://github.com/gabriel-rivero/berth/compare/v0.24.0...v0.25.0) (2026-11-07)
+
+
+### Features
+
+* **config:** [shell] program/args/env/working_dir + [terminal] scrollback ([dea96e7](https://github.com/gabriel-rivero/berth/commit/dea96e77569c5fad41661265cd6d46d14530039b))
+* **plugins:** fuel + memory caps, trap surfacing, auto-disable ([aadbd3d](https://github.com/gabriel-rivero/berth/commit/aadbd3db519b5732fb59a92c41d5d8d95b8ee683))
+* **plugins:** status segments and theme accent for guests ([cd11eb6](https://github.com/gabriel-rivero/berth/commit/cd11eb6ed2ca6eb0ea13079515092690627d8a66))
+* **render:** faux bold/italic + underline/strikeout, honor SGR reverse/dim ([44326f9](https://github.com/gabriel-rivero/berth/commit/44326f9df1ebe9a424783153a0d5c0ded840cfe0))
+* **ui:** auto-scroll selection drags past pane edges ([9c9d96b](https://github.com/gabriel-rivero/berth/commit/9c9d96bad66be6684f33b4e1cc76fd6f4eba29bf))
+* **ui:** bell in a background tab lights an attention dot ([31a793c](https://github.com/gabriel-rivero/berth/commit/31a793ca027037d764e0b8f065e7095e54f2f7c1))
+* **ui:** chrome polish — rounded pills, shrink-to-fit tabs, hover-only ✕ ([1d12eaf](https://github.com/gabriel-rivero/berth/commit/1d12eaf6ead2062b0a8a7d8c779b6e14e7567fa3))
+* **ui:** clickable links — OSC 8 + URL detection, hover underline, modified click ([fa9421c](https://github.com/gabriel-rivero/berth/commit/fa9421cad3c08296f94d8a323b0b766f5959be09))
+* **ui:** cursor shapes, blink config, focused-pane-only + hollow unfocused cursor ([33fd501](https://github.com/gabriel-rivero/berth/commit/33fd50163b1dff38003cbc59945d7a76c1511ce1))
+* **ui:** DECCKM application arrows + platform IME routing ([b30f0aa](https://github.com/gabriel-rivero/berth/commit/b30f0aa016a4b711dc50b13177d91393c725b5ea))
+* **ui:** double-click selects a word, triple-click selects the line ([abd72d4](https://github.com/gabriel-rivero/berth/commit/abd72d41f2da2db817d6c3afbe043a9fe7cbd71c))
+* **ui:** fullscreen toggle, clear-scrollback, zoom badge + rich window title ([0be64f8](https://github.com/gabriel-rivero/berth/commit/0be64f8bc0f7710fbe821ce06e5f33daffc9b8bd))
+* **ui:** real font faces, line-height config, theme presets + overrides ([8fd8967](https://github.com/gabriel-rivero/berth/commit/8fd8967a9a7f310f8e66e9552111444a76124d0c))
+* **ui:** recover from lost surfaces, debug frame HUD, draw confirm last ([7e42e5c](https://github.com/gabriel-rivero/berth/commit/7e42e5ceced203b8284e20e3c1d23f3b3e66c8e1))
+* **ui:** scrollback search with incremental query and hit navigation ([387ee78](https://github.com/gabriel-rivero/berth/commit/387ee782b7952c15af895efe5da3da60574f0dd3))
+* **ui:** scrolling feel — sub-line wheel accumulation, tail snap, scroll overlay ([35f4ed5](https://github.com/gabriel-rivero/berth/commit/35f4ed52979208a47d6fdb08f9c71616a73467b3))
+* **ui:** surface non-zero shell exits as a transient notice ([3b15f26](https://github.com/gabriel-rivero/berth/commit/3b15f26ce66b604f42dee749e03435a7a3949bde))
+
+
+### Bug Fixes
+
+* **render:** wide-char underlines/strikeouts span both cells ([e2ecbde](https://github.com/gabriel-rivero/berth/commit/e2ecbde9da25e22d2f381e7ebd018ff5a985c656))
+* **ui:** unify chrome hit-testing, fix wheel routing and color pipeline ([3b36c12](https://github.com/gabriel-rivero/berth/commit/3b36c121a0cd2fb6cd589245d3eec3a651ca16b6))
+
+
+### Documentation
+
+* point handover at DECCKM/IME head ([c8adcc8](https://github.com/gabriel-rivero/berth/commit/c8adcc8530e7f057eac88e9b1501b1df7cddfcd4))
+* point handover at selection auto-scroll head ([bde62cb](https://github.com/gabriel-rivero/berth/commit/bde62cb9a3ca06018a8025a4b0b12224f38ad9c6))
+* point handover at wide-glyph head ([d182cbe](https://github.com/gabriel-rivero/berth/commit/d182cbe14f626f05a47998e5349b3704e39cbdb0))
+* refresh handover after exit notice and bell attention ([9cac149](https://github.com/gabriel-rivero/berth/commit/9cac149916d57cdbaf0a2192e5843b6696ed7638))
+* refresh handover after plugin segments and exit notice ([4997045](https://github.com/gabriel-rivero/berth/commit/4997045ef34c9c30a38915e8f41ad82570d3f2ac))
+* refresh handover state after budget work ([3ea636c](https://github.com/gabriel-rivero/berth/commit/3ea636c0ba1e728ec998428c7bf97f2cd4bbb920))
+* session handover for the Nov 2026 fix/quality wave ([6b0970a](https://github.com/gabriel-rivero/berth/commit/6b0970ac6d8395f1aa38a98382273f3a2ebf2b0d))
+
 ## [0.24.0](https://github.com/gabriel-rivero/berth/compare/v0.23.0...v0.24.0) (2026-11-04)
 
 
