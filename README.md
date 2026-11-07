@@ -180,7 +180,8 @@ scrollback = 10000                # lines kept per pane (0 disables, capped at 1
 to panes created after the config reload — existing panes keep their grid.
 
 A shell that exits non-zero shows a transient `shell exited (code N)` strip at
-the bottom of the window (clean exits close the pane silently).
+the bottom of the window (clean exits close the pane silently). A terminal bell
+in a background tab lights a dot on that tab until you switch to it.
 
 ### Remaining
 

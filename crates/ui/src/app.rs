@@ -7,7 +7,7 @@ use berth_core::keybinds::{Action, Chord, build_bindings};
 use berth_core::layout::{Layout, PaneId, Rect, Session, Tab, TabId, Workspace, WorkspaceId};
 use berth_emulation::pane::{LinkSpan, Pane, PaneEvent, SelectionKind, TermPoint};
 use berth_plugins::{LoadedPlugin, WorkspaceRename, plugin_engine};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use winit::{
@@ -225,6 +225,8 @@ pub struct Berth {
     /// Transient bottom-strip message (non-zero shell exit, plugin errors) and
     /// when it should disappear.
     notice: Option<(String, std::time::Instant)>,
+    /// Tabs that rang the bell while not focused; cleared when the tab is viewed.
+    attention: HashSet<TabId>,
     /// Set when the app decided to exit; about_to_wait stops the loop.
     exiting: bool,
     /// Where the layout session snapshot lives (None = no config dir).
@@ -497,7 +499,7 @@ impl Berth {
         let (rect_list, dividers) = self.current_rects(area);
         let rect_map: HashMap<PaneId, Rect> = rect_list.into_iter().collect();
         let self_titles = &self.titles;
-        let tabs: Vec<(&str, bool)> = self
+        let tabs: Vec<(&str, bool, bool)> = self
             .layout
             .active_workspace()
             .map(|ws| {
@@ -508,7 +510,11 @@ impl Berth {
                             .get(&t.focused)
                             .map(String::as_str)
                             .unwrap_or(t.label.as_str());
-                        (label, t.id == ws.focused_tab)
+                        (
+                            label,
+                            t.id == ws.focused_tab,
+                            self.attention.contains(&t.id),
+                        )
                     })
                     .collect()
             })
@@ -1077,6 +1083,16 @@ impl Berth {
         }
         self.sync_window_title();
         self.window.as_ref().inspect(|w| w.request_redraw());
+    }
+
+    /// Which tab currently owns `pane` (any workspace; panes outlive focus).
+    fn tab_of_pane(&self, pane: PaneId) -> Option<TabId> {
+        self.layout
+            .workspaces
+            .iter()
+            .flat_map(|ws| &ws.tabs)
+            .find(|t| t.pane_ids_in_order().contains(&pane))
+            .map(|t| t.id)
     }
 
     /// Mirror the focused pane's OSC title into the OS window title, prefixed
@@ -1866,6 +1882,17 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 }
                 self.redraw();
             }
+            PaneEvent::Bell(id) => {
+                // A bell in the visible+focused pane is redundant; everything
+                // else gets a dot on its tab until that tab is looked at.
+                let visible = self.window_focused && self.focused_pane == id;
+                if !visible && let Some(tab) = self.tab_of_pane(id) {
+                    dlog_app!("bell pane={id:?} -> tab {:?} attention", tab);
+                    if self.attention.insert(tab) {
+                        self.redraw();
+                    }
+                }
+            }
             PaneEvent::Closed(id) => {
                 // Reap the child first: reader EOF fires for both a clean `exit`
                 // and a crash, and a non-zero code is worth surfacing before the
@@ -2425,6 +2452,12 @@ impl ApplicationHandler<PaneEvent> for Berth {
         }
         self.poll_config_reload();
         self.tick_plugins();
+        // Viewing a tab (focused window) consumes its bell attention dot.
+        if self.window_focused
+            && let Some(tab) = self.layout.active_tab().map(|t| t.id)
+        {
+            self.attention.remove(&tab);
+        }
         // Periodic layout snapshot (shells are not persisted; only the tree).
         if let Some(path) = self.session_path.as_ref()
             && self.last_save.elapsed() >= std::time::Duration::from_millis(SESSION_SAVE_MS)
@@ -2751,6 +2784,7 @@ pub fn run() -> anyhow::Result<()> {
         plugins,
         status_segments: Vec::new(),
         notice: None,
+        attention: HashSet::new(),
         exiting: false,
         session_path: session_file,
         last_save: std::time::Instant::now(),

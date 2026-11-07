@@ -1755,7 +1755,7 @@ impl Renderer {
     #[allow(clippy::too_many_arguments)]
     fn draw_tab_bar(
         &mut self,
-        tabs: &[(&str, bool)],
+        tabs: &[(&str, bool, bool)],
         metrics: Metrics,
         ch: Chrome,
         sb_w: f32,
@@ -1773,7 +1773,7 @@ impl Renderer {
         sink.push(sb_w, 0.0, sb_w + bar_w, ch.tab_bar_h, colors.bar_bg, None);
         // Vertical centering: text baseline sits half a cell below the strip middle.
         let baseline = (ch.tab_bar_h - metrics.cell_h) * 0.5 + metrics.ascent;
-        for (i, (title, active)) in tabs.iter().enumerate() {
+        for (i, (title, active, attention)) in tabs.iter().enumerate() {
             let x0 = sb_w + i as f32 * tab_w;
             let is_hovered = matches!(hovered, Some(ChromeZone::Tab(idx) | ChromeZone::TabClose(idx)) if idx == i);
             let mut bg = if *active {
@@ -1830,6 +1830,19 @@ impl Renderer {
                     close_color,
                     sink,
                 );
+            }
+            // Bell attention dot sits left of the (possibly hidden) ✕ so it
+            // never shifts the label or the close target.
+            if *attention {
+                let r = 3.0 * s;
+                let gap = if *active || is_hovered {
+                    ch.close_w + 8.0 * s
+                } else {
+                    8.0 * s
+                };
+                let cx = x0 + tab_w - pad_x - gap - r;
+                let cy = ch.tab_bar_h * 0.5;
+                sink.push_round(cx - r, cy - r, cx + r, cy + r, colors.focus_outline, r);
             }
         }
         // `+` new-tab button when the strip has room for it.
@@ -2120,7 +2133,7 @@ impl Renderer {
         &mut self,
         panes: &[(&Term<TermListener>, Rect)],
         dividers: &[Rect],
-        tabs: &[(&str, bool)],
+        tabs: &[(&str, bool, bool)],
         workspaces: &[(&str, bool)],
         sb_w: f32,
         focus: Option<Rect>,

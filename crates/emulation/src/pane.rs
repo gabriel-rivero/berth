@@ -49,6 +49,8 @@ pub enum PaneEvent {
     /// Terminal-query reply the parser generated (DSR cursor report, DA1, ...)
     /// that must be written back to the PTY.
     PtyWrite(PaneId, Vec<u8>),
+    /// Terminal bell (BEL / OSC 0x07); marks the owning tab for attention.
+    Bell(PaneId),
     /// Lifecycle log line (spawn/reader/writer state) for triage; goes to the
     /// app log file unconditionally (BERTH_DEBUG not required).
     Log(String),
@@ -77,6 +79,9 @@ impl EventListener for TermListener {
             }
             alacritty_terminal::event::Event::ResetTitle => {
                 (self.notify)(PaneEvent::TitleReset(self.pane));
+            }
+            alacritty_terminal::event::Event::Bell => {
+                (self.notify)(PaneEvent::Bell(self.pane));
             }
             // Terminal-query replies (DSR 6n cursor report, DA1/DA2, DECRPM, ...).
             // ConPTY's INHERIT_CURSOR gates cmd.exe startup on the 6n reply.
@@ -974,5 +979,21 @@ mod shell_config_tests {
         let line = pane.selection_text().expect("line selection");
         assert_eq!(line.trim(), "alpha beta gamma", "line selection: {line:?}");
         pane.kill();
+    }
+
+    #[test]
+    fn bell_is_forwarded_to_the_ui() {
+        use alacritty_terminal::event::EventListener;
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let listener = TermListener::new(
+            berth_core::layout::PaneId(4),
+            Arc::new(move |ev| sink.lock().expect("events").push(ev)),
+        );
+        listener.send_event(alacritty_terminal::event::Event::Bell);
+        let events = seen.lock().expect("events");
+        assert!(
+            matches!(events.as_slice(), [PaneEvent::Bell(id)] if *id == berth_core::layout::PaneId(4))
+        );
     }
 }
