@@ -5,10 +5,13 @@ the short version: what landed, what to run, what is next.
 
 ## Branch state
 
-`main` at `83112cd`, pushed to origin. 16 commits since the v0.24.0 release
+`main` at `3b15f26`, not yet pushed. 19 commits since the v0.24.0 release
 (`bc620e8`), all tests/clippy green at the time of writing:
 
 ```
+3b15f26 non-zero shell exit notice (transient bottom strip)
+cd11eb6 plugin status segments + accent() host import
+3ea636c refresh handover after budget work
 83112cd lightweight budget probe, --version, CI 60 MiB size gate
 6b0970a session handover doc
 0be64f8 fullscreen, clear-scrollback, zoom badge + rich window title
@@ -86,12 +89,12 @@ takes ~9 min cold.
 
 ## Next up (roadmap order)
 
-1. **Plugin-facing polish (item 8 remainder)** — WIT export for status-bar
-   segments/badges (currently only `on-layout-change` + host imports), plugin
-   manager panel (list, enable/disable, last error, reload), capability
-   manifest, theme-aware accent colors passed to guests.
+1. **Plugin-facing polish (item 8 remainder)** — status segments shipped via
+   host `set-status`/`accent` imports; still open: plugin manager panel (list,
+   enable/disable, last error, reload), capability manifest, richer segment
+   metadata (badges/icons/click actions).
 2. **Table stakes still open** — IME; DECCKM + kitty keyboard probe;
-   bell→attention; exit-status surfacing; wide-glyph advance audit; selection
+   bell→attention; wide-glyph advance audit; selection
    drag auto-scroll past window edges (qwen U-13).
 3. **Distribution** — README screenshot/GIF, `.desktop` + AppStream, winget,
    `sha256sums.txt`, cargo-binstall metadata, config reference doc, CHANGELOG
