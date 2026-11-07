@@ -98,8 +98,8 @@ takes ~9 min cold.
    host `set-status`/`accent` imports; still open: plugin manager panel (list,
    enable/disable, last error, reload), capability manifest, richer segment
    metadata (badges/icons/click actions).
-2. **Table stakes still open** — kitty keyboard protocol probe;
-   wide-glyph advance audit.
+2. **Table stakes still open** — kitty keyboard protocol probe (wide-glyph audit
+   done: glyph advance + two-cell decorations).
 3. **Distribution** — README screenshot/GIF, `.desktop` + AppStream, winget,
    `sha256sums.txt`, cargo-binstall metadata, config reference doc, CHANGELOG
    dedupe, in-app config access (`Config` still has no `save()`).

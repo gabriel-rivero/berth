@@ -1070,6 +1070,16 @@ struct QuadSink {
 /// for chrome (tab bar, sidebar, outlines) so a full grid never starves chrome.
 const QUAD_LIMIT: usize = (24 << 20) / std::mem::size_of::<Vertex>();
 
+/// Width of underline/strikeout decorations for a cell: wide characters own
+/// two columns (their trailing spacer is skipped), everything else one.
+fn decoration_width(cell_w: f32, flags: Flags) -> f32 {
+    if flags.contains(Flags::WIDE_CHAR) {
+        cell_w * 2.0
+    } else {
+        cell_w
+    }
+}
+
 /// 4 thin quads tracing the inside of `r` (focused-pane outline).
 fn draw_focus_outline(sink: &mut QuadSink, r: Rect, color: [f32; 4]) {
     let t = FOCUS_OUTLINE_PX;
@@ -2593,6 +2603,9 @@ impl Renderer {
             }
 
             // SGR 4/21/24/53: underline and strikeout rects in the text color.
+            // Wide chars occupy two cells (the second is a skipped spacer), so
+            // their decorations span both columns instead of half the glyph.
+            let uw = decoration_width(metrics.cell_w, cell.flags);
             let thickness = (metrics.cell_h * 0.055).max(1.0);
             let baseline = py + metrics.ascent;
             let link_hovered = link
@@ -2603,16 +2616,16 @@ impl Renderer {
                 || link_hovered
             {
                 let uy = (baseline + thickness).min(py + metrics.cell_h - thickness);
-                sink.push(px, uy, px + metrics.cell_w, uy + thickness, fg, None);
+                sink.push(px, uy, px + uw, uy + thickness, fg, None);
                 if cell.flags.contains(Flags::DOUBLE_UNDERLINE) {
                     let uy2 = uy + thickness * 1.8;
-                    sink.push(px, uy2, px + metrics.cell_w, uy2 + thickness, fg, None);
+                    sink.push(px, uy2, px + uw, uy2 + thickness, fg, None);
                 }
                 quads_bg += 1;
             }
             if cell.flags.contains(Flags::STRIKEOUT) {
                 let sy = py + metrics.cell_h * 0.55;
-                sink.push(px, sy, px + metrics.cell_w, sy + thickness, fg, None);
+                sink.push(px, sy, px + uw, sy + thickness, fg, None);
                 quads_bg += 1;
             }
         }
@@ -2895,5 +2908,11 @@ mod tests {
         assert_eq!(hex_to_linear("abc"), None);
         assert_eq!(hex_to_linear("#12345"), None);
         assert_eq!(hex_to_linear("#xyzxyz"), None);
+    }
+
+    #[test]
+    fn wide_char_decorations_span_two_cells() {
+        assert_eq!(decoration_width(10.0, Flags::WIDE_CHAR), 20.0);
+        assert_eq!(decoration_width(10.0, Flags::empty()), 10.0);
     }
 }

@@ -192,8 +192,8 @@ clickable links (OSC 8 + scheme-scan, safe-scheme allowlist, hover underline +
  `[zoom]` marker **[done 2026-11]** · non-zero shell exit notice **[done 2026-11]** ·
  drag-selection auto-scroll past pane edges (40 ms timer, edge-anchored
  extension — qwen U-13) **[done 2026-11]** ·
- **[open]**: kitty keyboard protocol probe;
- wide-glyph advance audit.
+ **[open]**: kitty keyboard protocol probe. Wide-glyph audit **[done 2026-11]**
+ (glyph advance from swash; underline/strikeout decorations now span both cells).
 
 ## Distribution / branding (review §4d)
 

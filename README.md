@@ -194,7 +194,7 @@ in a background tab lights a dot on that tab until you switch to it.
   inline; Enter commits, Esc cancels); still missing drag tabs between
   workspaces, drag tabs between panes
 - polish: window-title-based quit guard, scrolling/selection interplay;
-  wide-glyph spacing beyond the fallback chain
+  wide glyphs render through the fallback chain with two-cell decorations
 - advanced TUIs: kitty keyboard protocol probe/responses (TERM=xterm-256color
   + COLORTERM=truecolor already cover the common palette cases)
 - platform: keep ConPTY path honest on Windows (CI compiles but manual QA pending)
