@@ -5,10 +5,12 @@ the short version: what landed, what to run, what is next.
 
 ## Branch state
 
-`main` at `31a793c`, pushed. 21 commits since the v0.24.0 release
+`main` at `b30f0aa`, pushed. 23 commits since the v0.24.0 release
 (`bc620e8`), all tests/clippy green at the time of writing:
 
 ```
+b30f0aa DECCKM application arrows + platform IME routing
+9cac149 refresh handover header/next-up after bell work
 31a793c bell in a background tab lights an attention dot
 4997045 refresh handover after exit-notice/bell work
 3b15f26 non-zero shell exit notice (transient bottom strip)
