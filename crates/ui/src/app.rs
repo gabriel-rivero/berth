@@ -239,6 +239,8 @@ pub struct Berth {
     notice: Option<(String, std::time::Instant)>,
     /// Tabs that rang the bell while not focused; cleared when the tab is viewed.
     attention: HashSet<TabId>,
+    /// `plugin:capability` keys already logged, so denied calls don't spam.
+    plugin_denial_log: HashSet<String>,
     /// Set when the app decided to exit; about_to_wait stops the loop.
     exiting: bool,
     /// Where the layout session snapshot lives (None = no config dir).
@@ -2841,6 +2843,16 @@ impl Berth {
                     plugin.name()
                 ));
             }
+            for denial in report.denials {
+                let key = format!("{}:{denial}", plugin.name());
+                if self.plugin_denial_log.insert(key) {
+                    crate::render::dlog_emit(&format!(
+                        "plugin '{}' ignored: {}",
+                        plugin.name(),
+                        denial
+                    ));
+                }
+            }
             let status = plugin.status();
             if !status.is_empty() {
                 segments.push(status.to_string());
@@ -2986,6 +2998,7 @@ pub fn run() -> anyhow::Result<()> {
         status_segments: Vec::new(),
         notice: None,
         attention: HashSet::new(),
+        plugin_denial_log: HashSet::new(),
         exiting: false,
         session_path: session_file,
         last_save: std::time::Instant::now(),

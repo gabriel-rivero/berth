@@ -107,7 +107,11 @@ Safety/pipeline, in risk order:
 2. **[done 2026-11]** Guest error surfacing: `call_on_layout_change` results are
    checked, logged with the plugin name, and faulted plugins are not retried
    (`LoadedPlugin::is_faulted`). Remaining: in-app error list/disable toggle.
-3. **[open]** `[[plugin]]` capability manifest (`layout.read`, `layout.rename`, …) before tier 2 adds power; unknown capability = load error.
+3. **[done 2026-11]** Capability manifest: `<stem>.toml` beside the component
+   (`name`, `capabilities = ["rename", "status"]`). Unknown capabilities or keys
+   are load errors; a missing/empty manifest grants nothing (read-only plugin).
+   Enforced per callback: denied renames/status are dropped, first denial per
+   plugin is logged as `plugin '<name>' ignored: needs '<cap>' capability`.
 4. **[open]** Change-event diff payload (or guests O(n²)-diff snapshots); rename conflict policy (first-writer-wins?); rename validation (empty/oversized/dup).
 5. **[open]** Lifecycle/versioning: host-version advertisement, WIT semver policy, single-source WIT (guest copy will drift).
 6. **[open]** Tier 2 shape: `set-tab-label`, `badge(target, text, color)` (pairs with core activity badges), `register-command` → quick switcher, notifications. Tier 3 observability: rate-limited PTY output taps, OSC event stream. Tier 4 control: spawn/move/`send-text` (the `berth` CLI/IPC = cmux `send` equivalent).
@@ -166,7 +170,7 @@ like one) while staying small and GPU-cheap. Ordered by perceived impact per eff
    short right-aligned tab-strip segment (clipped, refreshed each callback) and
    `accent` hands them the theme's `#rrggbb` accent (new `[theme] accent`, preset
    fallback), so plugin UI can match berth. Still open: plugin manager panel
-   (enable/disable, error list, reload), capability manifest, richer segment
+   (enable/disable, error list, reload), richer segment
    metadata (badges/icons, click actions).
 9. **[done 2026-11, self-hosted GPU budget open]** **Lightweight budget**: `--version`,
    `scripts/lightweight.sh` (binary size, first-frame latency, idle RSS under
@@ -217,7 +221,7 @@ clickable links (OSC 8 + scheme-scan, safe-scheme allowlist, hover underline +
 
 1. **"Trust it" S1 release** — core cluster **[done]**; stragglers tracked above.
 2. **Finish workspace identity** — drag **[done]**, persistence/config/switcher/badges **[open]**.
-3. **Wire plugins with a safety model, prove with 2 guests** — host + auto-namer **[done]**; safety limits + error surfacing **[done 2026-11]**; capability manifest, status segments & second (badge) guest **[open]**.
+3. **Wire plugins with a safety model, prove with 2 guests** — host + auto-namer **[done]**; safety limits + error surfacing **[done 2026-11]**; capability manifest **[done 2026-11]**, status segments & second (badge) guest **[open]**.
 
 ## qwen review's "next 3 work items" (Nov 2026, in order)
 

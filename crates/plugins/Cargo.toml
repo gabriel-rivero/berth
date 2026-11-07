@@ -12,3 +12,5 @@ repository.workspace = true
 wasmtime.workspace = true
 wasmtime-wasi.workspace = true
 anyhow.workspace = true
+serde.workspace = true
+toml.workspace = true

@@ -98,7 +98,7 @@ takes ~9 min cold.
 
 1. **Plugin-facing polish (item 8 remainder)** — status segments shipped via
    host `set-status`/`accent` imports; still open: plugin manager panel (list,
-   enable/disable, last error, reload), capability manifest, richer segment
+   enable/disable, last error, reload), richer segment
    metadata (badges/icons/click actions).
 2. **Table stakes still open** — kitty keyboard protocol probe (wide-glyph audit
    done: glyph advance + two-cell decorations).

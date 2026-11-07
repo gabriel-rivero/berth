@@ -6,6 +6,8 @@
 //!
 //! Canonical WIT: `wit/berth-plugin.wit` here; the guest crate keeps a synced
 //! copy at `guest/wit/`.
+use anyhow::Context;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 use wasmtime::Engine;
@@ -26,6 +28,47 @@ wasmtime::component::bindgen!({
     world: "plugin",
 });
 
+/// What a plugin declared it may do, read from its `<stem>.toml` manifest.
+///
+/// The host enforces these on every callback: without `rename` a guest cannot
+/// change workspace labels, without `status` it cannot publish a tab-strip
+/// segment. A plugin with no manifest gets no capabilities (and is logged).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Capabilities {
+    pub rename: bool,
+    pub status: bool,
+}
+
+impl Capabilities {
+    pub fn is_empty(self) -> bool {
+        !self.rename && !self.status
+    }
+}
+
+/// Parsed plugin manifest (`<stem>.toml` beside the `.wasm`).
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct Manifest {
+    /// Display name override; defaults to the wasm file stem.
+    name: Option<String>,
+    /// Declared capabilities: `"rename"`, `"status"`.
+    capabilities: Vec<String>,
+}
+
+impl Manifest {
+    fn capabilities(&self) -> anyhow::Result<Capabilities> {
+        let mut caps = Capabilities::default();
+        for cap in &self.capabilities {
+            match cap.as_str() {
+                "rename" => caps.rename = true,
+                "status" => caps.status = true,
+                other => anyhow::bail!("unknown capability {other:?} (expected rename|status)"),
+            }
+        }
+        Ok(caps)
+    }
+}
+
 /// Host-side state exposed to one plugin instance.
 pub struct HostState {
     /// Read-only snapshot filled by the app right before each sync call.
@@ -37,6 +80,10 @@ pub struct HostState {
     status: String,
     /// Theme accent exposed to guests as `#rrggbb`.
     accent: String,
+    /// Capabilities granted by the plugin manifest.
+    caps: Capabilities,
+    /// Calls a guest made without the matching capability (drained per sync).
+    denials: Vec<String>,
     /// WASI p2 state; guests are plain std shims that import clocks/io/cli.
     table: ResourceTable,
     wasi: WasiCtx,
@@ -63,10 +110,18 @@ impl berth::plugin::host::Host for HostState {
     }
 
     fn set_workspace_label(&mut self, id: u64, label: String) {
+        if !self.caps.rename {
+            self.deny("rename");
+            return;
+        }
         self.pending_renames.insert(id, label);
     }
 
     fn set_status(&mut self, text: String) {
+        if !self.caps.status {
+            self.deny("status");
+            return;
+        }
         // Bound the payload: guests should publish short segments, and this
         // text is laid out in the tab strip every frame.
         self.status = text.chars().take(80).collect();
@@ -74,6 +129,17 @@ impl berth::plugin::host::Host for HostState {
 
     fn accent(&mut self) -> String {
         self.accent.clone()
+    }
+}
+
+impl HostState {
+    /// Record a capability denial once per callback so the app can surface it
+    /// without a chatty guest producing hundreds of log lines.
+    fn deny(&mut self, cap: &str) {
+        let msg = format!("needs '{cap}' capability");
+        if !self.denials.contains(&msg) {
+            self.denials.push(msg);
+        }
     }
 }
 
@@ -93,16 +159,32 @@ pub struct SyncReport {
     pub renames: Vec<WorkspaceRename>,
     /// Trap message when the guest was stopped; the plugin is faulted then.
     pub error: Option<String>,
+    /// Calls the guest made without the declared capability, deduplicated.
+    pub denials: Vec<String>,
 }
 
 impl LoadedPlugin {
     /// Compile + instantiate `path` (a `.wasm` component file).
     pub fn load(engine: &Engine, path: &Path) -> anyhow::Result<Self> {
-        let name = path
+        let stem = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("unnamed")
-            .to_string();
+            .unwrap_or("unnamed");
+        // Capabilities are declared next to the component (`foo.toml` for
+        // `foo.wasm`). No manifest = no capabilities, not full trust.
+        let manifest_path = path.with_extension("toml");
+        let manifest = match std::fs::read_to_string(&manifest_path) {
+            Ok(text) => toml::from_str::<Manifest>(&text)
+                .with_context(|| format!("parsing {}", manifest_path.display()))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Manifest::default(),
+            Err(e) => {
+                return Err(e).with_context(|| format!("reading {}", manifest_path.display()));
+            }
+        };
+        let caps = manifest
+            .capabilities()
+            .with_context(|| format!("validating {}", manifest_path.display()))?;
+        let name = manifest.name.unwrap_or_else(|| stem.to_string());
         let component = Component::from_file(engine, path)?;
         let mut store = Store::new(
             engine,
@@ -112,6 +194,8 @@ impl LoadedPlugin {
                 pending_renames: HashMap::new(),
                 status: String::new(),
                 accent: String::new(),
+                caps,
+                denials: Vec::new(),
                 table: ResourceTable::new(),
                 wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
                 limits: wasmtime::StoreLimitsBuilder::new()
@@ -146,6 +230,11 @@ impl LoadedPlugin {
     /// Status segment published during the last `sync` (empty if none).
     pub fn status(&self) -> &str {
         &self.store.data().status
+    }
+
+    /// Capabilities the manifest granted (empty when it is missing).
+    pub fn capabilities(&self) -> Capabilities {
+        self.store.data().caps
     }
 
     /// Theme accent handed to the guest's `accent()` import.
@@ -191,7 +280,12 @@ impl LoadedPlugin {
                 Some(format!("{e:#}"))
             }
         };
-        SyncReport { renames, error }
+        let denials = std::mem::take(&mut self.store.data_mut().denials);
+        SyncReport {
+            renames,
+            error,
+            denials,
+        }
     }
 }
 
@@ -230,7 +324,14 @@ pub fn load_plugins(
             continue;
         }
         match LoadedPlugin::load(engine, &path) {
-            Ok(plugin) => out.push(plugin),
+            Ok(plugin) => {
+                if plugin.capabilities().is_empty() {
+                    log(format!(
+                        "plugin {stem} declared no capabilities ({stem}.toml missing or empty); renames/status will be ignored"
+                    ));
+                }
+                out.push(plugin)
+            }
             Err(e) => log(format!("plugin {} failed to load: {e}", path.display())),
         }
     }
@@ -244,4 +345,34 @@ pub fn plugin_engine() -> anyhow::Result<Engine> {
     cfg.wasm_component_model(true);
     cfg.consume_fuel(true);
     Ok(Engine::new(&cfg)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manifest_grants_only_declared_capabilities() {
+        let manifest: Manifest =
+            toml::from_str("name = \"auto-namer\"\ncapabilities = [\"rename\"]\n").unwrap();
+        assert_eq!(manifest.name.as_deref(), Some("auto-namer"));
+        let caps = manifest.capabilities().unwrap();
+        assert!(caps.rename);
+        assert!(!caps.status);
+        assert!(!caps.is_empty());
+    }
+
+    #[test]
+    fn manifest_without_entries_grants_nothing() {
+        let caps = Manifest::default().capabilities().unwrap();
+        assert!(caps.is_empty());
+    }
+
+    #[test]
+    fn manifest_rejects_unknown_capability_and_unknown_keys() {
+        let manifest: Manifest = toml::from_str("capabilities = [\"network\"]\n").unwrap();
+        let err = manifest.capabilities().unwrap_err().to_string();
+        assert!(err.contains("unknown capability"), "{err}");
+        assert!(toml::from_str::<Manifest>("sandbox = true\n").is_err());
+    }
 }

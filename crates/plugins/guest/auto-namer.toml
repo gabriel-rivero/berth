@@ -1,0 +1,6 @@
+# Manifest for the auto-namer demo guest.
+# Copy next to the component as `auto-namer.wasm` + `auto-namer.toml`:
+#   cp berth_plugin_guest.wasm ~/.config/berth/plugins/auto-namer.wasm
+#   cp crates/plugins/guest/auto-namer.toml ~/.config/berth/plugins/
+name = "auto-namer"
+capabilities = ["rename", "status"]

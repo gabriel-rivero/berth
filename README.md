@@ -213,6 +213,24 @@ callback), queue workspace renames with `set-workspace-label`, publish a short
 tab-strip segment with `set-status`, and read the active theme color with
 `accent` (`#rrggbb`). Status segments are cleared before every callback, so
 guests republish them each run.
+
+Next to each component the host reads an optional manifest, `<stem>.toml`
+(e.g. `auto-namer.toml` for `auto-namer.wasm`):
+
+```toml
+name = "auto-namer"                  # display name (defaults to the file stem)
+capabilities = ["rename", "status"]  # granted host calls; unknown names fail loudly
+```
+
+Capabilities are enforced, not advisory: without `rename` every
+`set-workspace-label` is ignored, without `status` the segment is dropped, and
+the first denied call per plugin is logged as
+`plugin '<name>' ignored: needs '<cap>' capability`. A plugin with no manifest
+(or an empty list) loads but can only read state; it cannot rename or publish
+UI. Demo guest: `crates/plugins/guest` (auto-namer: `ws 2` → `ws-02`, plus a
+`N ws` status segment), compiled with
+`cargo build -p berth-plugin-guest --release --target wasm32-wasip2`; copy
+`crates/plugins/guest/auto-namer.toml` beside the renamed wasm.
 Broken plugins log and are skipped. Guests are sandboxed by fuel metering
 (50 M units per callback) and a 64 MiB linear-memory cap: a `loop {}`, O(n²)
 bug or memory runaway traps the guest, logs `plugin '<name>' trapped; disabled
