@@ -1780,15 +1780,90 @@ fn cursor_key(tail: &'static str, csi_mod: u8, modified: bool, app_cursor: bool)
     }
 }
 
+/// Kitty keyboard protocol parameter: 1 + shift*1 + alt*2 + ctrl*4 + super*8.
+fn kitty_mods(mods: ModifiersState) -> u8 {
+    1 + mods.shift_key() as u8
+        + mods.alt_key() as u8 * 2
+        + mods.control_key() as u8 * 4
+        + mods.super_key() as u8 * 8
+}
+
+/// Encode a key per the kitty keyboard protocol when the running app enabled
+/// it (`CSI > flags u` → alacritty sets these `TermMode` bits).
+///
+/// The probe (`CSI ? u`), push/pop and flag reporting are handled by
+/// `alacritty_terminal`; this is the encode side. Plain text without
+/// ctrl/alt/super is left to the legacy path unless the app asked for
+/// `REPORT_ALL_KEYS_AS_ESC`, and release events are only emitted when
+/// `REPORT_EVENT_TYPES` is set.
+fn kitty_key_bytes(
+    key: &Key,
+    state: ElementState,
+    repeat: bool,
+    mods: ModifiersState,
+    mode: TermMode,
+) -> Option<Vec<u8>> {
+    if !mode.contains(TermMode::DISAMBIGUATE_ESC_CODES) {
+        return None;
+    }
+    let plain = !(mods.control_key() || mods.alt_key() || mods.super_key());
+    let any_mod = mods.shift_key() || !plain;
+    let event_types = mode.contains(TermMode::REPORT_EVENT_TYPES);
+    if state == ElementState::Released && !event_types {
+        return None;
+    }
+    let codepoint: u32 = match key {
+        Key::Character(text) => {
+            // Unmodified printable text stays a plain byte on the legacy path
+            // (kitty only forces CSI-u for it with REPORT_ALL_KEYS_AS_ESC).
+            if plain && !mode.contains(TermMode::REPORT_ALL_KEYS_AS_ESC) {
+                return None;
+            }
+            text.chars().next()? as u32
+        }
+        Key::Named(NamedKey::Space) => {
+            if plain && !mode.contains(TermMode::REPORT_ALL_KEYS_AS_ESC) {
+                return None;
+            }
+            32
+        }
+        // Disambiguate the keys that are otherwise ambiguous with control bytes.
+        Key::Named(NamedKey::Escape) => 27,
+        Key::Named(NamedKey::Enter) if any_mod => 13,
+        Key::Named(NamedKey::Tab) if any_mod => 9,
+        Key::Named(NamedKey::Backspace) if any_mod => 127,
+        _ => return None,
+    };
+    let m = kitty_mods(mods);
+    let event = match state {
+        ElementState::Released => 3,
+        ElementState::Pressed if repeat => 2,
+        ElementState::Pressed => 1,
+    };
+    let bytes = if event_types {
+        format!("\x1b[{codepoint};{m}:{event}u")
+    } else if m != 1 {
+        format!("\x1b[{codepoint};{m}u")
+    } else {
+        format!("\x1b[{codepoint}u")
+    };
+    Some(bytes.into_bytes())
+}
+
 fn encode_key(
     event: &KeyEvent,
     mods: ModifiersState,
     backspace: Backspace,
-    app_cursor: bool,
+    mode: TermMode,
 ) -> Option<Vec<u8>> {
+    if let Some(bytes) = kitty_key_bytes(&event.logical_key, event.state, event.repeat, mods, mode)
+    {
+        return Some(bytes);
+    }
     if event.state != ElementState::Pressed {
         return None;
     }
+    let app_cursor = mode.contains(TermMode::APP_CURSOR);
     let ctrl = mods.control_key();
     let shift = mods.shift_key();
     let alt = mods.alt_key();
@@ -2101,16 +2176,11 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 let consumed = event.state == ElementState::Pressed
                     && self.handle_chord(&event, self.modifiers);
                 // DECCKM: the focused pane decides arrow-key encoding.
-                let app_cursor = self
+                let term_mode = self
                     .panes
                     .get(&self.focused_pane)
-                    .map(|p| {
-                        p.lock()
-                            .expect("pane poisoned")
-                            .term_mode()
-                            .contains(TermMode::APP_CURSOR)
-                    })
-                    .unwrap_or(false);
+                    .map(|p| p.lock().expect("pane poisoned").term_mode())
+                    .unwrap_or_default();
                 let ime_owns_text =
                     ime_owns_text(self.ime_enabled, &event.logical_key, self.modifiers);
                 if !consumed
@@ -2119,7 +2189,7 @@ impl ApplicationHandler<PaneEvent> for Berth {
                         &event,
                         self.modifiers,
                         self.config.terminal.backspace,
-                        app_cursor,
+                        term_mode,
                     )
                     && let Some(pane) = self.panes.get(&self.focused_pane)
                 {
@@ -3077,5 +3147,101 @@ mod tests {
         // Edges are half-open: exactly top is inside, exactly bottom is outside.
         assert_eq!(autoscroll_delta(40.0, 40.0, 400.0), None);
         assert_eq!(autoscroll_delta(400.0, 40.0, 400.0), Some(-1));
+    }
+
+    #[test]
+    fn kitty_disambiguates_modified_text_and_control_keys() {
+        let dis = TermMode::DISAMBIGUATE_ESC_CODES;
+        let a = Key::Character("a".into());
+        let press = ElementState::Pressed;
+        // Modified text becomes CSI-u only after the app opts in.
+        assert_eq!(
+            kitty_key_bytes(&a, press, false, ModifiersState::CONTROL, dis),
+            Some(b"\x1b[97;5u".to_vec())
+        );
+        assert_eq!(
+            kitty_key_bytes(&a, press, false, ModifiersState::CONTROL, TermMode::empty()),
+            None
+        );
+        // Plain text stays byte-for-byte for apps that only disambiguate.
+        assert_eq!(
+            kitty_key_bytes(&a, press, false, ModifiersState::empty(), dis),
+            None
+        );
+        let esc = Key::Named(NamedKey::Escape);
+        assert_eq!(
+            kitty_key_bytes(&esc, press, false, ModifiersState::empty(), dis),
+            Some(b"\x1b[27u".to_vec())
+        );
+        // Enter/Tab/Backspace only switch form when modified.
+        let enter = Key::Named(NamedKey::Enter);
+        assert_eq!(
+            kitty_key_bytes(&enter, press, false, ModifiersState::empty(), dis),
+            None
+        );
+        assert_eq!(
+            kitty_key_bytes(&enter, press, false, ModifiersState::SHIFT, dis),
+            Some(b"\x1b[13;2u".to_vec())
+        );
+    }
+
+    #[test]
+    fn kitty_reports_event_types_including_release_and_repeat() {
+        let mode = TermMode::DISAMBIGUATE_ESC_CODES
+            | TermMode::REPORT_EVENT_TYPES
+            | TermMode::REPORT_ALL_KEYS_AS_ESC;
+        let a = Key::Character("a".into());
+        assert_eq!(
+            kitty_key_bytes(
+                &a,
+                ElementState::Pressed,
+                false,
+                ModifiersState::empty(),
+                mode
+            ),
+            Some(b"\x1b[97;1:1u".to_vec())
+        );
+        assert_eq!(
+            kitty_key_bytes(
+                &a,
+                ElementState::Pressed,
+                true,
+                ModifiersState::empty(),
+                mode
+            ),
+            Some(b"\x1b[97;1:2u".to_vec())
+        );
+        assert_eq!(
+            kitty_key_bytes(
+                &a,
+                ElementState::Released,
+                false,
+                ModifiersState::empty(),
+                mode
+            ),
+            Some(b"\x1b[97;1:3u".to_vec())
+        );
+        // Releases stay silent unless the app requested event types.
+        assert_eq!(
+            kitty_key_bytes(
+                &a,
+                ElementState::Released,
+                false,
+                ModifiersState::empty(),
+                TermMode::DISAMBIGUATE_ESC_CODES
+            ),
+            None
+        );
+        // Super is bit 8 (modifier param 9).
+        assert_eq!(
+            kitty_key_bytes(
+                &a,
+                ElementState::Pressed,
+                false,
+                ModifiersState::SUPER,
+                mode
+            ),
+            Some(b"\x1b[97;9:1u".to_vec())
+        );
     }
 }

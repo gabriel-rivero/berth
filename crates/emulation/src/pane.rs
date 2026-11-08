@@ -340,6 +340,9 @@ impl Pane {
         };
         let term_cfg = TermConfig {
             scrolling_history: scrollback,
+            // Accept kitty keyboard protocol push/pop/query from TUIs; the UI
+            // encodes keys from the resulting TermMode bits.
+            kitty_keyboard: true,
             ..TermConfig::default()
         };
         let term = Term::new(term_cfg, &size, TermListener::new(id, notify.clone()));

@@ -77,6 +77,12 @@ the cursor until commit, and DECCKM application-cursor mode (`ESC O A…`) is
 honored for arrows/Home/End. Ctrl/alt/super shortcuts still go through the
 key-event path, never the IME.
 
+The kitty keyboard protocol is supported: TUIs that query or push flags get
+CSI-u key encoding (modifiers, repeat/release events, disambiguated Esc/Enter/
+Tab) from the resulting term mode. Legacy and modified-arrow encoding are
+unchanged for apps that never opt in. Alternate-key and associated-text
+parameters are not emitted yet.
+
 | action | keys |
 | --- | --- |
 | split vertically / horizontally | `cmd+d` (`ctrl+shift+Enter`) / `cmd+shift+d` (`ctrl+shift+\`) |
@@ -195,8 +201,8 @@ in a background tab lights a dot on that tab until you switch to it.
   workspaces, drag tabs between panes
 - polish: window-title-based quit guard, scrolling/selection interplay;
   wide glyphs render through the fallback chain with two-cell decorations
-- advanced TUIs: kitty keyboard protocol probe/responses (TERM=xterm-256color
-  + COLORTERM=truecolor already cover the common palette cases)
+- advanced TUIs: kitty keyboard alternate-key/associated-text parameters;
+  TERM=xterm-256color + COLORTERM=truecolor cover the common palette cases
 - platform: keep ConPTY path honest on Windows (CI compiles but manual QA pending)
 - **M4** — plugin host (`crates/plugins`, slice 1 shipped, growing): fuel +
   memory limits, guest-trap surfacing/auto-disable, per-plugin config flags;
