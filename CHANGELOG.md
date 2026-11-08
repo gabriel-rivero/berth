@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.26.0](https://github.com/gabriel-rivero/berth/compare/v0.25.0...v0.26.0) (2026-11-08)
+
+
+### Features
+
+* **plugins:** enforce per-plugin capability manifests ([#44](https://github.com/gabriel-rivero/berth/issues/44)) ([844ce96](https://github.com/gabriel-rivero/berth/commit/844ce96dbc6b1d4b4ab5345f7cbb64ae40969d57))
+* **ui:** kitty keyboard protocol — CSI-u encoding from pushed flags ([#43](https://github.com/gabriel-rivero/berth/issues/43)) ([cb22717](https://github.com/gabriel-rivero/berth/commit/cb22717b7f27b0b29395201652e5af7fefdc94be))
+
 ## [0.25.0](https://github.com/gabriel-rivero/berth/compare/v0.24.0...v0.25.0) (2026-11-07)
 
 
