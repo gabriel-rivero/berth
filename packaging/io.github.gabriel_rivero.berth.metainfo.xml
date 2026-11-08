@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata for Linux packages; filename must match the component id. -->
+<component type="desktop-application">
+  <id>io.github.gabriel_rivero.berth</id>
+  <name>berth</name>
+  <summary>A lightweight terminal with workspaces, tabs and splits</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <description>
+    <p>
+      berth is a GPU-accelerated terminal emulator built in Rust on
+      alacritty_terminal. It adds a workspace sidebar, tab strip, split panes,
+      scrollback search, themes and sandboxed WASM plugins on top of a
+      standards-compliant VT engine.
+    </p>
+    <p>
+      Configuration is hot-reloading TOML: fonts, line height, ANSI palettes,
+      light/dark presets, shell command and keybindings. The renderer targets a
+      low memory and startup footprint and never uses a web view.
+    </p>
+  </description>
+  <launchable type="desktop-id">berth.desktop</launchable>
+  <url type="homepage">https://github.com/gabriel-rivero/berth</url>
+  <url type="bugtracker">https://github.com/gabriel-rivero/berth/issues</url>
+  <developer id="io.github.gabriel_rivero">
+    <name>Gabriel Rivero</name>
+  </developer>
+  <categories>
+    <category>System</category>
+    <category>TerminalEmulator</category>
+    <category>Utility</category>
+  </categories>
+  <keywords>
+    <keyword>terminal</keyword>
+    <keyword>shell</keyword>
+    <keyword>workspace</keyword>
+    <keyword>tabs</keyword>
+  </keywords>
+  <releases>
+    <release version="0.25.0" date="2026-11-07">
+      <description>
+        <p>Theme presets, real font faces, scrollback search, clickable links,
+        kitty keyboard protocol and capability-gated WASM plugins.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>
