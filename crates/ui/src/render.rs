@@ -836,6 +836,8 @@ pub struct FontCtx {
     shape: harfrust::Font,
     /// The family this context was built for (hot-reload comparison).
     family: String,
+    /// Family actually resolved from the database (diagnostics + test guards).
+    pub resolved: String,
     ctx: ScaleContext,
     /// (char, faux-bold, faux-italic) -> raster (None = unavailable in the chain).
     glyphs: HashMap<GlyphKey, Option<GlyphRef>>,
@@ -1079,6 +1081,10 @@ impl FontCtx {
             line_height,
             shape,
             family: family.to_string(),
+            resolved: id
+                .and_then(|id| db.face(id))
+                .and_then(|fi| fi.families.first().map(|f| f.0.clone()))
+                .unwrap_or_else(|| "bundled JetBrainsMono".to_string()),
             ctx: swash::scale::ScaleContext::new(),
             glyphs: HashMap::new(),
             gid_glyphs: HashMap::new(),
@@ -3611,7 +3617,9 @@ mod tests {
     #[test]
     fn shaping_merges_fira_code_arrows_when_installed() {
         let mut ctx = FontCtx::new("Fira Code", 16.0, 1.0).expect("font ctx");
-        if ctx.family != "Fira Code" || ctx.font.charmap().map('-') == 0 {
+        if !ctx.resolved.to_ascii_lowercase().contains("fira code")
+            || ctx.font.charmap().map('-') == 0
+        {
             return; // font not installed on this machine
         }
         // Fira Code ligates these through `calt`; any missing run means the
