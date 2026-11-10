@@ -31,14 +31,16 @@ Events and full tracking: **[docs/ROADMAP.md](docs/ROADMAP.md)** (includes the
 Nov 2026 external review's findings and their status). Every config key,
 default and per-OS path: **[docs/CONFIG.md](docs/CONFIG.md)**.
 
-v0.26.1 — M1–M3 shipped (details below), M4 plugin host in progress.
-Post-0.24.0 fixes: correct sRGB→linear color pipeline, mouse wheel scrolls the
-viewport instead of walking shell history (trackpad pixel deltas accumulate
-instead of rounding away), typing while scrolled back returns to the live tail
-with an overlay scrollbar/`↑N` badge, real hover states, one shared chrome
-hit-test for every press (close buttons stable across DPI/OS), rounded pill
-tab/sidebar chrome with shrink-to-fit tabs, real bold/italic
-faces, theme presets, and per-launch GPU diagnostics in `berth.log`.
+v0.29.0 — M1–M4 shipped (plugin host + in-app manager), M5 customization in
+progress. Recent waves: correct sRGB→linear color pipeline, mouse wheel scrolls
+the viewport (with wheel-over-chrome cycling), typing while scrolled back returns
+to the live tail, one shared chrome hit-test for every press (stable close
+buttons across DPI/OS), rounded pill chrome, real bold/italic faces, theme
+presets, touch taps mapped to clicks, right-click context menus, a real
+single-line workspace rename editor, `cmd+,` live settings panel, tab
+reordering/`cmd+1…9`, plugin manager with enable/disable + hot reload, a
+Nerd/Powerline/emoji/CJK glyph fallback chain (fontconfig-resolved on Linux),
+and HarfBuzz-accurate font ligatures (`[font] ligatures`).
 
 ### Shipped
 

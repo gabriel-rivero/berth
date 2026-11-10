@@ -217,6 +217,8 @@ applies). Action ids and their defaults:
 | `search` | `cmd+f`, `ctrl+shift+f` |
 | `fullscreen` | `f11`, `alt+enter` |
 | `clear-scrollback` | `cmd+k`, `ctrl+shift+k` |
+| `plugin-manager` | `cmd+shift+p`, `ctrl+shift+p` |
+| `settings` | `cmd+,`, `ctrl+,` |
 
 ## Runtime diagnostics
 

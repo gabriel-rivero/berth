@@ -1,21 +1,30 @@
-# Session handover — 2026-11-10
+# Session handover — 2026-11-10 (post v0.29.0)
 
 State for the next session. History lives in `docs/ROADMAP.md`; this file is
 the short version: what landed, what to run, what is next.
 
 ## Branch state
 
-`main` at the chrome-input commit (v0.27.0 tag cut, 0.28.0 release PR open),
-pushed, all tests/clippy/fmt green. Since v0.26.0:
+`main` at `a52c6ef` (`chore(main): release 0.29.0 (#52)`); **v0.29.0 is tagged
+and released** (12 assets, checksums verified, Linux binary smoke-tested). All
+tests/clippy/fmt green, CI green on ubuntu/macos/windows. Since v0.26.0:
 
 ```
+a52c6ef chore(main): release 0.29.0 (#52)
+54a3f39 test(fonts): guard Fira Code shaping test by resolved family
+d105ea6 fix(fonts): shape ligatures with harfrust
+1b19156 feat(fonts): ligature shaping for ASCII runs
+20303ad chore(main): release 0.28.0 (#50)
+07b1ee1 feat(fonts): nerd/powerline fallback chain and fontconfig glyph resolution
+a1803d3 feat(settings): cmd+, config panel with live apply and persistence
+9cc5e28 docs: handover for chrome input, rename editor and context menus
 7a7ec0c feat(chrome): move-tab-to-workspace rows in the tab context menu
 cb5e03d feat(chrome): right-click context menus for tabs, workspaces and panes
 f316dd9 fix(sidebar): real single-line editor for workspace rename
 8ba2296 feat(chrome): tab reordering, wheel-over-chrome, ctrl+digit tab slots
 7dd0ebb feat(plugins): in-app plugin manager with enable/disable, error list and hot reload
 bdfb0b3 chore(main): release 0.27.0 (#49)
-2c64c3e docs: record touch support and roadmap focus
+2c64c3e docs: record ROG Ally Windows run and touch-tap support in handover
 8878a1f feat(input): map touchscreen taps to left clicks
 fc078b4 chore(main): release 0.26.2 (#48)
 4c7995a fix(config): boot with defaults on parse errors; fix Windows IME test
