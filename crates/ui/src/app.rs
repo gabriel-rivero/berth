@@ -279,9 +279,132 @@ enum ClickZone {
 }
 
 /// In-progress sidebar rename (workspace id + current buffer text).
+/// Start of the word before `caret` (alt+left in the rename editor).
+fn word_start(buf: &str, caret: usize) -> usize {
+    let chars: Vec<char> = buf.chars().collect();
+    let mut i = caret.min(chars.len());
+    while i > 0 && chars[i - 1].is_whitespace() {
+        i -= 1;
+    }
+    while i > 0 && !chars[i - 1].is_whitespace() {
+        i -= 1;
+    }
+    i
+}
+
+/// End of the word at/after `caret` (alt+right in the rename editor).
+fn word_end(buf: &str, caret: usize) -> usize {
+    let chars: Vec<char> = buf.chars().collect();
+    let mut i = caret.min(chars.len());
+    while i < chars.len() && !chars[i].is_whitespace() {
+        i += 1;
+    }
+    while i < chars.len() && chars[i].is_whitespace() {
+        i += 1;
+    }
+    i
+}
+
 struct RenameEdit {
     ws: WorkspaceId,
     buf: String,
+    /// Caret position in chars (0..=buf.chars().count()).
+    caret: usize,
+    /// Selection anchor in chars; `Some` while a shift-selection is active.
+    anchor: Option<usize>,
+}
+
+impl RenameEdit {
+    fn new(ws: WorkspaceId) -> Self {
+        // Select-all semantics: type replaces the label, Enter keeps the old
+        // one when the buffer is empty.
+        Self {
+            ws,
+            buf: String::new(),
+            caret: 0,
+            anchor: None,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.buf.chars().count()
+    }
+
+    /// Byte offset of char index `i` (clamped).
+    fn byte_at(&self, i: usize) -> usize {
+        self.buf
+            .char_indices()
+            .nth(i)
+            .map(|(b, _)| b)
+            .unwrap_or(self.buf.len())
+    }
+
+    fn selection(&self) -> Option<(usize, usize)> {
+        self.anchor
+            .map(|a| (a.min(self.caret), a.max(self.caret)))
+            .filter(|(s, e)| s != e)
+    }
+
+    fn delete_selection(&mut self) -> bool {
+        let Some((s, e)) = self.selection() else {
+            return false;
+        };
+        let (bs, be) = (self.byte_at(s), self.byte_at(e));
+        self.buf.replace_range(bs..be, "");
+        self.caret = s;
+        self.anchor = None;
+        true
+    }
+
+    fn insert(&mut self, text: &str) {
+        self.delete_selection();
+        let at = self.byte_at(self.caret);
+        self.buf.insert_str(at, text);
+        self.caret += text.chars().count();
+        self.anchor = None;
+    }
+
+    fn backspace(&mut self) {
+        if self.delete_selection() {
+            return;
+        }
+        if self.caret == 0 {
+            return;
+        }
+        let (prev, at) = (self.byte_at(self.caret - 1), self.byte_at(self.caret));
+        self.buf.replace_range(prev..at, "");
+        self.caret -= 1;
+        self.anchor = None;
+    }
+
+    fn delete_forward(&mut self) {
+        if self.delete_selection() {
+            return;
+        }
+        if self.caret >= self.len() {
+            return;
+        }
+        let (at, next) = (self.byte_at(self.caret), self.byte_at(self.caret + 1));
+        self.buf.replace_range(at..next, "");
+        self.anchor = None;
+    }
+
+    /// Move the caret, extending the selection when `select` is set.
+    fn move_caret(&mut self, to: usize, select: bool) {
+        let to = to.min(self.len());
+        if select {
+            self.anchor.get_or_insert(self.caret);
+        } else {
+            self.anchor = None;
+        }
+        self.caret = to;
+    }
+
+    /// Display form: the caret as a trailing/embedded underscore.
+    fn display(&self) -> String {
+        let at = self.byte_at(self.caret);
+        format!("{}_{}", &self.buf[..at], &self.buf[at..])
+    }
 }
 
 /// Active scrollback search: modal query buffer plus the current hit list.
@@ -808,7 +931,7 @@ impl Berth {
             .unwrap_or_default();
         // Rename editor: show buffer + caret for the edited workspace entry.
         let rename_ws = self.rename_edit.as_ref().map(|r| r.ws);
-        let edit_label = self.rename_edit.as_ref().map(|r| format!("{}_", r.buf));
+        let edit_label = self.rename_edit.as_ref().map(|r| r.display());
         let workspaces: Vec<(&str, bool)> = self
             .layout
             .workspaces
@@ -1110,72 +1233,105 @@ impl Berth {
         let Some(ws) = self.layout.workspaces.get(index) else {
             return;
         };
-        self.rename_edit = Some(RenameEdit {
-            ws: ws.id,
-            // Select-all semantics: type replaces the label; Enter on an
-            // empty buffer keeps the old one.
-            buf: String::new(),
-        });
+        self.rename_edit = Some(RenameEdit::new(ws.id));
         if let Some(w) = &self.window {
             w.request_redraw();
         }
     }
 
-    /// Key interception while the rename editor is up. Consumes everything.
+    /// Apply the rename buffer to its workspace and close the editor.
+    fn commit_rename(&mut self) {
+        let Some(edit) = self.rename_edit.take() else {
+            return;
+        };
+        let label = edit.buf.trim();
+        if !label.is_empty()
+            && let Some(ws) = self.layout.workspaces.iter_mut().find(|w| w.id == edit.ws)
+        {
+            dlog_app!("rename ws {:?} -> {label:?}", ws.id);
+            ws.label = label.to_string();
+        }
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+    }
+
+    /// Key interception while the rename editor is up. Consumes everything:
+    /// it is a single-line editor with caret motion, shift-selection, paste,
+    /// word-jump and delete-forward (Esc cancels, Enter/click-outside commits).
     fn rename_chord(&mut self, event: &KeyEvent) -> bool {
         if self.rename_edit.is_none() {
             return false;
         }
-        // 0 = keep, 1 = commit, 2 = cancel, 3 = change buf.
-        enum Rm {
-            Keep,
-            Commit,
-            Cancel,
-        }
         use winit::keyboard::{Key, NamedKey};
-        let mut action = Rm::Keep;
-        if let Some(edit) = &mut self.rename_edit {
-            match &event.logical_key {
-                Key::Named(NamedKey::Enter)
-                | Key::Named(NamedKey::ArrowDown) // keys that would move focus
-                => {
-                    action = Rm::Commit;
+        let mods = self.modifiers;
+        let cmd = if cfg!(target_os = "macos") {
+            mods.super_key()
+        } else {
+            mods.control_key()
+        };
+        // Read the clipboard before borrowing the editor (single mutable
+        // borrow of `self` at a time).
+        let pasted = match &event.logical_key {
+            Key::Character(c) if cmd && c.eq_ignore_ascii_case("v") => self.get_clipboard(),
+            _ => None,
+        };
+        let Some(edit) = self.rename_edit.as_mut() else {
+            return false;
+        };
+        let mut commit = false;
+        let mut cancel = false;
+        match &event.logical_key {
+            Key::Named(NamedKey::Enter) => commit = true,
+            Key::Named(NamedKey::Escape) => cancel = true,
+            Key::Named(NamedKey::Backspace) => edit.backspace(),
+            Key::Named(NamedKey::Delete) => edit.delete_forward(),
+            Key::Named(NamedKey::ArrowLeft) => {
+                let step = if mods.alt_key() {
+                    word_start(&edit.buf, edit.caret)
+                } else {
+                    edit.caret.saturating_sub(1)
+                };
+                edit.move_caret(step, mods.shift_key());
+            }
+            Key::Named(NamedKey::ArrowRight) => {
+                let step = if mods.alt_key() {
+                    word_end(&edit.buf, edit.caret)
+                } else {
+                    edit.caret + 1
+                };
+                edit.move_caret(step, mods.shift_key());
+            }
+            Key::Named(NamedKey::Home) => edit.move_caret(0, mods.shift_key()),
+            Key::Named(NamedKey::End) => edit.move_caret(usize::MAX, mods.shift_key()),
+            Key::Named(NamedKey::Space) => edit.insert(" "),
+            Key::Character(c) if cmd && c.eq_ignore_ascii_case("a") => {
+                edit.anchor = Some(0);
+                edit.caret = edit.len();
+            }
+            Key::Character(c) if cmd && c.eq_ignore_ascii_case("v") => {
+                if let Some(text) = &pasted {
+                    let text = text.replace(['\n', '\r', '\t'], " ");
+                    edit.insert(&text);
                 }
-                Key::Named(NamedKey::Escape) => action = Rm::Cancel,
-                Key::Named(NamedKey::Backspace) => {
-                    edit.buf.pop();
-                }
-                Key::Named(NamedKey::Space) => edit.buf.push(' '),
-                _ => {
-                    if let Some(txt) = event
-                        .text
-                        .as_ref()
-                        .and_then(|t| t.chars().next())
-                        .filter(|c| !c.is_control())
-                    {
-                        edit.buf.push(txt);
+            }
+            _ => {
+                if !cmd && let Some(txt) = event.text.as_deref() {
+                    let txt: String = txt.chars().filter(|c| !c.is_control()).collect();
+                    if !txt.is_empty() {
+                        edit.insert(&txt);
                     }
                 }
             }
         }
-        match action {
-            Rm::Keep => {}
-            Rm::Commit => {
-                let (ws, buf) = match self.rename_edit.take() {
-                    Some(e) => (e.ws, e.buf),
-                    None => return true,
-                };
-                let label = buf.trim();
-                if !label.is_empty()
-                    && let Some(ws) = self.layout.workspaces.iter_mut().find(|w| w.id == ws)
-                {
-                    dlog_app!("rename ws {:?} -> {label:?}", ws.id);
-                    ws.label = label.to_string();
-                }
+        if commit {
+            self.commit_rename();
+        } else if cancel {
+            self.rename_edit = None;
+            if let Some(w) = &self.window {
+                w.request_redraw();
             }
-            Rm::Cancel => self.rename_edit = None,
-        }
-        if let Some(w) = &self.window {
+        } else if let Some(w) = &self.window {
             w.request_redraw();
         }
         true
@@ -1228,7 +1384,7 @@ impl Berth {
             return;
         }
         if let Some(edit) = &mut self.rename_edit {
-            edit.buf.push_str(text);
+            edit.insert(text);
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
@@ -1667,7 +1823,7 @@ impl Berth {
             return;
         }
         dlog_app!("workspace close confirm armed ws#{index} panes={pane_count}");
-        self.rename_edit = None;
+        self.commit_rename();
         self.confirm_ws = Some((ws_id, std::time::Instant::now()));
         self.window.as_ref().inspect(|w| w.request_redraw());
     }
@@ -2827,7 +2983,7 @@ impl ApplicationHandler<PaneEvent> for Berth {
                         match zone {
                             Some(ChromeZone::SidebarClose(i)) => {
                                 dlog_app!("sidebar close ws#{i}");
-                                self.rename_edit = None;
+                                self.commit_rename();
                                 self.confirm_workspace_close(i);
                             }
                             Some(ChromeZone::SidebarEntry(i)) => {
@@ -2836,7 +2992,7 @@ impl ApplicationHandler<PaneEvent> for Berth {
                                     dlog_app!("sidebar double-click -> rename ws#{i}");
                                     self.begin_rename(i);
                                 } else {
-                                    self.rename_edit = None;
+                                    self.commit_rename();
                                     self.select_workspace(i);
                                 }
                             }
@@ -3614,6 +3770,62 @@ mod tests {
         assert_eq!(cursor_key("D", 1, false, true), b"\x1bOD");
         // Shift/alt/ctrl keep the CSI modifier form even in application mode.
         assert_eq!(cursor_key("A", 2, true, true), b"\x1b[1;2A");
+    }
+
+    #[test]
+    fn rename_editor_edits_at_the_caret() {
+        let mut e = RenameEdit::new(WorkspaceId(1));
+        e.insert("hello");
+        assert_eq!(e.buf, "hello");
+        e.move_caret(0, false);
+        e.insert("> ");
+        assert_eq!(e.buf, "> hello");
+        e.backspace(); // deletes the space before the caret
+        assert_eq!(e.buf, ">hello");
+        e.move_caret(usize::MAX, false);
+        e.delete_forward(); // no-op at end
+        assert_eq!(e.buf, ">hello");
+        e.backspace();
+        assert_eq!(e.buf, ">hell");
+    }
+
+    #[test]
+    fn rename_editor_selection_replaces_and_deletes() {
+        let mut e = RenameEdit::new(WorkspaceId(1));
+        e.insert("workspace one");
+        // Select chars 0..=9 ("workspace") with a shift-style anchor.
+        e.anchor = Some(9);
+        e.caret = 0;
+        e.insert("ws");
+        assert_eq!(e.buf, "ws one");
+        assert_eq!(e.caret, 2);
+        // Backspace with a live selection deletes it, not one char.
+        e.anchor = Some(0);
+        e.caret = 2;
+        e.backspace();
+        assert_eq!(e.buf, " one");
+        assert_eq!(e.caret, 0);
+        assert!(e.selection().is_none());
+    }
+
+    #[test]
+    fn rename_editor_display_shows_the_caret() {
+        let mut e = RenameEdit::new(WorkspaceId(1));
+        e.insert("abc");
+        e.move_caret(1, false);
+        assert_eq!(e.display(), "a_bc");
+        e.move_caret(usize::MAX, false);
+        assert_eq!(e.display(), "abc_");
+    }
+
+    #[test]
+    fn rename_editor_word_motion() {
+        assert_eq!(word_start("foo bar baz", 11), 8);
+        assert_eq!(word_start("foo bar baz", 7), 4);
+        assert_eq!(word_start("foo", 0), 0);
+        assert_eq!(word_end("foo bar baz", 0), 4);
+        assert_eq!(word_end("foo bar baz", 4), 8);
+        assert_eq!(word_end("foo", 3), 3);
     }
 
     #[test]

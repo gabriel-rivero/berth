@@ -88,7 +88,7 @@ Three pillars for "1.0":
 | S3 | rename blur discards buffer; F1–F4 modifiers; 750ms wakeup + font rescan on UI thread; config docs; `FontCtx` unsafe-transmute hygiene; guest crate in host builds | **[open]** (kitty keyboard protocol **[done 2026-11]**) |
 | S3 | **Stale OSC titles** *(qwen BUGS-10)* — `titles` never pruned on Closed + PaneId reuse mislabels fresh tabs with dead panes' titles (`app.rs:1244-1288`, `layout.rs:563-573`) | **[done]** — `titles.remove(&id)` in the Closed handler |
 | S3 | **Second `resumed()` panics** *(qwen BUGS-11)* — duplicate `spawn_pane(PaneId(0))` hits `panic!("duplicate PaneId")` (`app.rs:440-442`) | **[done]** — guard on `window.is_some()` |
-| S3 | **Rename editor quirks** *(qwen BUGS-12)* — ArrowDown commits (`app.rs:598-602`); no caret motion/paste/IME; swallows all chords while open | **[open]** |
+| S3 | **Rename editor quirks** *(qwen BUGS-12)* — ArrowDown commits; no caret motion/paste/IME; swallows all chords while open | **[done 2026-11]** real single-line editor: ←/→ (+shift select, alt = word jump), Home/End, ⌘/ctrl+A, paste, delete-forward, IME text, Esc cancels, Enter or click-outside commits |
 
 ### User-reported UX list (Nov 2026) — cross-check status (qwen review §4)
 

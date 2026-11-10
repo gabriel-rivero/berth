@@ -21,8 +21,8 @@ This review is historical; the live tracker is `docs/ROADMAP.md`. As of v0.27.0:
   bold/italic/underline, IME, plugin fuel/limits, `Tab.cwd`); U-1/2/3/4/11/12/13/14/15.
 - **Partly closed**:
   U-9 (`+` buttons shipped; sidebar-header chevron open).
-- **Still open**: BUGS-12 (rename editor), U-5 (config panel), U-7 (context
-  menus), atlas LRU, tab/sidebar overflow, damage tracking, CI hit-test smokes.
+- **Still open**: U-5 (config panel), U-7 (context menus), atlas LRU,
+  tab/sidebar overflow, damage tracking, CI hit-test smokes.
 - The §7 Xvfb+xdotool probe scripts were never promoted to CI; that remains the
   cheapest guard against branch-order regressions.
 
@@ -155,10 +155,12 @@ This review is historical; the live tracker is `docs/ROADMAP.md`. As of v0.27.0:
   a second resume (possible on macOS reactivation paths) hits `panic!("duplicate PaneId")`
   (`app.rs:440-442`). Guard: `if self.window.is_some() { return; }`. Effort: S.
 
-### BUGS-12 · S3 · **[new]** Rename editor quirks
-- `ArrowDown` **commits** the rename (`app.rs:598-602`) — surprising; no caret motion
-  (Left/Right dead), no paste, no IME, blur discards silently (roadmap S3 ✓), and the
-  editor swallows *all* chords while open (including `cmd+w`). Effort: S-M.
+### BUGS-12 · S3 · **[done 2026-11]** Rename editor quirks
+- ~~`ArrowDown` commits; no caret motion, paste or IME; blur discards silently; the
+  editor swallows all chords.~~ Now a real single-line editor: caret motion with
+  shift-selection and alt word-jump, Home/End, ⌘/ctrl+A, paste, delete-forward, IME
+  text, Esc cancels and Enter/click-outside commits. It still swallows chords by
+  design while open (Esc exits).
 
 ### BUGS-13 · S3 confirmations of existing roadmap items (code located)
 - Renderer loss → permanent black window: `app.rs:424-426` (`self.renderer = None`, never
