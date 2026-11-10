@@ -5,7 +5,7 @@ members = ["crates/*"]
 
 [workspace.package]
 # x-release-please-start-version
-version = "0.27.0"
+version = "0.28.0"
 # x-release-please-end
 edition = "2024"
 license = "MIT OR Apache-2.0"
