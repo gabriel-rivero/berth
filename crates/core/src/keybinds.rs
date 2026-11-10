@@ -4,7 +4,7 @@
 //! "ctrl+shift+enter", "alt+left", "cmd+t". Modifiers: ctrl, shift, alt,
 //! super/cmd/win. Keys are matched by physical key name; letters/digits use
 //! their lowercase character.
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Action an application handles (mouse/keyboard routing targets).
@@ -34,6 +34,7 @@ pub enum Action {
     Search,
     Fullscreen,
     ClearScrollback,
+    PluginManager,
 }
 
 impl Action {
@@ -64,6 +65,7 @@ impl Action {
             Action::Search => "search",
             Action::Fullscreen => "fullscreen",
             Action::ClearScrollback => "clear-scrollback",
+            Action::PluginManager => "plugin-manager",
         }
     }
 
@@ -93,6 +95,7 @@ impl Action {
             "search" => Action::Search,
             "fullscreen" => Action::Fullscreen,
             "clear-scrollback" => Action::ClearScrollback,
+            "plugin-manager" => Action::PluginManager,
             _ => return None,
         })
     }
@@ -135,6 +138,8 @@ impl Action {
             (Action::Fullscreen, &["f11", "alt+enter"]),
             // ED 3: drop saved lines, keep the visible screen (xterm/iTerm).
             (Action::ClearScrollback, &["cmd+k", "ctrl+shift+k"]),
+            // Plugin manager overlay (list, enable/disable, reload).
+            (Action::PluginManager, &["cmd+shift+p", "ctrl+shift+p"]),
         ]
     }
 }
@@ -268,7 +273,7 @@ pub fn build_bindings(
 pub type KeybindTable = HashMap<String, Vec<String>>;
 
 /// Deserialize helper for `#[serde(with)]`-free TOML: plain map of lists.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(transparent)]
 pub struct Keybinds(pub KeybindTable);
 

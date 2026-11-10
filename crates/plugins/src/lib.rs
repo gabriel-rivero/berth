@@ -43,6 +43,22 @@ impl Capabilities {
     pub fn is_empty(self) -> bool {
         !self.rename && !self.status
     }
+
+    /// Human-readable list for the plugin manager ("rename, status" / "none").
+    pub fn label(self) -> String {
+        let mut parts = Vec::new();
+        if self.rename {
+            parts.push("rename");
+        }
+        if self.status {
+            parts.push("status");
+        }
+        if parts.is_empty() {
+            "none".to_string()
+        } else {
+            parts.join(", ")
+        }
+    }
 }
 
 /// Parsed plugin manifest (`<stem>.toml` beside the `.wasm`).
@@ -145,6 +161,8 @@ impl HostState {
 
 /// One loaded plugin instance (component bound to its own sandbox store).
 pub struct LoadedPlugin {
+    /// File stem (`auto-namer` for `auto-namer.wasm`); stable config key.
+    stem: String,
     name: String,
     store: Store<HostState>,
     exports: Plugin,
@@ -212,6 +230,7 @@ impl LoadedPlugin {
         Plugin::add_to_linker::<_, HasSelf<_>>(&mut linker, |state| state)?;
         let exports = Plugin::instantiate(&mut store, &component, &linker)?;
         Ok(Self {
+            stem: stem.to_string(),
             name,
             store,
             exports,
@@ -221,6 +240,11 @@ impl LoadedPlugin {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Config key / file stem (`[plugins] "<stem>" = false`).
+    pub fn stem(&self) -> &str {
+        &self.stem
     }
 
     pub fn is_faulted(&self) -> bool {
@@ -296,18 +320,85 @@ pub struct WorkspaceRename {
     pub label: String,
 }
 
-/// Discover + instantiate every enabled `*.wasm` plugin in `dir`. Broken
-/// plugins are reported and skipped, never fatal. `disabled` holds file stems
-/// switched off in `[plugins]` config.
-pub fn load_plugins(
+/// One `*.wasm` file found on disk, read without compiling it (cheap enough for
+/// the plugin manager to rescan on every open).
+#[derive(Debug, Clone)]
+pub struct PluginSummary {
+    pub stem: String,
+    /// Manifest display name, else the file stem.
+    pub name: String,
+    pub capabilities: Capabilities,
+    /// Manifest problems; the plugin would fail to load until fixed.
+    pub manifest_error: Option<String>,
+}
+
+/// Discover plugin components in `dir` and read their manifests. Sorted by
+/// stem; unreadable directories yield an empty list.
+pub fn scan_plugins(dir: &Path) -> Vec<PluginSummary> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<_> = entries
+        .filter_map(|e| e.ok().map(|entry| entry.path()))
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("wasm"))
+        .collect();
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| {
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unnamed")
+                .to_string();
+            let manifest_path = path.with_extension("toml");
+            let (name, capabilities, manifest_error) = match std::fs::read_to_string(&manifest_path)
+            {
+                Ok(text) => match toml::from_str::<Manifest>(&text)
+                    .map_err(|e| e.to_string())
+                    .and_then(|m| {
+                        m.capabilities()
+                            .map(|c| (m.name, c))
+                            .map_err(|e| e.to_string())
+                    }) {
+                    Ok((name, caps)) => (name.unwrap_or_else(|| stem.clone()), caps, None),
+                    Err(e) => (stem.clone(), Capabilities::default(), Some(e)),
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    (stem.clone(), Capabilities::default(), None)
+                }
+                Err(e) => (stem.clone(), Capabilities::default(), Some(e.to_string())),
+            };
+            PluginSummary {
+                stem,
+                name,
+                capabilities,
+                manifest_error,
+            }
+        })
+        .collect()
+}
+
+/// What one discovery/load pass produced.
+#[derive(Default)]
+pub struct LoadReport {
+    pub plugins: Vec<LoadedPlugin>,
+    /// `(stem, message)` for components that failed to compile/instantiate.
+    pub errors: Vec<(String, String)>,
+}
+
+/// Discover + instantiate every enabled `*.wasm` plugin in `dir`, keeping the
+/// load errors for the plugin manager. Broken plugins are reported and skipped,
+/// never fatal. `disabled` holds file stems switched off in `[plugins]` config.
+pub fn load_plugins_report(
     engine: &Engine,
     dir: &Path,
     disabled: &[&str],
     log: &mut dyn FnMut(String),
-) -> Vec<LoadedPlugin> {
-    let mut out = Vec::new();
+) -> LoadReport {
+    let mut report = LoadReport::default();
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return out;
+        return report;
     };
     let mut paths: Vec<_> = entries
         .filter_map(|e| e.ok().map(|entry| entry.path()))
@@ -318,8 +409,9 @@ pub fn load_plugins(
         let stem = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or_default();
-        if disabled.contains(&stem) {
+            .unwrap_or_default()
+            .to_string();
+        if disabled.contains(&stem.as_str()) {
             log(format!("plugin {stem} disabled by config, skipping"));
             continue;
         }
@@ -330,12 +422,27 @@ pub fn load_plugins(
                         "plugin {stem} declared no capabilities ({stem}.toml missing or empty); renames/status will be ignored"
                     ));
                 }
-                out.push(plugin)
+                report.plugins.push(plugin)
             }
-            Err(e) => log(format!("plugin {} failed to load: {e}", path.display())),
+            Err(e) => {
+                log(format!("plugin {} failed to load: {e}", path.display()));
+                report.errors.push((stem, e.to_string()));
+            }
         }
     }
-    out
+    report
+}
+
+/// Discover + instantiate every enabled `*.wasm` plugin in `dir`. Broken
+/// plugins are reported and skipped, never fatal. `disabled` holds file stems
+/// switched off in `[plugins]` config.
+pub fn load_plugins(
+    engine: &Engine,
+    dir: &Path,
+    disabled: &[&str],
+    log: &mut dyn FnMut(String),
+) -> Vec<LoadedPlugin> {
+    load_plugins_report(engine, dir, disabled, log).plugins
 }
 
 /// One engine per app; component-model on (guests compile to components),
@@ -374,5 +481,30 @@ mod tests {
         let err = manifest.capabilities().unwrap_err().to_string();
         assert!(err.contains("unknown capability"), "{err}");
         assert!(toml::from_str::<Manifest>("sandbox = true\n").is_err());
+    }
+
+    #[test]
+    fn scan_reads_manifests_and_surfaces_broken_ones() {
+        let dir = std::env::temp_dir().join(format!("berth-scan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("auto-namer.wasm"), b"not wasm").unwrap();
+        std::fs::write(
+            dir.join("auto-namer.toml"),
+            "name = \"Auto Namer\"\ncapabilities = [\"rename\", \"status\"]\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("broken.wasm"), b"not wasm").unwrap();
+        std::fs::write(dir.join("broken.toml"), "capabilities = [\"network\"]\n").unwrap();
+
+        let found = scan_plugins(&dir);
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found[0].stem, "auto-namer");
+        assert_eq!(found[0].name, "Auto Namer");
+        assert_eq!(found[0].capabilities.label(), "rename, status");
+        assert!(found[0].manifest_error.is_none());
+        assert_eq!(found[1].stem, "broken");
+        assert!(found[1].manifest_error.is_some());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

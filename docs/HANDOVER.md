@@ -5,9 +5,13 @@ the short version: what landed, what to run, what is next.
 
 ## Branch state
 
-`main` at `8fafcf4` (v0.26.2), pushed, all tests/clippy/fmt green. Since v0.26.0:
+`main` at the plugin-manager commit (v0.27.0 tag cut), pushed, all
+tests/clippy/fmt green. Since v0.26.0:
 
 ```
+<plugin-manager commit> feat(plugins): in-app plugin manager with enable/disable, error list and hot reload
+bdfb0b3 chore(main): release 0.27.0 (#49)
+2c64c3e docs: record touch support and roadmap focus
 8878a1f feat(input): map touchscreen taps to left clicks
 fc078b4 chore(main): release 0.26.2 (#48)
 4c7995a fix(config): boot with defaults on parse errors; fix Windows IME test
@@ -16,6 +20,11 @@ fc078b4 chore(main): release 0.26.2 (#48)
 ac0b1a4 docs: add vision north star, refresh handover and README status
 8c210b3 fix(input): make kitty keyboard protocol opt-in, Windows-safe IME gating
 ```
+
+Touch taps are mapped to left clicks in `app.rs` (`WindowEvent::Touch` →
+synthetic `CursorMoved`/`MouseInput` through `window_event`, first-contact id
+tracking, 600 ms `TOUCH_MOUSE_GRACE` to drop Windows' promoted mouse events).
+Windows/macOS remain unverified by hand — keep them compiling and CI-green.
 
 The kitty commit is a **functional revert**: the protocol code and tests remain, but
 `[terminal] kitty_keyboard` (default `false`) now gates `TermConfig`, so panes never
@@ -88,12 +97,12 @@ takes ~9 min cold.
    `8878a1f` fixes by mapping them to left clicks (not yet retested on device).
    Still to check there: whether taps now hit the chrome, ConPTY resize, IME
    composition end, modifier chords. Same pass for macOS.
-2. **Plugin-facing polish (item 8 remainder)** — status segments shipped via
-   host `set-status`/`accent` imports; still open: plugin manager panel (list,
-   enable/disable, last error, reload), richer segment
-   metadata (badges/icons/click actions).
+2. **Plugin-facing polish** — the manager panel shipped (`cmd/ctrl+shift+p`:
+   list, enable/disable, one-line load status, `r` rescan, hot reload; toggles
+   persist through `Config::save()`). Still open: richer segment metadata
+   (badges/icons/click actions), change-event diffs, tier 2–4 APIs.
 3. **Distribution** — winget manifest (needs the Windows zip SHA256 from a release
-   with assets), in-app config access (`Config` still has no `save()`), overflow
+   with assets), settings/config panel (saving exists; no editor UI), overflow
    chevrons for tabs/sidebar, damage tracking + CI perf budget.
 4. **Customization depth** — per-workspace config (cwd/env/command/color/icon),
    theme-aware plugin accents, settings panel backed by a config writer.

@@ -336,6 +336,21 @@ pub struct SearchView<'a> {
     pub current: usize,
 }
 
+/// One plugin manager row as the renderer needs it.
+#[derive(Debug, Clone, Copy)]
+pub struct PluginRowView<'a> {
+    pub name: &'a str,
+    pub state: &'a str,
+    pub enabled: bool,
+}
+
+/// Plugin manager overlay contents, preformatted by the app.
+#[derive(Debug, Clone, Copy)]
+pub struct PluginPanelView<'a> {
+    pub rows: &'a [PluginRowView<'a>],
+    pub selected: usize,
+}
+
 /// Text shown in the search overlay: query plus "current/total", or 0/0 when
 /// nothing matches (so an empty result is distinguishable from a pending query).
 fn search_label(query: &str, current: usize, total: usize) -> String {
@@ -1715,12 +1730,144 @@ impl Renderer {
         let baseline = by + (bh - metrics.cell_h) * 0.5 + metrics.ascent;
         let mut pen = bx + 8.0 * s;
         for c in text.chars() {
-            let Some(g) = self.rasterize(c, false, false, sink) else {
-                continue;
+            // Spaces have no glyph quad; the pen must still advance or the
+            // whole label collapses ("find:query").
+            if let Some(g) = self.rasterize(c, false, false, sink) {
+                let gx = pen + g.left as f32;
+                let gy = baseline - g.top as f32;
+                sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
+            }
+            pen += metrics.cell_w;
+        }
+    }
+
+    /// Centered plugin manager panel: one row per `*.wasm` on disk with its
+    /// load state and an `[x]`/`[ ]` enable box. Drawn above panes and chrome.
+    fn draw_plugin_panel(
+        &mut self,
+        view: PluginPanelView<'_>,
+        screen_w: f32,
+        screen_h: f32,
+        ch: Chrome,
+        metrics: Metrics,
+        sink: &mut QuadSink,
+    ) {
+        let s = ch.scale;
+        let colors = self.scheme.chrome;
+        // Scrim so the panel reads over terminal output.
+        sink.push(0.0, 0.0, screen_w, screen_h, [0.0, 0.0, 0.0, 0.35], None);
+
+        let row_h = metrics.cell_h + 10.0 * s;
+        let head_h = metrics.cell_h + 22.0 * s;
+        let foot_h = metrics.cell_h + 16.0 * s;
+        let max_h = (screen_h - 60.0 * s).max(head_h + foot_h + row_h);
+        let bh = (head_h + view.rows.len().max(1) as f32 * row_h + foot_h).min(max_h);
+        let bw = (760.0 * s).min((screen_w - 60.0 * s).max(240.0 * s));
+        let bx = (screen_w - bw) * 0.5;
+        let by = ((screen_h - bh) * 0.5).max(0.0);
+        let pad = 18.0 * s;
+
+        let mut bg = colors.sidebar_entry_active_bg;
+        bg[3] = 0.98;
+        sink.push_round(bx, by, bx + bw, by + bh, bg, 8.0 * s);
+
+        let mut pen_x = bx + pad;
+        let title_base = by + (head_h - metrics.cell_h) * 0.5 + metrics.ascent;
+        let title = format!("plugins · {} found", view.rows.len());
+        for c in title.chars() {
+            if let Some(g) = self.rasterize(c, false, false, sink) {
+                let gx = pen_x + g.left as f32;
+                let gy = title_base - g.top as f32;
+                sink.push(
+                    gx,
+                    gy,
+                    gx + g.uv[2],
+                    gy + g.uv[3],
+                    colors.tab_text_active,
+                    Some(g),
+                );
+            }
+            pen_x += metrics.cell_w;
+        }
+        sink.push(
+            bx,
+            by + head_h - s,
+            bx + bw,
+            by + head_h,
+            colors.divider,
+            None,
+        );
+
+        let rows_top = by + head_h;
+        let rows_bottom = by + bh - foot_h;
+        let max_cols = ((bw - 2.0 * pad) / metrics.cell_w).floor().max(4.0) as usize;
+        for (i, row) in view.rows.iter().enumerate() {
+            let y0 = rows_top + i as f32 * row_h;
+            if y0 + row_h > rows_bottom + 0.5 {
+                break;
+            }
+            let selected = i == view.selected;
+            if selected {
+                // Lift the row off the panel bg with the accent-tinted
+                // active-tab color; plain hover bg is nearly invisible here.
+                let mut hl = colors.tab_text_active;
+                hl[3] = 0.10;
+                sink.push(bx + 6.0 * s, y0, bx + bw - 6.0 * s, y0 + row_h, hl, None);
+                // Accent bar marks the keyboard cursor row.
+                sink.push(
+                    bx + 6.0 * s,
+                    y0,
+                    bx + 9.0 * s,
+                    y0 + row_h,
+                    colors.focus_outline,
+                    None,
+                );
+            }
+            let text = if row.enabled {
+                colors.tab_text_active
+            } else {
+                colors.tab_text
             };
-            let gx = pen + g.left as f32;
-            let gy = baseline - g.top as f32;
-            sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
+            let baseline = y0 + (row_h - metrics.cell_h) * 0.5 + metrics.ascent;
+
+            // `[x]` / `[ ]` enable box, then the display name.
+            let box_text = if row.enabled { "[x] " } else { "[ ] " };
+            let mut label = String::from(box_text);
+            label.push_str(row.name);
+            // Right-align the state; keep at least 8 columns for the name.
+            let state_cols = row.state.chars().count().min(max_cols / 2);
+            let name_cols = max_cols.saturating_sub(4 + state_cols + 2);
+            let clipped: String = label.chars().take(4 + name_cols).collect();
+            let mut pen = bx + pad;
+            for c in clipped.chars() {
+                if let Some(g) = self.rasterize(c, false, false, sink) {
+                    let gx = pen + g.left as f32;
+                    let gy = baseline - g.top as f32;
+                    sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], text, Some(g));
+                }
+                pen += metrics.cell_w;
+            }
+            let state: String = row.state.chars().take(state_cols).collect();
+            let mut pen = bx + bw - pad - state.chars().count() as f32 * metrics.cell_w;
+            for c in state.chars() {
+                if let Some(g) = self.rasterize(c, false, false, sink) {
+                    let gx = pen + g.left as f32;
+                    let gy = baseline - g.top as f32;
+                    sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], text, Some(g));
+                }
+                pen += metrics.cell_w;
+            }
+        }
+
+        let foot_base = by + bh - foot_h + (foot_h - metrics.cell_h) * 0.5 + metrics.ascent;
+        let hint = "↑/↓ move · space toggle · r reload · esc close";
+        let mut pen = bx + pad;
+        for c in hint.chars() {
+            if let Some(g) = self.rasterize(c, false, false, sink) {
+                let gx = pen + g.left as f32;
+                let gy = foot_base - g.top as f32;
+                sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], colors.tab_text, Some(g));
+            }
             pen += metrics.cell_w;
         }
     }
@@ -1743,19 +1890,18 @@ impl Renderer {
         let mut pen = ((screen_w - text_w) * 0.5).max(8.0);
         let baseline = y0 + (ch.confirm_h - metrics.cell_h) * 0.5 + metrics.ascent;
         for c in text.chars() {
-            let Some(g) = self.rasterize(c, false, false, sink) else {
-                continue;
-            };
-            let gx = pen + g.left as f32;
-            let gy = baseline - g.top as f32;
-            sink.push(
-                gx,
-                gy,
-                gx + g.uv[2],
-                gy + g.uv[3],
-                colors.confirm_text,
-                Some(g),
-            );
+            if let Some(g) = self.rasterize(c, false, false, sink) {
+                let gx = pen + g.left as f32;
+                let gy = baseline - g.top as f32;
+                sink.push(
+                    gx,
+                    gy,
+                    gx + g.uv[2],
+                    gy + g.uv[3],
+                    colors.confirm_text,
+                    Some(g),
+                );
+            }
             pen += metrics.cell_w;
         }
     }
@@ -2150,6 +2296,7 @@ impl Renderer {
         scroll: Option<ScrollInfo>,
         cursor: CursorPaint,
         search: Option<SearchView<'_>>,
+        plugin_panel: Option<PluginPanelView<'_>>,
         link: Option<(Rect, LinkSpan)>,
         zoomed: bool,
         hovered: Option<ChromeZone>,
@@ -2239,6 +2386,9 @@ impl Renderer {
         }
         if let Some(view) = search {
             self.draw_search(view, sb_w, screen_w, ch, metrics, &mut sink);
+        }
+        if let Some(view) = plugin_panel {
+            self.draw_plugin_panel(view, screen_w, screen_h, ch, metrics, &mut sink);
         }
         if self.hud {
             let label = format!("{:.1} ms · {} quads", self.ema_ms, sink.verts.len() / 6);

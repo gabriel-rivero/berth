@@ -1,11 +1,11 @@
 //! User config: single TOML file, hot-reloadable. Loaded from `$XDG_CONFIG_HOME/berth/config.toml`
 //! (and equivalents per OS via `directories`). Defaults applied via `#[serde(default)]`.
 use crate::keybinds::Keybinds;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     /// Font family/size for the grid renderer.
@@ -26,7 +26,7 @@ pub struct Config {
 
 /// `[shell]` table: what to run in new panes and the environment it gets.
 /// Empty defaults keep the platform login shell (and its environment).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Shell {
     /// Program to run; `None` = default login shell.
@@ -41,7 +41,7 @@ pub struct Shell {
 }
 
 /// Built-in color presets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemePreset {
     #[default]
@@ -51,7 +51,7 @@ pub enum ThemePreset {
 
 /// `[theme]` table: preset plus optional `#rrggbb` overrides. Unknown keys are
 /// rejected so a typo (`backgroud`) fails loudly instead of silently ignoring.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Theme {
     pub preset: ThemePreset,
@@ -64,7 +64,7 @@ pub struct Theme {
     pub palette: Palette,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Palette {
     pub black: Option<String>,
@@ -109,7 +109,7 @@ impl Palette {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Font {
     /// fontconfig pattern (Linux), system font name (macOS/Windows)
@@ -130,7 +130,7 @@ impl Default for Font {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Sidebar {
     /// sidebar width in logical pixels
@@ -153,7 +153,7 @@ impl Default for Sidebar {
 /// current shell/readline expect it. Set `bs` (0x08) for remote hosts whose
 /// `stty erase` is `^H` (older/quirky terminfo over ssh), where DEL otherwise
 /// does nothing and the caret appears to move forward.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Backspace {
     /// 0x7f (DEL).
@@ -163,7 +163,7 @@ pub enum Backspace {
     Bs,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CursorStyle {
     #[default]
@@ -172,7 +172,7 @@ pub enum CursorStyle {
     Underline,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Terminal {
     pub backspace: Backspace,
@@ -216,7 +216,7 @@ impl Default for Terminal {
 /// ```
 ///
 /// Absent entries count as enabled.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(transparent)]
 pub struct Plugins(pub HashMap<String, bool>);
 
@@ -228,6 +228,17 @@ impl Plugins {
             .filter(|(_, on)| !**on)
             .map(|(k, _)| k.as_str())
             .collect()
+    }
+
+    /// Whether the plugin with this file stem may load (absent = enabled).
+    pub fn is_enabled(&self, stem: &str) -> bool {
+        self.0.get(stem).copied().unwrap_or(true)
+    }
+
+    /// Enable/disable a plugin by file stem (writes the entry, even when it
+    /// matches the default, so the choice survives a later default change).
+    pub fn set_enabled(&mut self, stem: &str, enabled: bool) {
+        self.0.insert(stem.to_string(), enabled);
     }
 }
 
@@ -250,6 +261,32 @@ impl Config {
         };
         // TODO(core): watch file for hot reload (ui layer re-emits Layout snapshots on change).
         toml::from_str(&raw).map_err(|e| anyhow::anyhow!("parse {}: {e}", path.display()))
+    }
+
+    /// Write the current config back to `config.toml` (pretty TOML, atomic
+    /// replace). Used by in-app settings such as plugin enable toggles.
+    pub fn save(&self) -> Result<(), anyhow::Error> {
+        let Some(path) = Self::path() else {
+            anyhow::bail!("no config directory for this platform");
+        };
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| anyhow::anyhow!("create {}: {e}", dir.display()))?;
+        }
+        let raw = toml::to_string_pretty(self)?;
+        let tmp = path.with_extension("toml.tmp");
+        std::fs::write(&tmp, raw).map_err(|e| anyhow::anyhow!("write {}: {e}", tmp.display()))?;
+        std::fs::rename(&tmp, &path)
+            .map_err(|e| anyhow::anyhow!("replace {}: {e}", path.display()))?;
+        Ok(())
+    }
+
+    /// Serialize + reparse, catching fields that round-trip badly (deny_unknown
+    /// fields and enum spellings are the usual suspects).
+    #[cfg(test)]
+    fn round_trips(&self) -> Self {
+        let raw = toml::to_string_pretty(self).expect("serialize");
+        toml::from_str(&raw).expect("reparse")
     }
 }
 
@@ -366,5 +403,42 @@ mod tests {
     fn kitty_keyboard_is_opt_in() {
         let cfg: Config = toml::from_str("[terminal]\nkitty_keyboard = true\n").unwrap();
         assert!(cfg.terminal.kitty_keyboard);
+    }
+
+    #[test]
+    fn config_round_trips_through_toml() {
+        let mut cfg = Config::default();
+        cfg.theme.preset = ThemePreset::Light;
+        cfg.theme.palette.red = Some("#ff5555".into());
+        cfg.font.size_pt = 13.5;
+        cfg.terminal.cursor_style = CursorStyle::Beam;
+        cfg.shell.env.insert("EDITOR".into(), "hx".into());
+        cfg.plugins.set_enabled("auto-namer", false);
+        cfg.keybinds
+            .0
+            .insert("new-tab".into(), vec!["cmd+t".into()]);
+
+        let back = cfg.round_trips();
+        assert_eq!(back.theme.preset, ThemePreset::Light);
+        assert_eq!(back.theme.palette.red.as_deref(), Some("#ff5555"));
+        assert!((back.font.size_pt - 13.5).abs() < f32::EPSILON);
+        assert_eq!(back.terminal.cursor_style, CursorStyle::Beam);
+        assert_eq!(back.shell.env.get("EDITOR").map(String::as_str), Some("hx"));
+        assert!(!back.plugins.is_enabled("auto-namer"));
+        assert_eq!(
+            back.keybinds.0.get("new-tab").map(Vec::as_slice),
+            Some(&["cmd+t".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn plugin_flags_default_to_enabled_and_toggle() {
+        let mut plugins = Plugins::default();
+        assert!(plugins.is_enabled("auto-namer"));
+        plugins.set_enabled("auto-namer", false);
+        assert!(!plugins.is_enabled("auto-namer"));
+        assert_eq!(plugins.disabled(), vec!["auto-namer"]);
+        plugins.set_enabled("auto-namer", true);
+        assert!(plugins.disabled().is_empty());
     }
 }

@@ -124,7 +124,9 @@ rejected at parse time.
 
 ## `[plugins]`
 
-Keyed by the `.wasm` **file stem**; absent means enabled.
+Keyed by the `.wasm` **file stem**; absent means enabled. The plugin manager
+(`cmd+shift+p` / `ctrl+shift+p`) flips these flags and writes the file back,
+preserving every other section.
 
 ```toml
 [plugins]

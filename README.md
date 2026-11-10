@@ -106,9 +106,11 @@ Alternate-key and associated-text parameters are not emitted yet.
 | pane focus | `alt+arrows` (`focus-pane-*` action, rebindable) |
 | drag tab to another workspace | drag a tab slot onto a sidebar entry |
 | select text | drag = freeform · double-click = word · triple-click = line (copy-on-select; dragging past the pane edge auto-scrolls) |
+| touchscreen | tap = left click (tabs, workspaces, ✕, panes); drag = selection |
 | copy / paste selection | `cmd+c` / `cmd+v` (`ctrl+shift+c` / `ctrl+v`) |
 | scroll | mouse wheel, `shift+PgUp` / `shift+PgDn`, `cmd+PgUp` / `cmd+PgDn` |
 | search scrollback | `cmd+f` (`ctrl+shift+f`); type to filter, `enter`/`shift+enter` cycles hits, `esc` closes |
+| plugin manager | `cmd+shift+p` (`ctrl+shift+p`); `↑`/`↓` move, `space`/`enter` enable/disable, `r` rescan, `esc` closes |
 | open link | `cmd+click` (`ctrl+click` on Linux/Windows) over OSC 8 or `http(s)://`/`file://`/`mailto:` text |
 | fullscreen | `F11` or `alt+Enter` (borderless; same chord toggles back) |
 | clear scrollback | `cmd+k` (`ctrl+shift+k`); keeps the visible screen |

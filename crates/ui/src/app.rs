@@ -242,6 +242,10 @@ pub struct Berth {
     bindings: HashMap<Chord, Action>,
     /// WASM plugins (tier-1 layout ABI), synced each tick.
     plugins: Vec<LoadedPlugin>,
+    /// Load errors from the last discovery pass (`(stem, message)`).
+    plugin_errors: Vec<(String, String)>,
+    /// Plugin manager overlay (None = closed).
+    plugin_panel: Option<PluginPanel>,
     /// Status segments republished by plugins (`host.set-status`), tab strip.
     status_segments: Vec<String>,
     /// Transient bottom-strip message (non-zero shell exit, plugin errors) and
@@ -311,6 +315,22 @@ struct DragScroll {
     col: usize,
 }
 
+/// One row of the plugin manager overlay.
+#[derive(Debug, Clone)]
+struct PluginRow {
+    stem: String,
+    label: String,
+    enabled: bool,
+    state: String,
+}
+
+/// Plugin manager overlay state: rows are rebuilt from disk on open/reload.
+#[derive(Debug, Default)]
+struct PluginPanel {
+    rows: Vec<PluginRow>,
+    selected: usize,
+}
+
 /// Which way a selection drag beyond `top..bottom` should scroll.
 /// Positive delta reveals older lines (pointer above), negative newer.
 fn autoscroll_delta(mouse_y: f64, top: f64, bottom: f64) -> Option<i32> {
@@ -324,6 +344,182 @@ fn autoscroll_delta(mouse_y: f64, top: f64, bottom: f64) -> Option<i32> {
 }
 
 impl Berth {
+    /// Build plugin manager rows from disk plus the last load pass. Disabled
+    /// plugins are listed too — that is the point of the panel.
+    fn plugin_rows(&self) -> Vec<PluginRow> {
+        let Some(dir) = config_dir() else {
+            return Vec::new();
+        };
+        berth_plugins::scan_plugins(&dir.join("plugins"))
+            .into_iter()
+            .map(|p| {
+                let enabled = self.config.plugins.is_enabled(&p.stem);
+                let state = if !enabled {
+                    "disabled".to_string()
+                } else if let Some(err) = &p.manifest_error {
+                    format!("manifest error: {}", first_line(err))
+                } else if let Some(plugin) = self.plugins.iter().find(|l| l.stem() == p.stem) {
+                    if plugin.is_faulted() {
+                        "faulted (skipped)".to_string()
+                    } else {
+                        format!("loaded · {}", plugin.capabilities().label())
+                    }
+                } else if let Some((_, err)) = self.plugin_errors.iter().find(|(s, _)| *s == p.stem)
+                {
+                    format!("failed: {}", first_line(err))
+                } else {
+                    "not loaded".to_string()
+                };
+                PluginRow {
+                    stem: p.stem,
+                    label: p.name,
+                    enabled,
+                    state,
+                }
+            })
+            .collect()
+    }
+
+    /// Rebuild panel rows, keeping the selected index in range.
+    fn refresh_plugin_rows(&mut self) {
+        let selected = self.plugin_panel.as_ref().map(|p| p.selected).unwrap_or(0);
+        let rows = self.plugin_rows();
+        if let Some(panel) = &mut self.plugin_panel {
+            panel.selected = selected.min(rows.len().saturating_sub(1));
+            panel.rows = rows;
+        }
+    }
+
+    fn open_plugin_panel(&mut self) {
+        let rows = self.plugin_rows();
+        dlog_app!("plugin panel open ({} plugins)", rows.len());
+        self.plugin_panel = Some(PluginPanel { rows, selected: 0 });
+        self.window.as_ref().inspect(|w| w.request_redraw());
+    }
+
+    fn close_plugin_panel(&mut self) {
+        self.plugin_panel = None;
+        self.window.as_ref().inspect(|w| w.request_redraw());
+    }
+
+    /// Move the panel selection by `delta`, clamped to the row count.
+    fn plugin_select(&mut self, delta: isize) {
+        if let Some(panel) = &mut self.plugin_panel
+            && !panel.rows.is_empty()
+        {
+            let last = panel.rows.len() - 1;
+            let next = panel.selected as isize + delta;
+            panel.selected = next.clamp(0, last as isize) as usize;
+            self.window.as_ref().inspect(|w| w.request_redraw());
+        }
+    }
+
+    /// Flip the selected plugin's `[plugins]` flag, persist it, and reload the
+    /// host so the change is visible immediately.
+    fn toggle_selected_plugin(&mut self) {
+        let Some(row) = self
+            .plugin_panel
+            .as_ref()
+            .and_then(|p| p.rows.get(p.selected))
+            .cloned()
+        else {
+            return;
+        };
+        let enabled = !row.enabled;
+        self.config.plugins.set_enabled(&row.stem, enabled);
+        if let Err(e) = self.config.save() {
+            crate::render::dlog_emit(&format!("plugin manager: config save failed: {e}"));
+            self.notice = Some((
+                format!("config save failed: {e}"),
+                std::time::Instant::now() + NOTICE_TIMEOUT,
+            ));
+        }
+        dlog_app!("plugin {} -> enabled={enabled}", row.stem);
+        self.reload_plugins();
+    }
+
+    /// Re-scan + re-instantiate plugins with the current `[plugins]` flags.
+    fn reload_plugins(&mut self) {
+        self.plugins.clear();
+        self.status_segments.clear();
+        self.plugin_errors.clear();
+        if let Some(dir) = config_dir() {
+            let disabled = self.config.plugins.disabled();
+            match plugin_engine() {
+                Ok(engine) => {
+                    let report = berth_plugins::load_plugins_report(
+                        &engine,
+                        &dir.join("plugins"),
+                        &disabled,
+                        &mut |msg| {
+                            crate::render::dlog_emit(&format!("berth plugins: {msg}"));
+                        },
+                    );
+                    self.plugins = report.plugins;
+                    self.plugin_errors = report.errors;
+                    dlog_app!(
+                        "plugins reloaded: {} loaded, {} failed",
+                        self.plugins.len(),
+                        self.plugin_errors.len()
+                    );
+                }
+                Err(e) => {
+                    crate::render::dlog_emit(&format!("berth plugins: engine error: {e}"));
+                    self.plugin_errors
+                        .push(("<engine>".to_string(), e.to_string()));
+                }
+            }
+        }
+        self.refresh_plugin_rows();
+        self.window.as_ref().inspect(|w| w.request_redraw());
+    }
+
+    /// Key interception while the plugin manager is up. Consumes everything.
+    fn plugin_panel_chord(&mut self, event: &KeyEvent) -> bool {
+        if self.plugin_panel.is_none() {
+            return false;
+        }
+        // The manager's own key toggles it closed instead of being swallowed
+        // by the overlay's catch-all.
+        if let Some(key) = chord_key_name(event) {
+            let chord = Chord {
+                ctrl: self.modifiers.control_key(),
+                shift: self.modifiers.shift_key(),
+                alt: self.modifiers.alt_key(),
+                super_key: self.modifiers.super_key(),
+                key,
+            };
+            if self.bindings.get(&chord) == Some(&Action::PluginManager) {
+                self.close_plugin_panel();
+                return true;
+            }
+        }
+        use winit::keyboard::{Key, NamedKey};
+        match &event.logical_key {
+            Key::Named(NamedKey::Escape) => self.close_plugin_panel(),
+            Key::Named(NamedKey::ArrowUp) => self.plugin_select(-1),
+            Key::Named(NamedKey::ArrowDown) => self.plugin_select(1),
+            Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => {
+                self.toggle_selected_plugin()
+            }
+            _ => {
+                let plain = !self.modifiers.control_key()
+                    && !self.modifiers.alt_key()
+                    && !self.modifiers.super_key();
+                if plain && let Some(text) = event.text.as_deref() {
+                    match text {
+                        "r" => self.reload_plugins(),
+                        "j" => self.plugin_select(1),
+                        "k" => self.plugin_select(-1),
+                        "q" => self.close_plugin_panel(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        true
+    }
+
     /// True while OS-promoted mouse events should be ignored because a touch
     /// just happened (Windows promotes the first contact point to mouse).
     fn touch_recent(&self) -> bool {
@@ -689,6 +885,28 @@ impl Berth {
             None
         };
 
+        let plugin_rows: Vec<crate::render::PluginRowView<'_>> = self
+            .plugin_panel
+            .as_ref()
+            .map(|p| {
+                p.rows
+                    .iter()
+                    .map(|r| crate::render::PluginRowView {
+                        name: &r.label,
+                        state: &r.state,
+                        enabled: r.enabled,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let plugin_view = self
+            .plugin_panel
+            .as_ref()
+            .map(|p| crate::render::PluginPanelView {
+                rows: &plugin_rows,
+                selected: p.selected,
+            });
+
         let failed = match (self.renderer.as_mut(), self.window.as_ref()) {
             (Some(r), Some(w)) => r
                 .draw(
@@ -709,6 +927,7 @@ impl Berth {
                         matches: &s.matches,
                         current: s.current,
                     }),
+                    plugin_view,
                     hover_link,
                     self.zoomed.is_some(),
                     self.hovered,
@@ -1555,6 +1774,11 @@ impl Berth {
             return true;
         }
 
+        // Plugin manager overlay consumes keys while it is up.
+        if self.plugin_panel_chord(event) {
+            return true;
+        }
+
         // Scrollback search overlay consumes keys while it is up.
         if self.search_chord(event) {
             return true;
@@ -1592,6 +1816,14 @@ impl Berth {
         match action {
             Action::Search => {
                 self.open_search();
+                true
+            }
+            Action::PluginManager => {
+                if self.plugin_panel.is_some() {
+                    self.close_plugin_panel();
+                } else {
+                    self.open_plugin_panel();
+                }
                 true
             }
             Action::Fullscreen => {
@@ -2914,6 +3146,11 @@ const STARTUP_NOTICE_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 /// every tap (two tabs, double close, etc.).
 const TOUCH_MOUSE_GRACE: std::time::Duration = std::time::Duration::from_millis(600);
 
+/// First line of a multi-line error, trimmed — plugin rows are one line tall.
+fn first_line(err: &str) -> &str {
+    err.lines().next().unwrap_or("").trim()
+}
+
 /// Pure form of `Berth::touch_recent` (testable without a window).
 fn touch_recent_at(last: Option<std::time::Instant>, now: std::time::Instant) -> bool {
     last.is_some_and(|t| now.saturating_duration_since(t) < TOUCH_MOUSE_GRACE)
@@ -2942,6 +3179,7 @@ impl Berth {
         let font_changed = cfg.font.family != self.config.font.family
             || cfg.font.size_pt != self.config.font.size_pt
             || cfg.font.line_height != self.config.font.line_height;
+        let plugins_changed = cfg.plugins != self.config.plugins;
         self.config = cfg;
         if let Some(renderer) = &mut self.renderer {
             renderer.set_theme(&self.config.theme);
@@ -2959,6 +3197,11 @@ impl Berth {
             self.config.font.family,
             self.config.font.size_pt
         );
+        if plugins_changed {
+            // Hot reload of `[plugins]` flags: rescan so toggles in the file
+            // take effect without a restart.
+            self.reload_plugins();
+        }
         if font_changed && let (Some(renderer), Some(window)) = (&mut self.renderer, &self.window) {
             // Same scale chain as Renderer::new (pt -> CSS px -> device px).
             let size_px = self.config.font.size_pt * 1.333_333 * window.scale_factor() as f32;
@@ -3125,10 +3368,11 @@ pub fn run() -> anyhow::Result<()> {
 
     // Plugin host: load every enabled *.wasm under the config dir's plugins/ folder.
     let mut plugins = Vec::new();
+    let mut plugin_errors = Vec::new();
     let plugin_disabled = config.plugins.disabled();
     if let Some(dir) = config_dir() {
         let engine = plugin_engine()?;
-        plugins = berth_plugins::load_plugins(
+        let report = berth_plugins::load_plugins_report(
             &engine,
             &dir.join("plugins"),
             &plugin_disabled,
@@ -3136,6 +3380,8 @@ pub fn run() -> anyhow::Result<()> {
                 crate::render::dlog_emit(&format!("berth plugins: {msg}"));
             },
         );
+        plugins = report.plugins;
+        plugin_errors = report.errors;
         if !plugins.is_empty() {
             crate::render::dlog_emit(&format!("berth plugins: {} loaded", plugins.len()));
         }
@@ -3199,6 +3445,8 @@ pub fn run() -> anyhow::Result<()> {
         cwds: HashMap::new(),
         bindings,
         plugins,
+        plugin_errors,
+        plugin_panel: None,
         status_segments: Vec::new(),
         notice: config_error.map(|msg| (msg, std::time::Instant::now() + STARTUP_NOTICE_TIMEOUT)),
         attention: HashSet::new(),
