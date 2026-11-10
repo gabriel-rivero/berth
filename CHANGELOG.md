@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.26.2](https://github.com/gabriel-rivero/berth/compare/v0.26.1...v0.26.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* **config:** boot with defaults on parse errors; fix Windows IME test ([4c7995a](https://github.com/gabriel-rivero/berth/commit/4c7995ac974260ec749d2244da6161fdd495e816))
+
+
+### Documentation
+
+* reconcile roadmap and qwen review with v0.26.1 status ([2ee0cf9](https://github.com/gabriel-rivero/berth/commit/2ee0cf91688e3a532ef3f5d8de7409b889527749))
+
 ## [0.26.1](https://github.com/gabriel-rivero/berth/compare/v0.26.0...v0.26.1) (2026-11-10)
 
 
