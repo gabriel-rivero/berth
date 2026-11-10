@@ -5,11 +5,15 @@ the short version: what landed, what to run, what is next.
 
 ## Branch state
 
-`main` at the plugin-manager commit (v0.27.0 tag cut), pushed, all
-tests/clippy/fmt green. Since v0.26.0:
+`main` at the chrome-input commit (v0.27.0 tag cut, 0.28.0 release PR open),
+pushed, all tests/clippy/fmt green. Since v0.26.0:
 
 ```
-<plugin-manager commit> feat(plugins): in-app plugin manager with enable/disable, error list and hot reload
+7a7ec0c feat(chrome): move-tab-to-workspace rows in the tab context menu
+cb5e03d feat(chrome): right-click context menus for tabs, workspaces and panes
+f316dd9 fix(sidebar): real single-line editor for workspace rename
+8ba2296 feat(chrome): tab reordering, wheel-over-chrome, ctrl+digit tab slots
+7dd0ebb feat(plugins): in-app plugin manager with enable/disable, error list and hot reload
 bdfb0b3 chore(main): release 0.27.0 (#49)
 2c64c3e docs: record touch support and roadmap focus
 8878a1f feat(input): map touchscreen taps to left clicks
@@ -58,6 +62,13 @@ IME associated; a stuck composition could otherwise swallow every keystroke).
 | plugin host (wasmtime, fuel/memory caps) | `crates/plugins/src/lib.rs` |
 | roadmap / status | `docs/ROADMAP.md`, `README.md` |
 
+Chrome input is now mouse-complete: `Workspace::reorder_tab` (drag within the
+strip), wheel-over-sidebar/strip cycling (`chrome_zone_at` routing), `cmd/ctrl+1…9`
+tab slots (9 = last), right-click context menus for tab/workspace/pane built from
+`MenuItem`/`MenuAction` and drawn by `render::draw_context_menu`, plus a real
+single-line rename editor (`RenameEdit` with caret/anchor, word motion, paste,
+IME). Tab menus also list flat `move to <workspace>` rows.
+
 Useful new APIs: `chrome_zone_at`/`Chrome` (shared hit-test), `wheel_target`,
 `ColorScheme::from_config`, `CursorPaint`/`cursor_rect`, `ScrollInfo`,
 `SearchView`, `LinkSpan`/`url_at`/`is_safe_uri`, `GridMatch`/`find_matches`/
@@ -101,11 +112,15 @@ takes ~9 min cold.
    list, enable/disable, one-line load status, `r` rescan, hot reload; toggles
    persist through `Config::save()`). Still open: richer segment metadata
    (badges/icons/click actions), change-event diffs, tier 2–4 APIs.
-3. **Distribution** — winget manifest (needs the Windows zip SHA256 from a release
-   with assets), settings/config panel (saving exists; no editor UI), overflow
-   chevrons for tabs/sidebar, damage tracking + CI perf budget.
-4. **Customization depth** — per-workspace config (cwd/env/command/color/icon),
-   theme-aware plugin accents, settings panel backed by a config writer.
+3. **Settings / config panel** (qwen U-5) — `Config::save()` and a full
+   `Serialize` schema exist; no editor UI yet. Natural next feature: a
+   `cmd+,` panel editing font/theme/opacity/cursor/copy-on-select and the
+   `[plugins]` flags, with live apply (config reload is already wired).
+4. **Distribution** — winget manifest (needs the Windows zip SHA256 from a release
+   with assets), overflow chevrons for tabs/sidebar, damage tracking + CI perf
+   budget.
+5. **Customization depth** — per-workspace config (cwd/env/command/color/icon),
+   theme-aware plugin accents, configurable keybinds UI.
 
 Lightweight budget is measured and gated: 49 MB binary, 365 ms to first frame,
 ~178 MiB idle RSS (Linux/ADL-N/Xvfb; real GPU is faster). Re-run
