@@ -696,6 +696,21 @@ impl Workspace {
         self.focused_tab = tab.id;
         self.tabs.push(tab);
     }
+
+    /// Move `tab_id` to slot `to` (clamped) inside this workspace; the tab
+    /// keeps its identity, tree and focus. Returns true when the order changed.
+    pub fn reorder_tab(&mut self, tab_id: TabId, to: usize) -> bool {
+        let Some(from) = self.tabs.iter().position(|t| t.id == tab_id) else {
+            return false;
+        };
+        let to = to.min(self.tabs.len().saturating_sub(1));
+        if from == to {
+            return false;
+        }
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(to, tab);
+        true
+    }
 }
 
 impl Layout {
@@ -728,5 +743,50 @@ impl Layout {
             self.active = to_ws;
         }
         empty_origin
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ws_with_tabs(n: u64) -> Workspace {
+        let mut ws = Workspace {
+            id: WorkspaceId(0),
+            label: "main".into(),
+            tabs: (0..n)
+                .map(|i| Tab::new(TabId(i), PaneId(i), None))
+                .collect(),
+            focused_tab: TabId(0),
+        };
+        if n > 0 {
+            ws.focused_tab = TabId(0);
+        }
+        ws
+    }
+
+    fn ids(ws: &Workspace) -> Vec<u64> {
+        ws.tabs.iter().map(|t| t.id.0).collect()
+    }
+
+    #[test]
+    fn reorder_moves_tab_and_keeps_focus() {
+        let mut ws = ws_with_tabs(3);
+        ws.focused_tab = TabId(1);
+        assert!(ws.reorder_tab(TabId(0), 2));
+        assert_eq!(ids(&ws), vec![1, 2, 0]);
+        // Reordering never changes which tab owns focus.
+        assert_eq!(ws.focused_tab, TabId(1));
+        // Same slot is a no-op, and out-of-range targets clamp to the end.
+        assert!(!ws.reorder_tab(TabId(1), 0));
+        assert!(ws.reorder_tab(TabId(1), 99));
+        assert_eq!(ids(&ws), vec![2, 0, 1]);
+    }
+
+    #[test]
+    fn reorder_unknown_tab_is_a_noop() {
+        let mut ws = ws_with_tabs(2);
+        assert!(!ws.reorder_tab(TabId(9), 0));
+        assert_eq!(ids(&ws), vec![0, 1]);
     }
 }

@@ -86,8 +86,8 @@ Three pillars for "1.0":
 | S2 | **Windows: broken config = silent launch failure** *(qwen BUGS-8)* — `Config::load()?` in `main.rs` errored to a nonexistent stderr (GUI subsystem) before the dlog sink started | **[done 2026-11]** — config loading moved entirely into `berth_ui::run()`: a parse error is logged unconditionally to `berth.log`, the app boots with `Config::default()`, and a 30 s on-screen notice names the error. `main.rs` no longer loads config. |
 | S2 | **Word/line selection: double/triple-click** *(qwen BUGS-9)* — pane presses now carry a click streak (same pane+cell, 500 ms) into `SelectionKind::{Simple,Word,Line}` → alacritty `Simple`/`Semantic`/`Lines`; drag still extends the same mode | **[done 2026-11]** |
 | S3 | rename blur discards buffer; F1–F4 modifiers; 750ms wakeup + font rescan on UI thread; config docs; `FontCtx` unsafe-transmute hygiene; guest crate in host builds | **[open]** (kitty keyboard protocol **[done 2026-11]**) |
-| S3 | **Stale OSC titles** *(qwen BUGS-10)* — `titles` never pruned on Closed + PaneId reuse mislabels fresh tabs with dead panes' titles (`app.rs:1244-1288`, `layout.rs:563-573`) | **[open]** — `titles.remove(&id)` in the Closed handler |
-| S3 | **Second `resumed()` panics** *(qwen BUGS-11)* — duplicate `spawn_pane(PaneId(0))` hits `panic!("duplicate PaneId")` (`app.rs:440-442`) | **[open]** — guard on `window.is_some()` |
+| S3 | **Stale OSC titles** *(qwen BUGS-10)* — `titles` never pruned on Closed + PaneId reuse mislabels fresh tabs with dead panes' titles (`app.rs:1244-1288`, `layout.rs:563-573`) | **[done]** — `titles.remove(&id)` in the Closed handler |
+| S3 | **Second `resumed()` panics** *(qwen BUGS-11)* — duplicate `spawn_pane(PaneId(0))` hits `panic!("duplicate PaneId")` (`app.rs:440-442`) | **[done]** — guard on `window.is_some()` |
 | S3 | **Rename editor quirks** *(qwen BUGS-12)* — ArrowDown commits (`app.rs:598-602`); no caret motion/paste/IME; swallows all chords while open | **[open]** |
 
 ### User-reported UX list (Nov 2026) — cross-check status (qwen review §4)
@@ -106,8 +106,8 @@ Three pillars for "1.0":
 - **[done]** Tab drag between workspaces (sidebar as drop target; empty origin ws dies).
 - **[open]** Drag panes between tabs.
 - **[open]** **Sidebar show/hide affordance** *(user-reported; qwen U-1)*: `toggle-sidebar` keybind action + chevron button in the sidebar header — today only `config.toml [sidebar].show` + hot-reload. **[done 0.21.9]** toggle-sidebar action (defaults cmd+u / ctrl+shift+u) + plus buttons; chevron header still [open].
-- **[open]** **Tab reordering** *(qwen U-8)*: drag only moves tabs *between* workspaces; strip slot order is immutable (README "re-orderable" oversells).
-- **[open]** **Discoverable chrome buttons** *(qwen U-9/U-7/U-10)*: tab-strip trailing `+`, sidebar-header `+ ws` (header double-click secretly creates workspaces today — make it visible), right-click context menus (tab: close/rename/close-others/move-to-ws; entry: rename/close; pane: copy/paste/split/zoom), wheel-over-strip cycles tabs / wheel-over-sidebar cycles workspaces.
+- **[done 2026-11]** **Tab reordering** *(qwen U-8)*: dragging a tab within the strip reorders it live (`Workspace::reorder_tab`, identity/tree/focus preserved); dragging onto a sidebar entry still moves it between workspaces.
+- **[partly done 2026-11]** **Discoverable chrome buttons** *(qwen U-9/U-7/U-10)*: tab-strip trailing `+` and sidebar `+` shipped; wheel-over-strip now cycles tabs and wheel-over-sidebar cycles workspaces (U-10 done), as do `ctrl+1…9` (9 = last tab). Still open: visible `+ ws` header affordance, right-click context menus (tab: close/rename/close-others/move-to-ws; entry: rename/close; pane: copy/paste/split/zoom).
 - **[open]** Per-workspace `[workspaces.<id>]` config: cwd, env, command, color/icon; auto-name from git basename core-side.
 - **[done 0.23.0]** Session persistence ("berths"): layout tree (workspaces/tabs/splits + labels) snapshotted to `config_dir/berths.json` every ~4s and on exit; relaunched restores the tree and re-spawns a fresh shell per pane. New tab/split/workspace cwd now inherited from the focused pane's OSC 7 (see S2 row).
 - **[open]** Quick switcher (`cmd+p`) over workspaces/tabs.

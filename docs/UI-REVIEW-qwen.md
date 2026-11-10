@@ -21,10 +21,8 @@ This review is historical; the live tracker is `docs/ROADMAP.md`. As of v0.27.0:
   bold/italic/underline, IME, plugin fuel/limits, `Tab.cwd`); U-1/2/3/4/11/12/13/14/15.
 - **Partly closed**:
   U-9 (`+` buttons shipped; sidebar-header chevron open).
-- **Still open**: BUGS-10 (stale titles), BUGS-11 (second `resumed()` panic),
-  BUGS-12 (rename editor), U-5 (config panel), U-7 (context menus), U-8 (tab
-  reordering), U-10 (wheel over chrome), atlas LRU, ctrl+digit, tab/sidebar
-  overflow, damage tracking, CI hit-test smokes.
+- **Still open**: BUGS-12 (rename editor), U-5 (config panel), U-7 (context
+  menus), atlas LRU, tab/sidebar overflow, damage tracking, CI hit-test smokes.
 - The §7 Xvfb+xdotool probe scripts were never promoted to CI; that remains the
   cheapest guard against branch-order regressions.
 
@@ -193,9 +191,9 @@ This review is historical; the live tracker is `docs/ROADMAP.md`. As of v0.27.0:
 | U-5 | S3 | **user-reported** "no config panel" | **CONFIRMED**: no settings UI, and `Config` has no `save()` — nothing can write back today. Staging: (1) `open-config` action (open `config.toml` in $EDITOR / reveal path) — cheap; (2) real panel (font/theme/keybinds) — L. | S / L |
 | U-6 | S3 | **user-reported** "no plugin enable/disable interface" | **CONFIRMED**: `load_plugins` loads every `*.wasm` at startup (`plugins/lib.rs:118-135`, `app.rs:1795-1805`); no manifest, no toggles, no error visibility in-app, **no rescan on hot-reload**. Cheap first step: `[[plugin]] name/enabled` config section; full manager UI pairs with roadmap plugin items 2-3. | M |
 | U-7 | S3 | Right-click context menus (tab: close/rename/close-others/move-to-ws; entry: rename/close/new-tab; pane: copy/paste/split/zoom) — none exist anywhere; right-click only forwards to capturing TUIs (`app.rs:1575-1594`). | **[new]** | M |
-| U-8 | S3 | Tab **reordering** within a workspace — drag only moves between workspaces; strip slot order is immutable. README's "re-orderable" phrasing oversells. | **[new]** | M |
+| U-8 | S3 | Tab **reordering** within a workspace — drag only moves between workspaces; strip slot order is immutable. README's "re-orderable" phrasing oversells. | **[done 2026-11]** drag within strip reorders live | M |
 | U-9 | S3 | Discoverable "+" affordances: tab-strip trailing `+`, sidebar-header `+ ws` (double-click-empty-space is undocumented in-app). | **[new]** | S |
-| U-10 | S3 | Wheel over tab strip cycles tabs; over sidebar cycles workspaces (currently inert). | **[new]** | S |
+| U-10 | S3 | Wheel over tab strip cycles tabs; over sidebar cycles workspaces (currently inert). | **[done 2026-11]** plus ctrl+1…9 tab slots | S |
 | U-11 | S3 | Dim/hollow cursor in unfocused panes — `draw_term` has no focused flag; every pane renders the identical `CURSOR_BG` block (`render.rs:1402-1414`). Roadmap S1-cluster straggler ✓. | confirmed | S |
 | U-12 | S3 | No "ZOOMED" indicator when pane zoom is active; window title could carry `title — tab — workspace`. | **[new]** | S |
 | U-13 | S3 | Selection drag past window edge doesn't auto-scroll. | **[new]** | M |

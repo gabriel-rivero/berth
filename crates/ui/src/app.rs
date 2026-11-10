@@ -1801,6 +1801,29 @@ impl Berth {
                 dlog_app!("chord matched {:?}: {action:?}", chord);
                 return self.run_action(action);
             }
+            // ctrl+1…9 (cmd+1…9 on macOS) jumps to a tab slot; 9 = last tab.
+            if !shift
+                && !alt
+                && (ctrl || mods.super_key())
+                && let Ok(n) = key_name.parse::<usize>()
+                && (1..=9).contains(&n)
+            {
+                let count = self
+                    .layout
+                    .active_workspace()
+                    .map(|ws| ws.tabs.len())
+                    .unwrap_or(0);
+                if count > 0 {
+                    let idx = if n == 9 {
+                        count - 1
+                    } else {
+                        (n - 1).min(count - 1)
+                    };
+                    dlog_app!("digit chord -> tab slot {idx}");
+                    self.select_tab(idx);
+                    return true;
+                }
+            }
             // Mac-style global modifier: unbound cmd combos never reach the
             // PTY (Terminal.app behaves the same for unhandled cmd chords).
             if mods.super_key() {
@@ -2654,6 +2677,32 @@ impl ApplicationHandler<PaneEvent> for Berth {
                         }
                         return;
                     }
+                    // Over the tab strip: reorder live, like a browser. The
+                    // dragged tab keeps its tree/focus; only the slot changes.
+                    let over_strip =
+                        self.mouse.y < ch.tab_bar_h as f64 && self.mouse.x >= sb_w as f64;
+                    if over_strip
+                        && let Some(ChromeZone::Tab(target)) = crate::render::chrome_zone_at(
+                            self.mouse.x,
+                            self.mouse.y,
+                            self.config.sidebar.show,
+                            self.config.sidebar.width_px,
+                            self.layout.workspaces.len(),
+                            self.layout
+                                .active_workspace()
+                                .map(|ws| ws.tabs.len())
+                                .unwrap_or(0),
+                            ch,
+                        )
+                        && let Some(ws) = self.layout.active_workspace_mut()
+                        && ws.reorder_tab(tab_id, target)
+                    {
+                        dlog_app!("tab drag -> slot {target}");
+                        self.sync_size();
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
+                        }
+                    }
                 } else if let Some((idx, _vertical)) = self.divider_drag {
                     let x = position.x.max(0.0) as u32;
                     let y = position.y.max(0.0) as u32;
@@ -2978,6 +3027,52 @@ impl ApplicationHandler<PaneEvent> for Berth {
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let (_, cell_h) = self.cell_metrics();
+                // Wheel over chrome navigates it instead of scrolling a pane
+                // the pointer is not over: sidebar = workspaces, strip = tabs.
+                let zone = self.chrome_zone();
+                let over_sidebar = matches!(
+                    zone,
+                    Some(
+                        ChromeZone::SidebarEntry(_)
+                            | ChromeZone::SidebarPlus
+                            | ChromeZone::SidebarEmpty
+                            | ChromeZone::SidebarEdge
+                    )
+                );
+                let over_tabs = matches!(
+                    zone,
+                    Some(
+                        ChromeZone::Tab(_)
+                            | ChromeZone::TabClose(_)
+                            | ChromeZone::TabPlus
+                            | ChromeZone::TabStripEmpty
+                    )
+                );
+                if over_sidebar || over_tabs {
+                    let delta_lines = match delta {
+                        MouseScrollDelta::LineDelta(_, y) => y * WHEEL_LINES_PER_TICK as f32,
+                        MouseScrollDelta::PixelDelta(pos) => {
+                            (pos.y / cell_h.max(1.0) as f64) as f32
+                        }
+                    };
+                    let lines = accumulate_wheel(&mut self.wheel_accum, delta_lines);
+                    if lines != 0 {
+                        let dir = if lines > 0 { -1 } else { 1 };
+                        dlog_app!(
+                            "wheel over chrome -> {} dir={dir}",
+                            if over_sidebar { "workspaces" } else { "tabs" }
+                        );
+                        if over_sidebar {
+                            self.cycle_workspace(dir);
+                        } else {
+                            self.cycle_tab(dir);
+                        }
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
+                        }
+                    }
+                    return;
+                }
                 let delta_lines = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y * WHEEL_LINES_PER_TICK as f32,
                     MouseScrollDelta::PixelDelta(pos) => (pos.y / cell_h.max(1.0) as f64) as f32,

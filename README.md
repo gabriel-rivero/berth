@@ -98,7 +98,9 @@ Alternate-key and associated-text parameters are not emitted yet.
 | new tab | `cmd+t` (`ctrl+shift+n`) |
 | new / close workspace | `ctrl+shift+o` / `ctrl+shift+q` |
 | cycle workspaces | `ctrl+alt+←` / `ctrl+alt+→` |
-| cycle tabs | `cmd+]` / `cmd+[` (`ctrl+tab`, +shift for prev) |
+| cycle tabs | `cmd+]` / `cmd+[` (`ctrl+tab`, +shift for prev) · `cmd+1`…`9` (`ctrl+1`…`9`, 9 = last) |
+| reorder tabs | drag a tab slot within the strip; drag onto a sidebar entry to move it to that workspace |
+| wheel over chrome | sidebar = cycle workspaces, tab strip = cycle tabs |
 | close focused pane | `cmd+w` (`ctrl+shift+w`) |
 | zoom focused pane (tmux-style) | `cmd+shift+Enter` |
 | close any tab / workspace | `✕` button in the tab slot / sidebar entry |
