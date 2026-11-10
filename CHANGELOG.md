@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.29.0](https://github.com/gabriel-rivero/berth/compare/v0.28.0...v0.29.0) (2026-11-10)
+
+
+### Features
+
+* **fonts:** ligature shaping for ASCII runs ([1b19156](https://github.com/gabriel-rivero/berth/commit/1b191564c2aed050a60bf3e190fba6d3e64574ed))
+
+
+### Bug Fixes
+
+* **fonts:** shape ligatures with harfrust ([d105ea6](https://github.com/gabriel-rivero/berth/commit/d105ea66493dcd6fed836bc5d04bca9ec2ca77c6))
+
 ## [0.28.0](https://github.com/gabriel-rivero/berth/compare/v0.27.0...v0.28.0) (2026-11-10)
 
 
