@@ -17,14 +17,14 @@ keybind path has one analogous ordering bug that kills a documented default feat
 
 This review is historical; the live tracker is `docs/ROADMAP.md`. As of v0.26.1:
 
-- **Closed**: BUGS-1/2/3/4/5/6/7/9; BUGS-13 confirmations (renderer loss, DECCKM,
-  bold/italic/underline, IME, plugin fuel/limits, `Tab.cwd`); U-1/2/3/4/11/12/13/14.
+- **Closed**: BUGS-1/2/3/4/5/6/7/8/9; BUGS-13 confirmations (renderer loss, DECCKM,
+  bold/italic/underline, IME, plugin fuel/limits, `Tab.cwd`); U-1/2/3/4/11/12/13/14/15.
 - **Partly closed**: U-6 (per-plugin `enabled` flags shipped; manager panel open),
   U-9 (`+` buttons shipped; sidebar-header chevron open).
-- **Still open**: BUGS-8 (Windows silent config failure), BUGS-10 (stale titles),
-  BUGS-11 (second `resumed()` panic), BUGS-12 (rename editor), U-5 (config panel),
-  U-7 (context menus), U-8 (tab reordering), U-10 (wheel over chrome), U-15 (= BUGS-8),
-  atlas LRU, ctrl+digit, tab/sidebar overflow, damage tracking, CI hit-test smokes.
+- **Still open**: BUGS-10 (stale titles), BUGS-11 (second `resumed()` panic),
+  BUGS-12 (rename editor), U-5 (config panel), U-7 (context menus), U-8 (tab
+  reordering), U-10 (wheel over chrome), atlas LRU, ctrl+digit, tab/sidebar
+  overflow, damage tracking, CI hit-test smokes.
 - The §7 Xvfb+xdotool probe scripts were never promoted to CI; that remains the
   cheapest guard against branch-order regressions.
 

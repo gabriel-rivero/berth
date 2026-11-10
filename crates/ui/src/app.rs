@@ -1766,10 +1766,15 @@ fn chord_key_name(event: &KeyEvent) -> Option<String> {
 /// character. Keeps plain typing working on X11 (no IME) while avoiding double
 /// input on Wayland/XIM, where both `Ime::Commit` and `KeyboardInput` fire.
 fn ime_owns_text(ime_enabled: bool, key: &Key, mods: ModifiersState) -> bool {
-    // Windows delivers text via WM_CHAR even with an IME associated, so gating
-    // `KeyboardInput` there only risks swallowing every keystroke when a
-    // composition ends without `Ime::Disabled`. Wayland/XIM needs the gate.
-    !cfg!(windows)
+    ime_owns_text_on(cfg!(windows), ime_enabled, key, mods)
+}
+
+/// Windows delivers text via WM_CHAR even with an IME associated, so gating
+/// `KeyboardInput` there only risks swallowing every keystroke when a
+/// composition ends without `Ime::Disabled`. Wayland/XIM needs the gate.
+/// `windows` is a parameter so both platform paths are unit-testable.
+fn ime_owns_text_on(windows: bool, ime_enabled: bool, key: &Key, mods: ModifiersState) -> bool {
+    !windows
         && ime_enabled
         && matches!(key, Key::Character(_))
         && !(mods.control_key() || mods.alt_key() || mods.super_key())
@@ -2802,6 +2807,8 @@ const SESSION_SAVE_MS: u64 = 4000;
 const CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// How long a transient notice (non-zero shell exit) stays on screen.
 const NOTICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
+/// How long a startup config error stays on screen (first-launch triage).
+const STARTUP_NOTICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 /// Default cursor blink interval until config is consulted (530 ms ≈ xterm).
 const BLINK_DEFAULT: std::time::Duration = std::time::Duration::from_millis(530);
 
@@ -2974,7 +2981,17 @@ pub fn run() -> anyhow::Result<()> {
             default_hook(info);
         }));
     }
-    let config = Config::load()?;
+    // Broken config must never be a silent no-op: release builds on Windows are
+    // GUI-subsystem (no console), so `?` here used to mean double-click -> nothing.
+    // Boot with defaults instead, log the error, and keep a visible notice.
+    let (config, config_error) = match Config::load() {
+        Ok(cfg) => (cfg, None),
+        Err(err) => {
+            let msg = format!("config error (using defaults): {err:#}");
+            crate::render::dlog_emit(&format!("berth {msg}"));
+            (Config::default(), Some(msg))
+        }
+    };
     // Session restore: reload the last saved layout tree (panes re-spawn fresh shells;
     // invalid/absent sessions fall back to the default layout).
     let session_file = config_dir().map(|d| d.join("berths.json"));
@@ -3071,7 +3088,7 @@ pub fn run() -> anyhow::Result<()> {
         bindings,
         plugins,
         status_segments: Vec::new(),
-        notice: None,
+        notice: config_error.map(|msg| (msg, std::time::Instant::now() + STARTUP_NOTICE_TIMEOUT)),
         attention: HashSet::new(),
         plugin_denial_log: HashSet::new(),
         exiting: false,
@@ -3147,13 +3164,21 @@ mod tests {
     #[test]
     fn ime_owns_plain_text_only_while_enabled() {
         let text = Key::Character("a".into());
-        assert!(!ime_owns_text(false, &text, ModifiersState::empty()));
-        assert!(ime_owns_text(true, &text, ModifiersState::empty()));
+        let empty = ModifiersState::empty();
+        assert!(!ime_owns_text_on(false, false, &text, empty));
+        assert!(ime_owns_text_on(false, true, &text, empty));
+        // Windows: WM_CHAR owns text even while an IME is associated.
+        assert!(!ime_owns_text_on(true, true, &text, empty));
         // Ctrl/alt/super shortcuts stay on the key-event path.
-        assert!(!ime_owns_text(true, &text, ModifiersState::CONTROL));
+        assert!(!ime_owns_text_on(
+            false,
+            true,
+            &text,
+            ModifiersState::CONTROL
+        ));
         // Named keys (arrows, enter) never come from the IME.
         let enter = Key::Named(NamedKey::Enter);
-        assert!(!ime_owns_text(true, &enter, ModifiersState::empty()));
+        assert!(!ime_owns_text_on(false, true, &enter, empty));
     }
 
     #[test]

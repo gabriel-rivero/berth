@@ -10,8 +10,7 @@ fn main() -> anyhow::Result<()> {
         print!("{}", berth_ui::gpu_report());
         return Ok(());
     }
-    // fail fast + early on broken config; the UI owns everything after this.
-    let config = berth_core::config::Config::load()?;
-    let _ = config; // used by ui/app in M1 wiring
+    // Config loading lives in berth_ui::run(): it logs failures and falls back
+    // to defaults, which matters on Windows where release builds have no console.
     berth_ui::run()
 }
