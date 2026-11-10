@@ -13,6 +13,21 @@ by zone precedence — that single structure produces the user-reported close-bu
 a full-height dead band beside the sidebar, and accidental tab teleporting. The
 keybind path has one analogous ordering bug that kills a documented default feature.
 
+## Status roll-up (2026-11-10, v0.26.1)
+
+This review is historical; the live tracker is `docs/ROADMAP.md`. As of v0.26.1:
+
+- **Closed**: BUGS-1/2/3/4/5/6/7/9; BUGS-13 confirmations (renderer loss, DECCKM,
+  bold/italic/underline, IME, plugin fuel/limits, `Tab.cwd`); U-1/2/3/4/11/12/13/14.
+- **Partly closed**: U-6 (per-plugin `enabled` flags shipped; manager panel open),
+  U-9 (`+` buttons shipped; sidebar-header chevron open).
+- **Still open**: BUGS-8 (Windows silent config failure), BUGS-10 (stale titles),
+  BUGS-11 (second `resumed()` panic), BUGS-12 (rename editor), U-5 (config panel),
+  U-7 (context menus), U-8 (tab reordering), U-10 (wheel over chrome), U-15 (= BUGS-8),
+  atlas LRU, ctrl+digit, tab/sidebar overflow, damage tracking, CI hit-test smokes.
+- The §7 Xvfb+xdotool probe scripts were never promoted to CI; that remains the
+  cheapest guard against branch-order regressions.
+
 ---
 
 ## §1 Runtime-verified defects (probed under Xvfb, scale 1 and 2)
