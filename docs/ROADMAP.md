@@ -197,8 +197,10 @@ clickable links (OSC 8 + scheme-scan, safe-scheme allowlist, hover underline +
  drag-selection auto-scroll past pane edges (40 ms timer, edge-anchored
  extension — qwen U-13) **[done 2026-11]** ·
 kitty keyboard protocol (query/push/pop flags accepted; CSI-u encoding with
-modifier/event params, disambiguated Esc/Enter/Tab/Backspace; alternate-key and
-associated-text parameters still to come) **[done 2026-11]** ·
+modifier/event params, disambiguated Esc/Enter/Tab/Backspace) **[done 2026-11,
+now opt-in]** — gated behind `[terminal] kitty_keyboard` (default `false`) after
+a Windows typing regression; alternate-key and associated-text parameters still
+to come ·
 wide-glyph audit (glyph advance from swash; underline/strikeout decorations
 now span both cells) **[done 2026-11]**.
 

@@ -80,11 +80,12 @@ the cursor until commit, and DECCKM application-cursor mode (`ESC O A…`) is
 honored for arrows/Home/End. Ctrl/alt/super shortcuts still go through the
 key-event path, never the IME.
 
-The kitty keyboard protocol is supported: TUIs that query or push flags get
-CSI-u key encoding (modifiers, repeat/release events, disambiguated Esc/Enter/
-Tab) from the resulting term mode. Legacy and modified-arrow encoding are
-unchanged for apps that never opt in. Alternate-key and associated-text
-parameters are not emitted yet.
+The kitty keyboard protocol is available behind `[terminal] kitty_keyboard = true`
+(default **off**). When enabled, TUIs that query or push flags get CSI-u key
+encoding (modifiers, repeat/release events, disambiguated Esc/Enter/Tab) from
+the resulting term mode. It stays off by default because a PTY layer that does
+not decode `CSI u` (ConPTY on Windows) turns opted-in apps into broken input.
+Alternate-key and associated-text parameters are not emitted yet.
 
 | action | keys |
 | --- | --- |

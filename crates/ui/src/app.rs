@@ -691,6 +691,7 @@ impl Berth {
             cwd,
             &self.config.shell,
             self.config.terminal.scrollback,
+            self.config.terminal.kitty_keyboard,
             Arc::new(move |ev| {
                 let _ = proxy.send_event(ev);
             }),
@@ -1765,7 +1766,11 @@ fn chord_key_name(event: &KeyEvent) -> Option<String> {
 /// character. Keeps plain typing working on X11 (no IME) while avoiding double
 /// input on Wayland/XIM, where both `Ime::Commit` and `KeyboardInput` fire.
 fn ime_owns_text(ime_enabled: bool, key: &Key, mods: ModifiersState) -> bool {
-    ime_enabled
+    // Windows delivers text via WM_CHAR even with an IME associated, so gating
+    // `KeyboardInput` there only risks swallowing every keystroke when a
+    // composition ends without `Ime::Disabled`. Wayland/XIM needs the gate.
+    !cfg!(windows)
+        && ime_enabled
         && matches!(key, Key::Character(_))
         && !(mods.control_key() || mods.alt_key() || mods.super_key())
 }

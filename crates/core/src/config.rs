@@ -186,6 +186,12 @@ pub struct Terminal {
     pub cursor_blink_ms: u64,
     /// Scrollback lines kept above the viewport (per pane, clamped 0..=1_000_000).
     pub scrollback: usize,
+    /// Advertise/accept the kitty keyboard protocol (`CSI > flags u`).
+    ///
+    /// Off by default: advertising support makes opted-in apps expect `CSI u`
+    /// key reports, and PTY layers such as ConPTY have not been verified to
+    /// decode them. Enable only where every target platform is tested.
+    pub kitty_keyboard: bool,
 }
 
 impl Default for Terminal {
@@ -197,6 +203,7 @@ impl Default for Terminal {
             cursor_blink: true,
             cursor_blink_ms: 530,
             scrollback: 10_000,
+            kitty_keyboard: false,
         }
     }
 }
@@ -346,11 +353,18 @@ mod tests {
         assert!(cfg.shell.env.is_empty());
         assert!(cfg.shell.working_dir.is_none());
         assert_eq!(cfg.terminal.scrollback, 10_000);
+        assert!(!cfg.terminal.kitty_keyboard, "kitty protocol is opt-in");
     }
 
     #[test]
     fn parses_scrollback_size() {
         let cfg: Config = toml::from_str("[terminal]\nscrollback = 2500\n").unwrap();
         assert_eq!(cfg.terminal.scrollback, 2500);
+    }
+
+    #[test]
+    fn kitty_keyboard_is_opt_in() {
+        let cfg: Config = toml::from_str("[terminal]\nkitty_keyboard = true\n").unwrap();
+        assert!(cfg.terminal.kitty_keyboard);
     }
 }

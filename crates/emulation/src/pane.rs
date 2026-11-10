@@ -253,9 +253,10 @@ impl Pane {
         cwd: Option<&str>,
         shell: &Shell,
         scrollback: usize,
+        kitty_keyboard: bool,
         notify: Notifier,
     ) -> anyhow::Result<Self> {
-        match Self::spawn_inner(id, cwd, shell, scrollback, &notify) {
+        match Self::spawn_inner(id, cwd, shell, scrollback, kitty_keyboard, &notify) {
             Ok(pane) => Ok(pane),
             Err(e) => {
                 notify(PaneEvent::Log(format!("pty: spawn FAILED: {e:#}")));
@@ -269,6 +270,7 @@ impl Pane {
         cwd: Option<&str>,
         shell: &Shell,
         scrollback: usize,
+        kitty_keyboard: bool,
         notify: &Notifier,
     ) -> anyhow::Result<Self> {
         let pty_system = native_pty_system();
@@ -340,9 +342,9 @@ impl Pane {
         };
         let term_cfg = TermConfig {
             scrolling_history: scrollback,
-            // Accept kitty keyboard protocol push/pop/query from TUIs; the UI
-            // encodes keys from the resulting TermMode bits.
-            kitty_keyboard: true,
+            // Opt-in only: advertising kitty support makes opted-in apps expect
+            // CSI-u key reports, which not every PTY layer (ConPTY) decodes.
+            kitty_keyboard,
             ..TermConfig::default()
         };
         let term = Term::new(term_cfg, &size, TermListener::new(id, notify.clone()));
@@ -815,6 +817,7 @@ mod shell_config_tests {
             Some("/tmp"),
             &shell,
             123,
+            false,
             Arc::new(|_| {}),
         )
         .expect("spawn custom shell");
@@ -847,6 +850,7 @@ mod shell_config_tests {
             Some("/tmp"),
             &shell,
             100,
+            false,
             Arc::new(|_| {}),
         )
         .expect("spawn exiting shell");
@@ -871,6 +875,7 @@ mod shell_config_tests {
             Some("/tmp"),
             &shell,
             100,
+            false,
             Arc::new(|_| {}),
         )
         .expect("spawn exiting shell");
@@ -904,6 +909,7 @@ mod shell_config_tests {
             Some("/tmp"),
             &shell,
             500,
+            false,
             Arc::new(|_| {}),
         )
         .expect("spawn search shell");
@@ -938,6 +944,7 @@ mod shell_config_tests {
             Some("/tmp"),
             &shell,
             500,
+            false,
             Arc::new(|_| {}),
         )
         .expect("spawn clear shell");
@@ -967,6 +974,7 @@ mod shell_config_tests {
             Some("/tmp"),
             &shell,
             500,
+            false,
             Arc::new(|_| {}),
         )
         .expect("spawn selection shell");

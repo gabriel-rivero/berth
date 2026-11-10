@@ -67,6 +67,7 @@ fall through the system fallback chain per cell.
 | `cursor_blink` | bool | `true` | Blink the focused cursor; typing shows it solid. |
 | `cursor_blink_ms` | integer | `530` | Half-period, clamped `200..=2000`. |
 | `scrollback` | integer | `10000` | History lines per pane, clamped `0..=1000000`; applies to panes created after a reload. |
+| `kitty_keyboard` | bool | `false` | Advertise the kitty keyboard protocol (CSI-u encoding). Off by default: PTY layers that don't decode `CSI u` (ConPTY) break input in apps that opt in. Applies to panes created after a reload. |
 
 ## `[shell]`
 

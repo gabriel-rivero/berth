@@ -100,8 +100,9 @@ takes ~9 min cold.
    host `set-status`/`accent` imports; still open: plugin manager panel (list,
    enable/disable, last error, reload), richer segment
    metadata (badges/icons/click actions).
-2. **Table stakes** — all done: kitty keyboard protocol (on
-   `feat/kitty-keyboard`, awaiting PR) and the wide-glyph audit.
+2. **Table stakes** — all done: kitty keyboard protocol (now opt-in behind
+   `[terminal] kitty_keyboard`, default off after a Windows typing regression)
+   and the wide-glyph audit.
 3. **Distribution** — README screenshot/GIF, `.desktop` + AppStream, winget,
    `sha256sums.txt`, cargo-binstall metadata, config reference doc, CHANGELOG
    dedupe, in-app config access (`Config` still has no `save()`).
