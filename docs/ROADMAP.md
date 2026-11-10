@@ -9,6 +9,17 @@ Consolidated from the external product/code review + shipped work. Status marker
 qwen review; items tagged *(user-reported)* from the user UX list (statuses in
 `docs/UI-REVIEW-qwen.md` §4).
 
+## Font rendering
+
+- **[done 2026-11]** **Icon/fallback chain**: Nerd Font / Powerline families,
+  vendored `fonts/` faces and (Linux) `fc-list` codepoint resolution, so p10k /
+  oh-my-posh / starship glyphs render with an unpatched primary family;
+  placeholder (`*sample*`, LastResort) faces are skipped.
+- **[open]** **Ligatures**: shape runs through the font's GSUB (`calt`/`liga`)
+  and draw multi-cell glyph clusters. Needs a ligature-capable font on the test
+  machine; plan is a per-row run cache keyed by text+style with cluster→cell
+  mapping, cursor anchored at the cluster start.
+
 ## Vision (north star, Nov 2026)
 
 **A Rust cmux clone with hardware acceleration that behaves near-equally across all

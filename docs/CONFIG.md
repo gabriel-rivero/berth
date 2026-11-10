@@ -54,8 +54,26 @@ preset = "dark"
 
 The primary family is used for regular, **real bold/italic/bold-italic** faces
 when the family ships them; otherwise a synthetic embolden/12° skew is used and
-the log says `face: no real bold …; using synthetic embolden`. Missing glyphs
-fall through the system fallback chain per cell.
+the log says `face: no real bold …; using synthetic embolden`.
+
+### Fallbacks (icons, emoji, CJK)
+
+Missing glyphs fall through a fallback chain per cell, so the primary family
+does not have to be patched:
+
+1. faces in the config dir's `fonts/` folder (drop a Nerd Font there and it is
+   consulted first),
+2. common Nerd Font / Powerline families (`MesloLGS NF`, `JetBrainsMono Nerd
+   Font`, `Hack Nerd Font`, `FiraCode Nerd Font`, `Symbols Nerd Font`, …),
+3. symbol/CJK/emoji faces (`Noto Sans Symbols 2`, `Noto Sans CJK SC`, `Apple
+   Color Emoji`, `Segoe UI Emoji`, …), then `DejaVu Sans` and `Unifont`,
+4. on Linux, `fc-list` resolves any still-missing codepoint to a covering
+   system face at draw time (one lookup per codepoint, cached).
+
+Private-use icons (p10k, oh-my-posh, starship) need a patched face somewhere in
+that chain; install a Nerd Font or vendor one in `fonts/`. Placeholder fonts
+(`*sample*`, `LastResort`, `NotDef`) are skipped — they claim coverage but paint
+codepoint boxes.
 
 ## `[terminal]`
 

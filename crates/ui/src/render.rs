@@ -822,6 +822,8 @@ pub struct FontCtx {
     ctx: ScaleContext,
     /// (char, faux-bold, faux-italic) -> raster (None = unavailable in the chain).
     glyphs: HashMap<GlyphKey, Option<GlyphRef>>,
+    /// Codepoints already probed through fontconfig (hits and misses).
+    probed: std::collections::HashSet<char>,
     pub metrics: Metrics,
 }
 
@@ -833,6 +835,8 @@ impl FontCtx {
     pub fn new(family: &str, size_px: f32, line_height: f32) -> anyhow::Result<Self> {
         let mut db = Database::new();
         db.load_system_fonts();
+        let system_faces: std::collections::HashSet<fontdb::ID> =
+            db.faces().map(|f| f.id).collect();
         // User-vendored faces: drop TTFs in the config dir's fonts/ to make them
         // selectable (custom families) or auto-available as fallbacks.
         if let Some(cfg) = crate::app::config_dir() {
@@ -841,6 +845,13 @@ impl FontCtx {
                 db.load_fonts_dir(&dir);
             }
         }
+        // Everything loaded from fonts/ is user-supplied and most likely a
+        // patched (Nerd/Powerline) face: consult it before system fallbacks.
+        let vendored: Vec<fontdb::ID> = db
+            .faces()
+            .filter(|f| !system_faces.contains(&f.id))
+            .map(|f| f.id)
+            .collect();
         // fontdb resolves generic "monospace" to Courier New on macOS (bad
         // hhea metrics => clipped glyphs), so prefer known-good per-OS faces
         // before the generic family name.
@@ -938,22 +949,66 @@ impl FontCtx {
         }
 
         // Emoji/symbol/CJK fallbacks: consulted only for glyphs the primary lacks.
+        // Ordered most-specific first: patched Nerd/Powerline faces cover the
+        // p10k/oh-my-posh glyph blocks (U+E0A0–E0B3, U+F000–F2FF), then
+        // general symbol/CJK/emoji faces, then the broadest coverage (Unifont).
         const FALLBACK_FAMILIES: &[&str] = &[
+            "MesloLGS NF",
+            "MesloLGS Nerd Font",
+            "MesloLGS Nerd Font Mono",
+            "JetBrainsMono Nerd Font",
+            "JetBrainsMono Nerd Font Mono",
+            "JetBrains Mono NL",
+            "Hack Nerd Font",
+            "Hack Nerd Font Mono",
+            "FiraCode Nerd Font",
+            "FiraCode Nerd Font Mono",
+            "CaskaydiaCove Nerd Font",
+            "SauceCodePro Nerd Font",
+            "Symbols Nerd Font",
+            "Symbols Nerd Font Mono",
+            "Powerline Symbols",
+            "PowerlineSymbols",
+            "Noto Sans Symbols 2",
+            "Noto Sans Symbols",
             "Apple Color Emoji",
             "Segoe UI Emoji",
             "Noto Color Emoji",
             "Noto Emoji",
             "Noto Sans CJK SC",
-            "Noto Sans Symbols 2",
             "Symbola",
             "DejaVu Sans",
+            "Unifont",
         ];
         let mut seen: std::collections::HashSet<Option<fontdb::ID>> =
             std::collections::HashSet::new();
         seen.insert(id);
         let mut fallbacks = Vec::new();
+        for fid in vendored {
+            if !seen.insert(Some(fid)) {
+                continue;
+            }
+            let Some((fdata, fidx)) = db.with_face_data(fid, |d, idx| (d.to_vec(), idx)) else {
+                continue;
+            };
+            let Some(fr) = FontRef::from_index(&fdata, fidx as usize) else {
+                continue;
+            };
+            // SAFETY: `fdata` moves into FallbackFont below and outlives its FontRef.
+            let fr: FontRef<'static> = unsafe { std::mem::transmute(fr) };
+            let name = db
+                .face(fid)
+                .and_then(|f| f.families.first().map(|f| f.0.clone()))
+                .unwrap_or_else(|| "vendored".to_string());
+            dlog!("fallback: {name} (vendored, index {fidx})");
+            fallbacks.push(FallbackFont {
+                _data: fdata,
+                font: fr,
+                name,
+            });
+        }
         for name in FALLBACK_FAMILIES {
-            if fallbacks.len() >= 4 {
+            if fallbacks.len() >= 10 {
                 break;
             }
             let Some(fid) = db.query(&Query {
@@ -995,8 +1050,76 @@ impl FontCtx {
             family: family.to_string(),
             ctx: swash::scale::ScaleContext::new(),
             glyphs: HashMap::new(),
+            probed: std::collections::HashSet::new(),
             metrics: Self::compute_metrics(&font, size_px, line_height),
         })
+    }
+
+    /// Linux: ask fontconfig which installed face covers `c`, then append it to
+    /// the fallback chain. This is what makes p10k / oh-my-posh / private-use
+    /// icon glyphs render even when the configured family is unpatched. Probed
+    /// once per codepoint, so it costs at most one `fc-match` per glyph shape.
+    fn add_face_covering(&mut self, c: char) -> bool {
+        if !cfg!(target_os = "linux") || !self.probed.insert(c) {
+            return false;
+        }
+        if self.fallbacks.len() >= 16 {
+            return false;
+        }
+        // fc-list (not fc-match): match returns "best by language", which on a
+        // minimal install is often a *sample* font that draws codepoint boxes.
+        // Enumerate every covering face and prefer a real symbol/patched one.
+        let out = std::process::Command::new("fc-list")
+            .args(["-f", "%{file}\n", &format!(":charset={:x}", c as u32)])
+            .output();
+        let Ok(out) = out else { return false };
+        if !out.status.success() {
+            return false;
+        }
+        let listing = String::from_utf8_lossy(&out.stdout);
+        let mut candidates: Vec<&str> = listing
+            .lines()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            // Placeholder faces that "cover" a codepoint but paint a hex box.
+            .filter(|p| {
+                let low = p.to_ascii_lowercase();
+                !low.contains("sample") && !low.contains("lastresort") && !low.contains("notdef")
+            })
+            .filter(|p| !self.fallbacks.iter().any(|f| f.name == *p))
+            .collect();
+        // Prefer patched/symbol faces when several cover the codepoint.
+        candidates.sort_by_key(|p| {
+            let low = p.to_ascii_lowercase();
+            if low.contains("nerd") || low.contains("powerline") {
+                0
+            } else if low.contains("symbol") || low.contains("emoji") {
+                1
+            } else {
+                2
+            }
+        });
+        let Some(path) = candidates.first().map(|p| p.to_string()) else {
+            return false;
+        };
+        let Ok(data) = std::fs::read(&path) else {
+            return false;
+        };
+        let Some(fr) = FontRef::from_index(&data, 0) else {
+            return false;
+        };
+        // SAFETY: `data` moves into FallbackFont below and outlives its FontRef.
+        let fr: FontRef<'static> = unsafe { std::mem::transmute(fr) };
+        if fr.charmap().map(c) == 0 {
+            return false;
+        }
+        dlog!("fallback: {path} (fontconfig for U+{:04X})", c as u32);
+        self.fallbacks.push(FallbackFont {
+            _data: data,
+            font: fr,
+            name: path,
+        });
+        true
     }
 
     /// True when this context is already built for `family` and line height
@@ -2432,6 +2555,14 @@ impl Renderer {
         };
         let faux_bold = bold && fontc.bold.is_none();
         let faux_italic = italic && fontc.italic.is_none();
+        // Nothing in the chain covers this codepoint: pull a covering system
+        // face in (fontconfig) and let the chain loop below pick it up.
+        let covered = std::iter::once(face)
+            .chain(fontc.fallbacks.iter().map(|f| f.font))
+            .any(|f| f.charmap().map(c) != 0);
+        if !covered {
+            fontc.add_face_covering(c);
+        }
         // FontRefs are Copy; snapshot the whole chain (primary first).
         // Chain snapshot taken via self.font.fallbacks to keep fontc's mut
         // field borrow disjoint (fontc = self.font, fallbacks = sibling field).

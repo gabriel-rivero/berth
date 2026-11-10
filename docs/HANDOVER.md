@@ -105,6 +105,15 @@ cd crates/plugins/guest && cargo build --target wasm32-wasip2 --release
 Without it the roundtrip test skips silently. `target/release/berth` build
 takes ~9 min cold.
 
+## Font rendering (2026-11)
+
+`FontCtx` now resolves missing glyphs through: vendored `fonts/` faces →
+Nerd/Powerline family list → symbol/CJK/emoji → DejaVu/Unifont → Linux
+`fc-list` per codepoint (cached in `probed`). Placeholder fonts are filtered by
+name. Verified headless: PUA glyphs resolve, truecolor and 256-color SGR render
+exactly (pixel-checked). Ligatures are still unshaped — `docs/ROADMAP.md`
+"Ligatures" has the planned design.
+
 ## Next up (roadmap order)
 
 1. **Windows/macOS verification pass** — the single biggest risk to "near-equal on all

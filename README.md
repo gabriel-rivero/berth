@@ -150,6 +150,12 @@ family = "JetBrains Mono"   # any installed family; falls back to a per-OS mono
 size_pt = 12.5
 line_height = 1.15          # multiplier on the face's ascent+descent (1.0 = tight)
 
+Missing glyphs (Nerd Font / Powerline icons, emoji, CJK) fall through a
+fallback chain that includes common patched families, anything dropped in
+`<config>/fonts/`, and on Linux a fontconfig lookup per missing codepoint — so
+p10k/oh-my-posh prompts render even with an unpatched primary family. See
+`docs/CONFIG.md#fallbacks-icons-emoji-cjk`.
+
 [theme]
 preset = "dark"             # "dark" (default) or "light"
 background = "#121317"      # optional overrides
