@@ -458,7 +458,7 @@ struct PluginPanel {
 
 /// One entry of a right-click context menu.
 struct MenuItem {
-    label: &'static str,
+    label: String,
     action: MenuAction,
     enabled: bool,
     /// Draw a separator line above this row.
@@ -472,6 +472,7 @@ enum MenuAction {
     NewTab,
     CloseTab(usize),
     CloseOtherTabs(usize),
+    MoveTab(TabId, WorkspaceId),
     NewWorkspace,
     RenameWorkspace(usize),
     CloseWorkspace(usize),
@@ -789,19 +790,19 @@ impl Berth {
                     .unwrap_or_default();
                 self.open_context_menu(vec![
                     MenuItem {
-                        label: "rename workspace",
+                        label: "rename workspace".into(),
                         action: MenuAction::RenameWorkspace(i),
                         enabled: true,
                         sep: false,
                     },
                     MenuItem {
-                        label: "close workspace",
+                        label: "close workspace".into(),
                         action: MenuAction::CloseWorkspace(i),
                         enabled: ws_count > 1,
                         sep: true,
                     },
                     MenuItem {
-                        label: "new workspace",
+                        label: "new workspace".into(),
                         action: MenuAction::NewWorkspace,
                         enabled: true,
                         sep: true,
@@ -811,26 +812,53 @@ impl Berth {
                 true
             }
             Some(ChromeZone::Tab(i)) => {
-                self.open_context_menu(vec![
+                let mut items = vec![
                     MenuItem {
-                        label: "close tab",
+                        label: "close tab".into(),
                         action: MenuAction::CloseTab(i),
                         enabled: true,
                         sep: false,
                     },
                     MenuItem {
-                        label: "close other tabs",
+                        label: "close other tabs".into(),
                         action: MenuAction::CloseOtherTabs(i),
                         enabled: tabs > 1,
                         sep: false,
                     },
                     MenuItem {
-                        label: "new tab",
+                        label: "new tab".into(),
                         action: MenuAction::NewTab,
                         enabled: true,
                         sep: true,
                     },
-                ]);
+                ];
+                // Flat "move to <workspace>" rows (a submenu is overkill for
+                // the handful of workspaces a session usually has).
+                let tab_id = self
+                    .layout
+                    .active_workspace()
+                    .and_then(|ws| ws.tabs.get(i))
+                    .map(|t| t.id);
+                if let (Some(tab_id), Some(ws), true) =
+                    (tab_id, self.layout.active_workspace(), ws_count > 1)
+                {
+                    let targets: Vec<(WorkspaceId, String)> = self
+                        .layout
+                        .workspaces
+                        .iter()
+                        .filter(|w| w.id != ws.id)
+                        .map(|w| (w.id, format!("move to {}", w.label)))
+                        .collect();
+                    for (n, (ws_id, label)) in targets.into_iter().enumerate() {
+                        items.push(MenuItem {
+                            label,
+                            action: MenuAction::MoveTab(tab_id, ws_id),
+                            enabled: true,
+                            sep: n == 0,
+                        });
+                    }
+                }
+                self.open_context_menu(items);
                 dlog_app!("tab menu for slot{i}");
                 true
             }
@@ -841,7 +869,7 @@ impl Berth {
                 | ChromeZone::SidebarClose(_),
             ) => {
                 self.open_context_menu(vec![MenuItem {
-                    label: "new workspace",
+                    label: "new workspace".into(),
                     action: MenuAction::NewWorkspace,
                     enabled: true,
                     sep: false,
@@ -850,7 +878,7 @@ impl Berth {
             }
             Some(ChromeZone::TabPlus | ChromeZone::TabStripEmpty | ChromeZone::TabClose(_)) => {
                 self.open_context_menu(vec![MenuItem {
-                    label: "new tab",
+                    label: "new tab".into(),
                     action: MenuAction::NewTab,
                     enabled: true,
                     sep: false,
@@ -874,37 +902,37 @@ impl Berth {
                 let zoomed = self.zoomed == Some(id);
                 self.open_context_menu(vec![
                     MenuItem {
-                        label: "copy",
+                        label: "copy".into(),
                         action: MenuAction::Copy,
                         enabled: has_selection,
                         sep: false,
                     },
                     MenuItem {
-                        label: "paste",
+                        label: "paste".into(),
                         action: MenuAction::Paste,
                         enabled: true,
                         sep: false,
                     },
                     MenuItem {
-                        label: "split right",
+                        label: "split right".into(),
                         action: MenuAction::SplitRight,
                         enabled: true,
                         sep: true,
                     },
                     MenuItem {
-                        label: "split down",
+                        label: "split down".into(),
                         action: MenuAction::SplitDown,
                         enabled: true,
                         sep: false,
                     },
                     MenuItem {
-                        label: if zoomed { "unzoom pane" } else { "zoom pane" },
+                        label: if zoomed { "unzoom pane" } else { "zoom pane" }.into(),
                         action: MenuAction::ToggleZoom,
                         enabled: true,
                         sep: true,
                     },
                     MenuItem {
-                        label: "close pane",
+                        label: "close pane".into(),
                         action: MenuAction::ClosePane,
                         enabled: true,
                         sep: true,
@@ -995,6 +1023,25 @@ impl Berth {
                     .and_then(|ws| ws.tabs.iter().position(|t| t.id == target))
                 {
                     self.select_tab(idx);
+                }
+            }
+            MenuAction::MoveTab(tab_id, ws_id) => {
+                dlog_app!("menu move tab {:?} -> ws {:?}", tab_id, ws_id);
+                let empty = self.layout.move_tab_to(tab_id, ws_id);
+                if let Some(empty) = empty {
+                    self.layout.remove_workspace(empty);
+                }
+                if let Some(id) = self
+                    .layout
+                    .active_workspace()
+                    .and_then(|w| w.focused_tab())
+                    .map(|t| t.focused)
+                {
+                    self.focused_pane = id;
+                }
+                self.sync_size();
+                if let Some(w) = &self.window {
+                    w.request_redraw();
                 }
             }
             MenuAction::NewWorkspace => self.new_workspace(),
@@ -1367,7 +1414,7 @@ impl Berth {
                     .iter()
                     .zip(&m.rects)
                     .map(|(it, r)| crate::render::MenuItemView {
-                        label: it.label,
+                        label: &it.label,
                         enabled: it.enabled,
                         separator: it.sep,
                         rect: *r,
