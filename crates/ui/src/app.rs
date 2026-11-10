@@ -3,7 +3,7 @@
 //! `Pane`s are keyed by PaneId. Sidebar lists workspaces; tab strip + panes tile beside it.
 use crate::render::{Chrome, ChromeZone, Renderer, sidebar_width, workspace_index_at};
 use alacritty_terminal::term::TermMode;
-use berth_core::config::{Backspace, Config};
+use berth_core::config::{Backspace, Config, CursorStyle, ThemePreset};
 use berth_core::keybinds::{Action, Chord, build_bindings};
 use berth_core::layout::{Layout, PaneId, Rect, Session, Tab, TabId, Workspace, WorkspaceId};
 use berth_emulation::pane::{LinkSpan, Pane, PaneEvent, SelectionKind, TermPoint};
@@ -246,6 +246,8 @@ pub struct Berth {
     plugin_errors: Vec<(String, String)>,
     /// Plugin manager overlay (None = closed).
     plugin_panel: Option<PluginPanel>,
+    /// Settings overlay (None = closed).
+    settings_panel: Option<SettingsPanel>,
     /// Right-click menu (tab strip, sidebar entry or pane).
     context_menu: Option<ContextMenu>,
     /// Status segments republished by plugins (`host.set-status`), tab strip.
@@ -453,6 +455,39 @@ struct PluginRow {
 #[derive(Debug, Default)]
 struct PluginPanel {
     rows: Vec<PluginRow>,
+    selected: usize,
+}
+
+/// Which config knob a settings row edits. Values are read from `Config` on
+/// every redraw so the panel can never show a stale value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettingId {
+    ThemePreset,
+    FontSize,
+    LineHeight,
+    SidebarWidth,
+    SidebarShow,
+    CursorStyle,
+    CursorBlink,
+    CopyOnSelect,
+    Scrollback,
+    KittyKeyboard,
+    Backspace,
+    Plugins,
+}
+
+/// One row of the settings overlay: label on the left, current value right.
+#[derive(Debug, Clone)]
+struct SettingRow {
+    id: SettingId,
+    label: &'static str,
+    value: String,
+}
+
+/// Settings overlay state (rows are cheap to rebuild from config).
+#[derive(Debug, Default)]
+struct SettingsPanel {
+    rows: Vec<SettingRow>,
     selected: usize,
 }
 
@@ -673,6 +708,308 @@ impl Berth {
                         "j" => self.plugin_select(1),
                         "k" => self.plugin_select(-1),
                         "q" => self.close_plugin_panel(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// Rows for the settings overlay, read straight from the live config.
+    fn setting_rows(&self) -> Vec<SettingRow> {
+        let c = &self.config;
+        let onoff = |b: bool| if b { "on" } else { "off" }.to_string();
+        let row = |id, label, value: String| SettingRow { id, label, value };
+        vec![
+            row(
+                SettingId::ThemePreset,
+                "theme",
+                match c.theme.preset {
+                    ThemePreset::Dark => "dark",
+                    ThemePreset::Light => "light",
+                }
+                .to_string(),
+            ),
+            row(
+                SettingId::FontSize,
+                "font size",
+                format!("{:.1} pt", c.font.size_pt),
+            ),
+            row(
+                SettingId::LineHeight,
+                "line height",
+                format!("{:.2}", c.font.line_height),
+            ),
+            row(
+                SettingId::SidebarWidth,
+                "sidebar width",
+                format!("{:.0} px", c.sidebar.width_px),
+            ),
+            row(SettingId::SidebarShow, "sidebar", onoff(c.sidebar.show)),
+            row(
+                SettingId::CursorStyle,
+                "cursor",
+                match c.terminal.cursor_style {
+                    CursorStyle::Block => "block",
+                    CursorStyle::Beam => "beam",
+                    CursorStyle::Underline => "underline",
+                }
+                .to_string(),
+            ),
+            row(
+                SettingId::CursorBlink,
+                "cursor blink",
+                onoff(c.terminal.cursor_blink),
+            ),
+            row(
+                SettingId::CopyOnSelect,
+                "copy on select",
+                onoff(c.terminal.copy_on_select),
+            ),
+            row(
+                SettingId::Scrollback,
+                "scrollback",
+                format!("{} lines", c.terminal.scrollback),
+            ),
+            row(
+                SettingId::KittyKeyboard,
+                "kitty keyboard",
+                onoff(c.terminal.kitty_keyboard),
+            ),
+            row(
+                SettingId::Backspace,
+                "backspace",
+                match c.terminal.backspace {
+                    Backspace::Del => "del",
+                    Backspace::Bs => "bs",
+                }
+                .to_string(),
+            ),
+            row(
+                SettingId::Plugins,
+                "plugins",
+                format!("{} loaded", self.plugins.len()),
+            ),
+        ]
+    }
+
+    fn open_settings_panel(&mut self) {
+        let rows = self.setting_rows();
+        dlog_app!("settings panel open ({} rows)", rows.len());
+        self.settings_panel = Some(SettingsPanel { rows, selected: 0 });
+        self.window.as_ref().inspect(|w| w.request_redraw());
+    }
+
+    fn close_settings_panel(&mut self) {
+        self.settings_panel = None;
+        self.window.as_ref().inspect(|w| w.request_redraw());
+    }
+
+    fn settings_select(&mut self, delta: isize) {
+        if let Some(panel) = &mut self.settings_panel
+            && !panel.rows.is_empty()
+        {
+            let last = panel.rows.len() - 1;
+            let next = panel.selected as isize + delta;
+            panel.selected = next.clamp(0, last as isize) as usize;
+            self.window.as_ref().inspect(|w| w.request_redraw());
+        }
+    }
+
+    /// Rebuild the settings rows in place, keeping the selection.
+    fn refresh_setting_rows(&mut self) {
+        let selected = self
+            .settings_panel
+            .as_ref()
+            .map(|p| p.selected)
+            .unwrap_or(0);
+        let rows = self.setting_rows();
+        if let Some(panel) = &mut self.settings_panel {
+            panel.selected = selected.min(rows.len().saturating_sub(1));
+            panel.rows = rows;
+        }
+    }
+
+    /// Edit the selected setting. `dir` is -1/1 for numeric and cyclic values
+    /// and ignored by plain toggles. Persists to `config.toml` immediately.
+    fn adjust_selected_setting(&mut self, dir: i32) {
+        let Some(row) = self
+            .settings_panel
+            .as_ref()
+            .and_then(|p| p.rows.get(p.selected))
+            .cloned()
+        else {
+            return;
+        };
+        let mut font = false;
+        let mut layout = false;
+        let step = if dir == 0 { 1 } else { dir };
+        match row.id {
+            SettingId::ThemePreset => {
+                self.config.theme.preset = match self.config.theme.preset {
+                    ThemePreset::Dark => ThemePreset::Light,
+                    ThemePreset::Light => ThemePreset::Dark,
+                };
+            }
+            SettingId::FontSize => {
+                let v = (self.config.font.size_pt + 0.5 * step as f32).clamp(6.0, 32.0);
+                font = v != self.config.font.size_pt;
+                self.config.font.size_pt = v;
+            }
+            SettingId::LineHeight => {
+                let v =
+                    ((self.config.font.line_height + 0.05 * step as f32) * 100.0).round() / 100.0;
+                let v = v.clamp(0.9, 1.8);
+                font = v != self.config.font.line_height;
+                self.config.font.line_height = v;
+            }
+            SettingId::SidebarWidth => {
+                let v = (self.config.sidebar.width_px + 10.0 * step as f32).clamp(140.0, 420.0);
+                layout = v != self.config.sidebar.width_px;
+                self.config.sidebar.width_px = v;
+            }
+            SettingId::SidebarShow => {
+                self.config.sidebar.show = !self.config.sidebar.show;
+                layout = true;
+            }
+            SettingId::CursorStyle => {
+                self.config.terminal.cursor_style = match (self.config.terminal.cursor_style, step)
+                {
+                    (CursorStyle::Block, d) if d > 0 => CursorStyle::Beam,
+                    (CursorStyle::Block, _) => CursorStyle::Underline,
+                    (CursorStyle::Beam, d) if d > 0 => CursorStyle::Underline,
+                    (CursorStyle::Beam, _) => CursorStyle::Block,
+                    (CursorStyle::Underline, d) if d > 0 => CursorStyle::Block,
+                    (CursorStyle::Underline, _) => CursorStyle::Beam,
+                };
+            }
+            SettingId::CursorBlink => {
+                self.config.terminal.cursor_blink = !self.config.terminal.cursor_blink
+            }
+            SettingId::CopyOnSelect => {
+                self.config.terminal.copy_on_select = !self.config.terminal.copy_on_select
+            }
+            SettingId::Scrollback => {
+                let v = (self.config.terminal.scrollback as i64 + 1000 * step as i64)
+                    .clamp(0, 1_000_000) as usize;
+                self.config.terminal.scrollback = v;
+            }
+            SettingId::KittyKeyboard => {
+                self.config.terminal.kitty_keyboard = !self.config.terminal.kitty_keyboard
+            }
+            SettingId::Backspace => {
+                self.config.terminal.backspace = match self.config.terminal.backspace {
+                    Backspace::Del => Backspace::Bs,
+                    Backspace::Bs => Backspace::Del,
+                };
+            }
+            SettingId::Plugins => {
+                // Cross-link: the manager owns per-plugin flags, and only one
+                // overlay can own the keyboard at a time.
+                self.close_settings_panel();
+                self.open_plugin_panel();
+                return;
+            }
+        }
+        dlog_app!(
+            "setting {} -> {} (dir={dir})",
+            row.label,
+            self.setting_rows()
+                .iter()
+                .find(|r| r.id == row.id)
+                .map(|r| r.value.as_str())
+                .unwrap_or("?")
+        );
+        // Plugin flags live in the manager, so this path never touches them.
+        self.apply_live_config(font, layout, false);
+        if let Err(e) = self.config.save() {
+            crate::render::dlog_emit(&format!("settings: config save failed: {e}"));
+            self.notice = Some((
+                format!("config save failed: {e}"),
+                std::time::Instant::now() + NOTICE_TIMEOUT,
+            ));
+        }
+        self.refresh_setting_rows();
+        self.window.as_ref().inspect(|w| w.request_redraw());
+    }
+
+    /// Push the in-memory config into the renderer/bindings/panes after an
+    /// in-app edit (the file is written by the caller). Mirrors the reload
+    /// path so a panel change and a hand edit behave identically.
+    fn apply_live_config(
+        &mut self,
+        font_changed: bool,
+        layout_changed: bool,
+        plugins_changed: bool,
+    ) {
+        if let Some(renderer) = &mut self.renderer {
+            renderer.set_theme(&self.config.theme);
+            renderer.set_cursor_style(self.config.terminal.cursor_style);
+        }
+        let (bindings, warns) = build_bindings(&self.config.keybinds.0);
+        self.bindings = bindings;
+        for (id, reason) in &warns {
+            crate::render::dlog_emit(&format!("berth config: keybind '{id}': '{reason}'"));
+        }
+        if plugins_changed {
+            self.reload_plugins();
+        }
+        if font_changed && let (Some(renderer), Some(window)) = (&mut self.renderer, &self.window) {
+            let size_px = self.config.font.size_pt * 1.333_333 * window.scale_factor() as f32;
+            match renderer.set_font(
+                &self.config.font.family,
+                size_px,
+                self.config.font.line_height,
+            ) {
+                Ok(()) => self.sync_size(),
+                Err(e) => crate::render::dlog_emit(&format!("settings: font swap failed: {e}")),
+            }
+        } else if layout_changed {
+            self.sync_size();
+        }
+        self.window.as_ref().inspect(|w| w.request_redraw());
+    }
+
+    /// Key interception while the settings overlay is up. Consumes everything.
+    fn settings_panel_chord(&mut self, event: &KeyEvent) -> bool {
+        if self.settings_panel.is_none() {
+            return false;
+        }
+        if let Some(key) = chord_key_name(event) {
+            let chord = Chord {
+                ctrl: self.modifiers.control_key(),
+                shift: self.modifiers.shift_key(),
+                alt: self.modifiers.alt_key(),
+                super_key: self.modifiers.super_key(),
+                key,
+            };
+            if self.bindings.get(&chord) == Some(&Action::Settings) {
+                self.close_settings_panel();
+                return true;
+            }
+        }
+        use winit::keyboard::{Key, NamedKey};
+        match &event.logical_key {
+            Key::Named(NamedKey::Escape) => self.close_settings_panel(),
+            Key::Named(NamedKey::ArrowUp) => self.settings_select(-1),
+            Key::Named(NamedKey::ArrowDown) => self.settings_select(1),
+            Key::Named(NamedKey::ArrowLeft) => self.adjust_selected_setting(-1),
+            Key::Named(NamedKey::ArrowRight) => self.adjust_selected_setting(1),
+            Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => {
+                self.adjust_selected_setting(0)
+            }
+            _ => {
+                let plain = !self.modifiers.control_key()
+                    && !self.modifiers.alt_key()
+                    && !self.modifiers.super_key();
+                if plain && let Some(text) = event.text.as_deref() {
+                    match text {
+                        "j" => self.settings_select(1),
+                        "k" => self.settings_select(-1),
+                        "h" => self.adjust_selected_setting(-1),
+                        "l" => self.adjust_selected_setting(1),
+                        "q" => self.close_settings_panel(),
                         _ => {}
                     }
                 }
@@ -1406,6 +1743,26 @@ impl Berth {
                 rows: &plugin_rows,
                 selected: p.selected,
             });
+        let setting_rows: Vec<crate::render::SettingRowView> = self
+            .settings_panel
+            .as_ref()
+            .map(|p| {
+                p.rows
+                    .iter()
+                    .map(|r| crate::render::SettingRowView {
+                        label: r.label,
+                        value: &r.value,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let settings_view =
+            self.settings_panel
+                .as_ref()
+                .map(|p| crate::render::SettingsPanelView {
+                    rows: &setting_rows,
+                    selected: p.selected,
+                });
         let menu_items: Vec<crate::render::MenuItemView> = self
             .context_menu
             .as_ref()
@@ -1451,6 +1808,7 @@ impl Berth {
                         current: s.current,
                     }),
                     plugin_view,
+                    settings_view,
                     menu_view,
                     hover_link,
                     self.zoomed.is_some(),
@@ -2331,6 +2689,11 @@ impl Berth {
             return true;
         }
 
+        // Settings overlay consumes keys while it is up.
+        if self.settings_panel_chord(event) {
+            return true;
+        }
+
         // Plugin manager overlay consumes keys while it is up.
         if self.plugin_panel_chord(event) {
             return true;
@@ -2403,6 +2766,14 @@ impl Berth {
                     self.close_plugin_panel();
                 } else {
                     self.open_plugin_panel();
+                }
+                true
+            }
+            Action::Settings => {
+                if self.settings_panel.is_some() {
+                    self.close_settings_panel();
+                } else {
+                    self.open_settings_panel();
                 }
                 true
             }
@@ -4125,6 +4496,7 @@ pub fn run() -> anyhow::Result<()> {
         plugins,
         plugin_errors,
         plugin_panel: None,
+        settings_panel: None,
         context_menu: None,
         status_segments: Vec::new(),
         notice: config_error.map(|msg| (msg, std::time::Instant::now() + STARTUP_NOTICE_TIMEOUT)),

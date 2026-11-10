@@ -115,6 +115,17 @@ rejected at parse time.
 `accent` is what guests read through `host.accent()`; it defaults per preset
 (`#4f8cff` dark, `#0969da` light).
 
+## In-app settings (`cmd+,` / `ctrl+,`)
+
+The settings overlay edits the knobs below without leaving the terminal:
+theme preset, font size, line height, sidebar width/visibility, cursor
+style/blink, copy-on-select, scrollback, kitty keyboard, backspace, and a
+shortcut row that opens the plugin manager. Every change is applied
+immediately (font/theme swap, re-tile) and written back to this file through
+`Config::save()`, which rewrites the whole document — **hand-written comments
+are not preserved** by an in-app edit. `scrollback`, `kitty keyboard` and
+`backspace` only affect panes spawned afterwards.
+
 ## `[sidebar]`
 
 | Key | Type | Default | Notes |

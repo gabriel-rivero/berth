@@ -114,6 +114,7 @@ Alternate-key and associated-text parameters are not emitted yet.
 | scroll | mouse wheel, `shift+PgUp` / `shift+PgDn`, `cmd+PgUp` / `cmd+PgDn` |
 | search scrollback | `cmd+f` (`ctrl+shift+f`); type to filter, `enter`/`shift+enter` cycles hits, `esc` closes |
 | plugin manager | `cmd+shift+p` (`ctrl+shift+p`); `↑`/`↓` move, `space`/`enter` enable/disable, `r` rescan, `esc` closes |
+| settings | `cmd+,` (`ctrl+,`); `↑`/`↓` move, `←`/`→` change, `space` toggle, `esc` closes — edits apply live and are saved to `config.toml` |
 | open link | `cmd+click` (`ctrl+click` on Linux/Windows) over OSC 8 or `http(s)://`/`file://`/`mailto:` text |
 | fullscreen | `F11` or `alt+Enter` (borderless; same chord toggles back) |
 | clear scrollback | `cmd+k` (`ctrl+shift+k`); keeps the visible screen |

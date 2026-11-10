@@ -35,6 +35,7 @@ pub enum Action {
     Fullscreen,
     ClearScrollback,
     PluginManager,
+    Settings,
 }
 
 impl Action {
@@ -66,6 +67,7 @@ impl Action {
             Action::Fullscreen => "fullscreen",
             Action::ClearScrollback => "clear-scrollback",
             Action::PluginManager => "plugin-manager",
+            Action::Settings => "settings",
         }
     }
 
@@ -96,6 +98,7 @@ impl Action {
             "fullscreen" => Action::Fullscreen,
             "clear-scrollback" => Action::ClearScrollback,
             "plugin-manager" => Action::PluginManager,
+            "settings" => Action::Settings,
             _ => return None,
         })
     }
@@ -140,6 +143,8 @@ impl Action {
             (Action::ClearScrollback, &["cmd+k", "ctrl+shift+k"]),
             // Plugin manager overlay (list, enable/disable, reload).
             (Action::PluginManager, &["cmd+shift+p", "ctrl+shift+p"]),
+            // Settings overlay; cmd+, is the macOS convention.
+            (Action::Settings, &["cmd+,", "ctrl+,"]),
         ]
     }
 }
@@ -218,9 +223,9 @@ fn is_bindable_key(k: &str) -> bool {
             | "up"
             | "down"
     ) || k.len() == 1
-        && k.chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '[' || c == ']')
+        && k.chars().next().is_some_and(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '[' | ']' | ',' | '.' | '/' | ';' | '=' | '-')
+        })
         || is_function_key(k)
 }
 
@@ -342,6 +347,20 @@ mod tests {
         // old default for that key: nothing bound new-tab on ctrl+shift+n anymore
         let chord = parse_chord("ctrl+shift+n").unwrap();
         assert_ne!(bindings.get(&chord), Some(&Action::NewTab));
+    }
+
+    #[test]
+    fn punctuation_chords_bind_settings() {
+        // `cmd+,` / `ctrl+,` are the platform-conventional settings chords;
+        // commas must stay bindable even though they are not alphanumeric.
+        let chord = parse_chord("cmd+,").unwrap();
+        assert!(chord.super_key);
+        assert_eq!(chord.key, ",");
+        let chord = parse_chord("ctrl+,").unwrap();
+        assert!(chord.ctrl);
+        assert_eq!(Action::from_action_str("settings"), Some(Action::Settings));
+        // A bare comma stays unbindable so typing it can never trigger an action.
+        assert!(parse_chord(",").is_none());
     }
 
     #[test]

@@ -21,7 +21,7 @@ This review is historical; the live tracker is `docs/ROADMAP.md`. As of v0.27.0:
   bold/italic/underline, IME, plugin fuel/limits, `Tab.cwd`); U-1/2/3/4/11/12/13/14/15.
 - **Partly closed**:
   U-9 (`+` buttons shipped).
-- **Still open**: U-5 (config panel), atlas LRU, tab/sidebar overflow,
+- **Still open**: atlas LRU, tab/sidebar overflow,
   damage tracking, CI hit-test smokes.
 - The §7 Xvfb+xdotool probe scripts were never promoted to CI; that remains the
   cheapest guard against branch-order regressions.
@@ -190,7 +190,7 @@ This review is historical; the live tracker is `docs/ROADMAP.md`. As of v0.27.0:
 | U-2 | S2 | **user-reported** middle-click close | = BUGS-5. | S |
 | U-3 | S2 | **user-reported** hover states | = BUGS-6. | M |
 | U-4 | S2 | Confirm guard on ✕ cascades: closing the last tab of the last workspace **exits the app instantly** (cascade `app.rs:1275-1281`) and workspace ✕ kills every live job in it — the CloseRequested banner (`app.rs:1620-1634`) covers neither. Fold into roadmap's confirm item. | **[new]** detail | M |
-| U-5 | S3 | **user-reported** "no config panel" | **CONFIRMED**: no settings UI, and `Config` has no `save()` — nothing can write back today. Staging: (1) `open-config` action (open `config.toml` in $EDITOR / reveal path) — cheap; (2) real panel (font/theme/keybinds) — L. | S / L |
+| U-5 | S3 | **user-reported** "no config panel" | **[done 2026-11]** `cmd+,` settings overlay edits theme/font/sidebar/cursor/copy-on-select/scrollback/kitty/backspace and saves via `Config::save()`; keybind editing still open. | S / L |
 | U-6 | S3 | **user-reported** "no plugin enable/disable interface" | **CONFIRMED**: `load_plugins` loads every `*.wasm` at startup (`plugins/lib.rs:118-135`, `app.rs:1795-1805`); no manifest, no toggles, no error visibility in-app, **no rescan on hot-reload**. Cheap first step: `[[plugin]] name/enabled` config section; full manager UI pairs with roadmap plugin items 2-3. | M |
 | U-7 | S3 | Right-click context menus (tab/entry/pane). | **[done 2026-11]** tab: close/close-others/new; entry: rename/close/new; pane: copy/paste/split right/split down/zoom/close; capturing TUIs still receive right-click | M |
 | U-8 | S3 | Tab **reordering** within a workspace — drag only moves between workspaces; strip slot order is immutable. README's "re-orderable" phrasing oversells. | **[done 2026-11]** drag within strip reorders live | M |
@@ -211,7 +211,7 @@ This review is historical; the live tracker is `docs/ROADMAP.md`. As of v0.27.0:
 | "no ui hover animations on clickable buttons" | **CONFIRMED** (no hover plumbing; no Pointer cursor) | BUGS-6 / U-3 — `render.rs:1111-1121`, `app.rs:758-792` |
 | "close button not working on tabs/workspaces" | **CONFIRMED (workspace ✕)**: edge-grab branch (`app.rs:1455`) checked before close-✕ (`app.rs:1465`), no y-guard → right ~29% of ✕ zone starts resize; verified scales 1+2. **Tab ✕: PLAUSIBLE** — geometry verified correct; failure perception = no hover (BUGS-6) + drag-arm-on-press (BUGS-4) + last-tab-✕ exits app (U-4). Bonus confirmed: 8px dead band steals pane + tab-strip clicks. | BUGS-2 (+BUGS-4/6, U-4) |
 | "no button to hide/show the workspaces" | **CONFIRMED** (config-only) | U-1 |
-| "no config panel" | **CONFIRMED** (no UI, no `Config::save()`) | U-5 |
+| "no config panel" | **done 2026-11** (`cmd+,` overlay + `Config::save()`) | U-5 |
 | "no plugin enable/disable interface" | **CONFIRMED** (load-all, no toggles/manifest/rescan) | U-6 |
 | "no middle-click close of tabs/workspaces" | **CONFIRMED** (probe: strip middle-click = total no-op) | BUGS-5 / U-2 |
 

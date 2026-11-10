@@ -69,6 +69,11 @@ tab slots (9 = last), right-click context menus for tab/workspace/pane built fro
 single-line rename editor (`RenameEdit` with caret/anchor, word motion, paste,
 IME). Tab menus also list flat `move to <workspace>` rows.
 
+Settings live in `SettingsPanel`/`SettingId` (app.rs) drawn by
+`render::draw_settings_panel`; `apply_live_config(font, layout, plugins)` is the
+single "push in-memory config into renderer/bindings/panes" path, mirrored by
+`poll_config_reload` for hand edits.
+
 Useful new APIs: `chrome_zone_at`/`Chrome` (shared hit-test), `wheel_target`,
 `ColorScheme::from_config`, `CursorPaint`/`cursor_rect`, `ScrollInfo`,
 `SearchView`, `LinkSpan`/`url_at`/`is_safe_uri`, `GridMatch`/`find_matches`/
@@ -112,10 +117,12 @@ takes ~9 min cold.
    list, enable/disable, one-line load status, `r` rescan, hot reload; toggles
    persist through `Config::save()`). Still open: richer segment metadata
    (badges/icons/click actions), change-event diffs, tier 2–4 APIs.
-3. **Settings / config panel** (qwen U-5) — `Config::save()` and a full
-   `Serialize` schema exist; no editor UI yet. Natural next feature: a
-   `cmd+,` panel editing font/theme/opacity/cursor/copy-on-select and the
-   `[plugins]` flags, with live apply (config reload is already wired).
+3. **Settings depth** — the `cmd+,` overlay (theme, font size/line height,
+   sidebar, cursor, copy-on-select, scrollback, kitty, backspace, plugin-manager
+   shortcut) applies live and saves through `Config::save()`. Still open:
+   keybind editing, per-workspace settings (cwd/env/command/color/icon),
+   theme/palette color pickers. Note `Config::save()` rewrites the file, so
+   hand-written comments are lost on an in-app edit.
 4. **Distribution** — winget manifest (needs the Windows zip SHA256 from a release
    with assets), overflow chevrons for tabs/sidebar, damage tracking + CI perf
    budget.

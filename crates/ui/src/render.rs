@@ -338,6 +338,18 @@ pub struct SearchView<'a> {
 
 /// One plugin manager row as the renderer needs it.
 #[derive(Debug, Clone, Copy)]
+pub struct SettingRowView<'a> {
+    pub label: &'a str,
+    pub value: &'a str,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SettingsPanelView<'a> {
+    pub rows: &'a [SettingRowView<'a>],
+    pub selected: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct PluginRowView<'a> {
     pub name: &'a str,
     pub state: &'a str,
@@ -1887,6 +1899,140 @@ impl Renderer {
         }
     }
 
+    /// Settings overlay: same frame as the plugin manager, values right-aligned.
+    /// Edits apply live; the footer says which rows need new panes.
+    fn draw_settings_panel(
+        &mut self,
+        view: SettingsPanelView<'_>,
+        screen_w: f32,
+        screen_h: f32,
+        ch: Chrome,
+        metrics: Metrics,
+        sink: &mut QuadSink,
+    ) {
+        let s = ch.scale;
+        let colors = self.scheme.chrome;
+        sink.push(0.0, 0.0, screen_w, screen_h, [0.0, 0.0, 0.0, 0.35], None);
+
+        let row_h = metrics.cell_h + 10.0 * s;
+        let head_h = metrics.cell_h + 22.0 * s;
+        let foot_h = metrics.cell_h + 16.0 * s;
+        let max_h = (screen_h - 60.0 * s).max(head_h + foot_h + row_h);
+        let bh = (head_h + view.rows.len().max(1) as f32 * row_h + foot_h).min(max_h);
+        let bw = (760.0 * s).min((screen_w - 60.0 * s).max(240.0 * s));
+        let bx = (screen_w - bw) * 0.5;
+        let by = ((screen_h - bh) * 0.5).max(0.0);
+        let pad = 18.0 * s;
+
+        let mut bg = colors.sidebar_entry_active_bg;
+        bg[3] = 0.98;
+        sink.push_round(bx, by, bx + bw, by + bh, bg, 8.0 * s);
+
+        let mut pen_x = bx + pad;
+        let title_base = by + (head_h - metrics.cell_h) * 0.5 + metrics.ascent;
+        let title = "settings";
+        for c in title.chars() {
+            if let Some(g) = self.rasterize(c, false, false, sink) {
+                let gx = pen_x + g.left as f32;
+                let gy = title_base - g.top as f32;
+                sink.push(
+                    gx,
+                    gy,
+                    gx + g.uv[2],
+                    gy + g.uv[3],
+                    colors.tab_text_active,
+                    Some(g),
+                );
+            }
+            pen_x += metrics.cell_w;
+        }
+        // Right-aligned title suffix: where the file lives.
+        let file_hint = "config.toml";
+        let hint_cols = file_hint.chars().count() as f32;
+        let mut pen_x = bx + bw - pad - hint_cols * metrics.cell_w;
+        for c in file_hint.chars() {
+            if let Some(g) = self.rasterize(c, false, false, sink) {
+                let gx = pen_x + g.left as f32;
+                let gy = title_base - g.top as f32;
+                sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], colors.tab_text, Some(g));
+            }
+            pen_x += metrics.cell_w;
+        }
+        sink.push(
+            bx,
+            by + head_h - s,
+            bx + bw,
+            by + head_h,
+            colors.divider,
+            None,
+        );
+
+        let rows_top = by + head_h;
+        let rows_bottom = by + bh - foot_h;
+        let max_cols = ((bw - 2.0 * pad) / metrics.cell_w).floor().max(4.0) as usize;
+        for (i, row) in view.rows.iter().enumerate() {
+            let y0 = rows_top + i as f32 * row_h;
+            if y0 + row_h > rows_bottom + 0.5 {
+                break;
+            }
+            if i == view.selected {
+                let mut hl = colors.tab_text_active;
+                hl[3] = 0.10;
+                sink.push(bx + 6.0 * s, y0, bx + bw - 6.0 * s, y0 + row_h, hl, None);
+                sink.push(
+                    bx + 6.0 * s,
+                    y0,
+                    bx + 9.0 * s,
+                    y0 + row_h,
+                    colors.focus_outline,
+                    None,
+                );
+            }
+            let baseline = y0 + (row_h - metrics.cell_h) * 0.5 + metrics.ascent;
+            let value_cols = row.value.chars().count().min(max_cols / 2);
+            let label_cols = max_cols.saturating_sub(value_cols + 2);
+            let label: String = row.label.chars().take(label_cols).collect();
+            let mut pen = bx + pad;
+            for c in label.chars() {
+                if let Some(g) = self.rasterize(c, false, false, sink) {
+                    let gx = pen + g.left as f32;
+                    let gy = baseline - g.top as f32;
+                    sink.push(
+                        gx,
+                        gy,
+                        gx + g.uv[2],
+                        gy + g.uv[3],
+                        colors.tab_text_active,
+                        Some(g),
+                    );
+                }
+                pen += metrics.cell_w;
+            }
+            let value: String = row.value.chars().take(value_cols).collect();
+            let mut pen = bx + bw - pad - value.chars().count() as f32 * metrics.cell_w;
+            for c in value.chars() {
+                if let Some(g) = self.rasterize(c, false, false, sink) {
+                    let gx = pen + g.left as f32;
+                    let gy = baseline - g.top as f32;
+                    sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], colors.tab_text, Some(g));
+                }
+                pen += metrics.cell_w;
+            }
+        }
+
+        let foot_base = by + bh - foot_h + (foot_h - metrics.cell_h) * 0.5 + metrics.ascent;
+        let hint = "↑/↓ move · ←/→ change · space toggle · esc close";
+        let mut pen = bx + pad;
+        for c in hint.chars() {
+            if let Some(g) = self.rasterize(c, false, false, sink) {
+                let gx = pen + g.left as f32;
+                let gy = foot_base - g.top as f32;
+                sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], colors.tab_text, Some(g));
+            }
+            pen += metrics.cell_w;
+        }
+    }
+
     /// Centered bottom overlay strip (quit confirmation). Drawn last so it sits
     /// on top of panes/tabs/sidebar.
     /// Right-click menu: rounded popup with hover highlight, separators and
@@ -2385,6 +2531,7 @@ impl Renderer {
         cursor: CursorPaint,
         search: Option<SearchView<'_>>,
         plugin_panel: Option<PluginPanelView<'_>>,
+        settings_panel: Option<SettingsPanelView<'_>>,
         context_menu: Option<ContextMenuView<'_>>,
         link: Option<(Rect, LinkSpan)>,
         zoomed: bool,
@@ -2478,6 +2625,9 @@ impl Renderer {
         }
         if let Some(view) = plugin_panel {
             self.draw_plugin_panel(view, screen_w, screen_h, ch, metrics, &mut sink);
+        }
+        if let Some(view) = settings_panel {
+            self.draw_settings_panel(view, screen_w, screen_h, ch, metrics, &mut sink);
         }
         if let Some(view) = context_menu {
             self.draw_context_menu(view, ch, metrics, &mut sink);
