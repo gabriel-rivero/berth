@@ -111,8 +111,10 @@ takes ~9 min cold.
 Nerd/Powerline family list → symbol/CJK/emoji → DejaVu/Unifont → Linux
 `fc-list` per codepoint (cached in `probed`). Placeholder fonts are filtered by
 name. Verified headless: PUA glyphs resolve, truecolor and 256-color SGR render
-exactly (pixel-checked). Ligatures are still unshaped — `docs/ROADMAP.md`
-"Ligatures" has the planned design.
+exactly (pixel-checked). Ligatures are shaped per row (`FontCtx::shape_ligatures`,
+`Renderer::rasterize_gid`, `[font] ligatures`), but have only been verified
+against a non-ligature font — check `a -> b ==> c` with Fira Code / Cascadia on
+a machine that has one.
 
 ## Next up (roadmap order)
 

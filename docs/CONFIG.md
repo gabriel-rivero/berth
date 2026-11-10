@@ -51,6 +51,7 @@ preset = "dark"
 | `family` | string | `"monospace"` | First existing family from the system font chain; `~/.local/share/fonts` and per-OS font dirs are scanned. |
 | `size_pt` | float | `12.0` | Points at 96 dpi; scaled by the window DPI factor. |
 | `line_height` | float | `1.0` | Multiplier over ascent+descent, clamped `0.8..3.0`. |
+| `ligatures` | bool | `true` | Shape ASCII runs through the font's `calt`/`liga` features; multi-cell glyphs are drawn once at their cluster start. No effect on fonts without those features. |
 
 The primary family is used for regular, **real bold/italic/bold-italic** faces
 when the family ships them; otherwise a synthetic embolden/12° skew is used and

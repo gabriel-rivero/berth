@@ -946,6 +946,7 @@ impl Berth {
         if let Some(renderer) = &mut self.renderer {
             renderer.set_theme(&self.config.theme);
             renderer.set_cursor_style(self.config.terminal.cursor_style);
+            renderer.set_ligatures(self.config.font.ligatures);
         }
         let (bindings, warns) = build_bindings(&self.config.keybinds.0);
         self.bindings = bindings;
@@ -1603,6 +1604,7 @@ impl Berth {
             }
         };
         r.set_cursor_style(self.config.terminal.cursor_style);
+        r.set_ligatures(self.config.font.ligatures);
         Some(r)
     }
 
@@ -4233,6 +4235,7 @@ impl Berth {
         if let Some(renderer) = &mut self.renderer {
             renderer.set_theme(&self.config.theme);
             renderer.set_cursor_style(self.config.terminal.cursor_style);
+            renderer.set_ligatures(self.config.font.ligatures);
         }
         let (bindings, warns) = build_bindings(&self.config.keybinds.0);
         self.bindings = bindings;

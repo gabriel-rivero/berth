@@ -792,6 +792,18 @@ struct Face {
     font: FontRef<'static>,
 }
 
+/// One glyph of a shaped (ligature-aware) run.
+#[derive(Clone, Copy, Debug)]
+struct LigGlyph {
+    /// Cell index inside the run where this glyph's cluster begins.
+    cell: usize,
+    /// Cells covered by the cluster (1 = no ligature for this glyph).
+    span: usize,
+    gid: u16,
+    /// Shaped pen offset in px from the run's first cell.
+    pen: f32,
+}
+
 /// Cache key for rasterized glyphs: the faux-bold/italic variants are separate
 /// bitmaps, so they need separate atlas entries.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -822,6 +834,12 @@ pub struct FontCtx {
     ctx: ScaleContext,
     /// (char, faux-bold, faux-italic) -> raster (None = unavailable in the chain).
     glyphs: HashMap<GlyphKey, Option<GlyphRef>>,
+    /// Shaped glyph id -> raster (ligatures bypass the charmap).
+    gid_glyphs: HashMap<(u16, bool, bool), Option<GlyphRef>>,
+    /// Shaped ASCII runs: text + style -> glyph/cluster layout (None = no ligature).
+    shaped: HashMap<(String, bool, bool), Option<Vec<LigGlyph>>>,
+    /// GSUB/GPOS context for ligature shaping (borrowed per call, never stored).
+    shape_ctx: swash::shape::ShapeContext,
     /// Codepoints already probed through fontconfig (hits and misses).
     probed: std::collections::HashSet<char>,
     pub metrics: Metrics,
@@ -1050,9 +1068,83 @@ impl FontCtx {
             family: family.to_string(),
             ctx: swash::scale::ScaleContext::new(),
             glyphs: HashMap::new(),
+            gid_glyphs: HashMap::new(),
+            shaped: HashMap::new(),
+            shape_ctx: swash::shape::ShapeContext::new(),
             probed: std::collections::HashSet::new(),
             metrics: Self::compute_metrics(&font, size_px, line_height),
         })
+    }
+
+    /// Shape an ASCII run through the font's GSUB (liga/calt) and return its
+    /// glyph layout, or `None` when shaping produced no multi-cell cluster
+    /// (the per-cell charmap path is then exactly as good).
+    fn shape_ligatures(&mut self, text: &str, bold: bool, italic: bool) -> Option<Vec<LigGlyph>> {
+        let key = (text.to_string(), bold, italic);
+        if let Some(hit) = self.shaped.get(&key) {
+            return hit.clone();
+        }
+        let out = self.shape_uncached(text, bold, italic);
+        if self.shaped.len() > 4096 {
+            self.shaped.clear();
+        }
+        self.shaped.insert(key, out.clone());
+        out
+    }
+
+    fn shape_uncached(&mut self, text: &str, bold: bool, italic: bool) -> Option<Vec<LigGlyph>> {
+        let face = match (bold, italic) {
+            (false, false) => self.font,
+            (true, false) => self.bold.as_ref().map(|f| f.font).unwrap_or(self.font),
+            (false, true) => self.italic.as_ref().map(|f| f.font).unwrap_or(self.font),
+            (true, true) => self
+                .bold_italic
+                .as_ref()
+                .or(self.bold.as_ref())
+                .or(self.italic.as_ref())
+                .map(|f| f.font)
+                .unwrap_or(self.font),
+        };
+        if face.charmap().map('a') == 0 {
+            return None;
+        }
+        let size = self.size_px;
+        let mut shaper = self.shape_ctx.builder(face).size(size).build();
+        shaper.add_str(text);
+        let mut byte_cell = HashMap::new();
+        for (cell, (byte, _)) in text.char_indices().enumerate() {
+            byte_cell.insert(byte as u32, cell);
+        }
+        let total = text.chars().count();
+        let mut out: Vec<LigGlyph> = Vec::new();
+        let mut pen = 0.0f32;
+        shaper.shape_with(|cluster| {
+            let Some(&cell) = byte_cell.get(&cluster.source.start) else {
+                return;
+            };
+            let Some(glyph) = cluster.glyphs.iter().find(|g| g.id != 0) else {
+                return;
+            };
+            out.push(LigGlyph {
+                cell,
+                span: 1,
+                gid: glyph.id,
+                pen,
+            });
+            pen += glyph.advance;
+        });
+        if out.is_empty() {
+            return None;
+        }
+        // Derive each glyph's cell span from the next cluster's start.
+        for i in 0..out.len() {
+            let next = out.get(i + 1).map(|g| g.cell).unwrap_or(total);
+            out[i].span = next.saturating_sub(out[i].cell).max(1);
+        }
+        if out.iter().all(|g| g.span == 1) {
+            return None;
+        }
+        Some(out)
     }
 
     /// Linux: ask fontconfig which installed face covers `c`, then append it to
@@ -1365,6 +1457,8 @@ pub struct Renderer {
     scheme: ColorScheme,
     /// Cursor shape (block/beam/underline), from `[terminal] cursor_style`.
     cursor_style: berth_core::config::CursorStyle,
+    /// Shape ASCII runs through the font's ligature features (calt/liga).
+    ligatures: bool,
     quad_buf: wgpu::Buffer,
     /// Draw a small frame-time HUD in the corner (`BERTH_DEBUG=1`).
     hud: bool,
@@ -1646,6 +1740,7 @@ impl Renderer {
             font,
             scheme,
             cursor_style: berth_core::config::CursorStyle::default(),
+            ligatures: true,
             quad_buf,
             hud: std::env::var_os("BERTH_DEBUG").is_some(),
             ema_ms: 0.0,
@@ -1676,6 +1771,14 @@ impl Renderer {
     /// Apply a theme from config (no font/atlas rebuild needed).
     pub fn set_theme(&mut self, theme: &berth_core::config::Theme) {
         self.scheme = ColorScheme::from_config(theme);
+    }
+
+    /// Ligature shaping on/off (hot-reloadable).
+    pub fn set_ligatures(&mut self, on: bool) {
+        if self.ligatures != on {
+            self.ligatures = on;
+            self.font.shaped.clear();
+        }
     }
 
     /// Cursor shape from `[terminal] cursor_style` (hot-reloadable).
@@ -2648,6 +2751,87 @@ impl Renderer {
         found
     }
 
+    /// Raster a glyph by id (shaped runs already picked the face, so no
+    /// fallback walk here).
+    fn rasterize_gid(
+        &mut self,
+        gid: u16,
+        bold: bool,
+        italic: bool,
+        sink: &mut QuadSink,
+    ) -> Option<GlyphRef> {
+        if let Some(cached) = self.font.gid_glyphs.get(&(gid, bold, italic)).copied() {
+            return cached;
+        }
+        let fontc = &mut self.font;
+        let face = match (bold, italic) {
+            (false, false) => fontc.font,
+            (true, false) => fontc.bold.as_ref().map(|f| f.font).unwrap_or(fontc.font),
+            (false, true) => fontc.italic.as_ref().map(|f| f.font).unwrap_or(fontc.font),
+            (true, true) => fontc
+                .bold_italic
+                .as_ref()
+                .or(fontc.bold.as_ref())
+                .or(fontc.italic.as_ref())
+                .map(|f| f.font)
+                .unwrap_or(fontc.font),
+        };
+        let faux_bold = bold && fontc.bold.is_none();
+        let faux_italic = italic && fontc.italic.is_none();
+        let mut scaler = fontc.ctx.builder(face).size(fontc.size_px).build();
+        let sources = [
+            Source::ColorOutline(0),
+            Source::ColorBitmap(StrikeWith::BestFit),
+            Source::Outline,
+        ];
+        let mut render = Render::new(&sources);
+        render.format(zeno::Format::Alpha);
+        if faux_bold {
+            render.embolden((fontc.size_px * 0.055).clamp(0.5, 2.5));
+        }
+        if faux_italic {
+            render.transform(Some(zeno::Transform::skew(
+                zeno::Angle::from_degrees(12.0),
+                zeno::Angle::ZERO,
+            )));
+        }
+        let mut out = None;
+        if let Some(image) = render.render(&mut scaler, gid) {
+            let is_color = matches!(image.content, Content::Color);
+            let bytes = if is_color {
+                image.data.clone()
+            } else {
+                image
+                    .data
+                    .iter()
+                    .flat_map(|&a| [255u8, 255, 255, a])
+                    .collect::<Vec<u8>>()
+            };
+            let w = image.placement.width;
+            let h = image.placement.height;
+            if w > 0
+                && h > 0
+                && let Some([px, py]) = self.atlas.pack(w, h)
+            {
+                sink.uploads.push(Upload {
+                    x: px,
+                    y: py,
+                    w,
+                    h,
+                    bytes,
+                });
+                out = Some(GlyphRef {
+                    uv: [px as f32, py as f32, w as f32, h as f32],
+                    left: image.placement.left,
+                    top: image.placement.top,
+                    color: is_color,
+                });
+            }
+        }
+        self.font.gid_glyphs.insert((gid, bold, italic), out);
+        out
+    }
+
     /// Full frame: cell quads per pane + chrome. Drawn on RedrawRequested.
     #[allow(clippy::too_many_arguments)] // draw args are the frame's scene inputs
     pub fn draw(
@@ -2996,9 +3180,69 @@ impl Renderer {
 
         // Row-major iteration over the visible viewport cells.
         let scheme = self.scheme;
-        let mut cells = content.display_iter;
-        for idx in 0..(rows * cols) {
-            let Some(indexed) = cells.next() else { break };
+        let cells: Vec<_> = content.display_iter.take(rows * cols).collect();
+        // Ligature layout: shape each uniform ASCII run once, then draw the
+        // multi-cell glyph at its cluster start and skip the cells it covers.
+        let mut lig_start: HashMap<(usize, usize), LigGlyph> = HashMap::new();
+        let mut lig_cover: std::collections::HashSet<(usize, usize)> =
+            std::collections::HashSet::new();
+        if self.ligatures {
+            let style_of = |c: &alacritty_terminal::term::cell::Cell| {
+                (
+                    c.flags.intersects(Flags::BOLD | Flags::DIM_BOLD),
+                    c.flags.intersects(Flags::ITALIC | Flags::BOLD_ITALIC),
+                    c.fg,
+                    c.bg,
+                )
+            };
+            for row in 0..rows {
+                let mut col = 0usize;
+                while col < cols {
+                    let Some(cell) = cells.get(row * cols + col).map(|i| i.cell) else {
+                        break;
+                    };
+                    let runnable = |c: &alacritty_terminal::term::cell::Cell| {
+                        c.c.is_ascii()
+                            && c.c != ' '
+                            && !c.flags.intersects(
+                                Flags::HIDDEN | Flags::WIDE_CHAR | Flags::WIDE_CHAR_SPACER,
+                            )
+                    };
+                    if !runnable(cell) {
+                        col += 1;
+                        continue;
+                    }
+                    let style = style_of(cell);
+                    let start = col;
+                    let mut text = String::new();
+                    let mut end = col;
+                    while end < cols {
+                        let Some(c) = cells.get(row * cols + end).map(|i| i.cell) else {
+                            break;
+                        };
+                        if !runnable(c) || style_of(c) != style {
+                            break;
+                        }
+                        text.push(c.c);
+                        end += 1;
+                    }
+                    if end - start >= 2
+                        && let Some(glyphs) = self.font.shape_ligatures(&text, style.0, style.1)
+                        && glyphs.iter().any(|g| g.span > 1)
+                    {
+                        for g in &glyphs {
+                            let c = start + g.cell;
+                            lig_start.insert((row, c), *g);
+                            for k in 1..g.span {
+                                lig_cover.insert((row, c + k));
+                            }
+                        }
+                    }
+                    col = end.max(start + 1);
+                }
+            }
+        }
+        for (idx, indexed) in cells.iter().enumerate() {
             let cell = indexed.cell;
             let row = idx / cols;
             let col = idx % cols;
@@ -3106,10 +3350,21 @@ impl Renderer {
 
             let bold = cell.flags.intersects(Flags::BOLD | Flags::DIM_BOLD);
             let italic = cell.flags.intersects(Flags::ITALIC | Flags::BOLD_ITALIC);
-            if let Some(g) = self.rasterize(c, bold, italic, sink) {
+            if lig_cover.contains(&(row, col)) {
+                continue;
+            }
+            let lig = lig_start.get(&(row, col)).copied();
+            let glyph = match lig {
+                Some(g) => self.rasterize_gid(g.gid, bold, italic, sink),
+                None => self.rasterize(c, bold, italic, sink),
+            };
+            if let Some(g) = glyph {
                 // swash origin = (pen_x, baseline_y), y-up: the image's top edge
                 // sits `top` px above the baseline, `left` px right of the pen.
-                let gx = px + g.left as f32;
+                let dx = lig
+                    .map(|l| l.pen - l.cell as f32 * metrics.cell_w)
+                    .unwrap_or(0.0);
+                let gx = px + dx + g.left as f32;
                 let gy = py + metrics.ascent - g.top as f32;
                 sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], fg, Some(g));
                 quads_glyph += 1;
@@ -3283,6 +3538,28 @@ mod tests {
 
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-3
+    }
+
+    #[test]
+    fn shaping_without_ligatures_is_a_noop() {
+        // DejaVu/ JetBrains have no `abc` ligature: shaping must report "no
+        // layout" so the per-cell charmap path stays byte-identical.
+        let mut ctx = FontCtx::new("monospace", 16.0, 1.0).expect("font ctx");
+        assert!(ctx.shape_ligatures("abc", false, false).is_none());
+        assert!(ctx.shape_ligatures("->", false, false).is_none());
+        assert!(ctx.shape_ligatures("a", false, false).is_none());
+    }
+
+    #[test]
+    fn shaped_runs_cover_the_whole_text() {
+        let mut ctx = FontCtx::new("monospace", 16.0, 1.0).expect("font ctx");
+        for text in ["abc", "->", "==>", "!=="] {
+            if let Some(glyphs) = ctx.shape_ligatures(text, false, false) {
+                let covered: usize = glyphs.iter().map(|g| g.span).sum();
+                assert_eq!(covered, text.chars().count(), "coverage for {text:?}");
+                assert!(glyphs.iter().any(|g| g.span > 1));
+            }
+        }
     }
 
     #[test]

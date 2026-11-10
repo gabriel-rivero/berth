@@ -149,6 +149,7 @@ Typefaces and colors live in the same `config.toml` and hot-reload on save:
 family = "JetBrains Mono"   # any installed family; falls back to a per-OS mono
 size_pt = 12.5
 line_height = 1.15          # multiplier on the face's ascent+descent (1.0 = tight)
+ligatures = true            # programming ligatures when the font ships calt/liga
 
 Missing glyphs (Nerd Font / Powerline icons, emoji, CJK) fall through a
 fallback chain that includes common patched families, anything dropped in

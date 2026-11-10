@@ -15,10 +15,13 @@ qwen review; items tagged *(user-reported)* from the user UX list (statuses in
   vendored `fonts/` faces and (Linux) `fc-list` codepoint resolution, so p10k /
   oh-my-posh / starship glyphs render with an unpatched primary family;
   placeholder (`*sample*`, LastResort) faces are skipped.
-- **[open]** **Ligatures**: shape runs through the font's GSUB (`calt`/`liga`)
-  and draw multi-cell glyph clusters. Needs a ligature-capable font on the test
-  machine; plan is a per-row run cache keyed by text+style with cluster→cell
-  mapping, cursor anchored at the cluster start.
+- **[done 2026-11]** **Ligatures**: uniform ASCII runs per row are shaped
+  through the font's GSUB (`calt`/`liga`); multi-cell glyphs are drawn once at
+  their cluster start and the covered cells are skipped. Layout is cached per
+  text+style (`FontCtx::shaped`), glyphs by id, and `[font] ligatures` toggles
+  it. Runs without ligatures fall back to the per-cell charmap path, so
+  non-ligature fonts render byte-identically. Unverified visually (no
+  ligature-capable font installed here); logic covered by unit tests.
 
 ## Vision (north star, Nov 2026)
 

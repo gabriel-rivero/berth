@@ -117,6 +117,9 @@ pub struct Font {
     pub size_pt: f32,
     /// Line-height multiplier applied to the face's ascent+descent (1.0 = tight).
     pub line_height: f32,
+    /// Shape ASCII runs through the font's `calt`/`liga` features (programming
+    /// ligatures). Only fonts that ship those features change; others ignore it.
+    pub ligatures: bool,
 }
 
 impl Default for Font {
@@ -126,6 +129,7 @@ impl Default for Font {
             family: "monospace".to_string(),
             size_pt: 12.0,
             line_height: 1.0,
+            ligatures: true,
         }
     }
 }
