@@ -14,7 +14,10 @@ use std::sync::{Arc, Mutex};
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalPosition,
-    event::{ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
+    event::{
+        DeviceId, ElementState, Ime, KeyEvent, MouseButton, MouseScrollDelta, TouchPhase,
+        WindowEvent,
+    },
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy},
     keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey},
     window::{Cursor, CursorIcon, Window, WindowId},
@@ -162,6 +165,13 @@ pub struct Berth {
     modifiers: ModifiersState,
     /// Last cursor position in device px (for selection + wheel cell math).
     mouse: PhysicalPosition<f64>,
+    /// Active touch contact id (first finger only); a tap maps to a left click.
+    touch_id: Option<u64>,
+    /// When the last touch event arrived; OS-promoted mouse events within
+    /// `TOUCH_MOUSE_GRACE` are ignored so one tap never fires twice.
+    last_touch_at: Option<std::time::Instant>,
+    /// True while re-dispatching a synthetic mouse event for a touch tap.
+    synthetic_touch: bool,
     /// True while left button held over a pane.
     dragging: bool,
     /// Pane owning the current drag selection (kept while the pointer leaves
@@ -314,6 +324,48 @@ fn autoscroll_delta(mouse_y: f64, top: f64, bottom: f64) -> Option<i32> {
 }
 
 impl Berth {
+    /// True while OS-promoted mouse events should be ignored because a touch
+    /// just happened (Windows promotes the first contact point to mouse).
+    fn touch_recent(&self) -> bool {
+        touch_recent_at(self.last_touch_at, std::time::Instant::now())
+    }
+
+    /// Touch has no hover and no buttons: a tap is a left click at the contact
+    /// point. Synthetic cursor/mouse events go through `window_event` so the
+    /// shared chrome hit-test, double-tap detection, pane focus and selection
+    /// behave exactly as with a mouse. `button = None` is a drag/move only.
+    fn touch_dispatch(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        position: PhysicalPosition<f64>,
+        button: Option<ElementState>,
+    ) {
+        self.mouse = position;
+        self.synthetic_touch = true;
+        let device_id = DeviceId::dummy();
+        self.window_event(
+            event_loop,
+            window_id,
+            WindowEvent::CursorMoved {
+                device_id,
+                position,
+            },
+        );
+        if let Some(state) = button {
+            self.window_event(
+                event_loop,
+                window_id,
+                WindowEvent::MouseInput {
+                    device_id,
+                    state,
+                    button: MouseButton::Left,
+                },
+            );
+        }
+        self.synthetic_touch = false;
+    }
+
     /// Forward a mouse press/release to the hovered pane when it captured the
     /// mouse (DECSET 1000/1002/1003; SGR 1006 preferred, legacy X10 fallback).
     /// Returns true when the event was consumed by the pane. Shift+click always
@@ -2150,8 +2202,8 @@ impl ApplicationHandler<PaneEvent> for Berth {
 
     fn window_event(
         &mut self,
-        _event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
         event: WindowEvent,
     ) {
         match event {
@@ -2417,11 +2469,55 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 }
                 self.update_cursor();
             }
+            WindowEvent::Touch(touch) => {
+                // A tap is a left click (touchscreens on handhelds, ROG Ally,
+                // hybrid laptops). Track the first contact only; multi-touch
+                // gestures are not bound yet.
+                match touch.phase {
+                    TouchPhase::Started => {
+                        if self.touch_id.is_none() {
+                            self.touch_id = Some(touch.id);
+                            self.last_touch_at = Some(std::time::Instant::now());
+                            self.touch_dispatch(
+                                event_loop,
+                                window_id,
+                                touch.location,
+                                Some(ElementState::Pressed),
+                            );
+                        }
+                    }
+                    TouchPhase::Moved => {
+                        if self.touch_id == Some(touch.id) {
+                            self.last_touch_at = Some(std::time::Instant::now());
+                            // Move only: an active press (selection, tab drag,
+                            // sidebar resize) follows the finger.
+                            self.touch_dispatch(event_loop, window_id, touch.location, None);
+                        }
+                    }
+                    TouchPhase::Ended | TouchPhase::Cancelled => {
+                        if self.touch_id == Some(touch.id) {
+                            self.touch_id = None;
+                            self.last_touch_at = Some(std::time::Instant::now());
+                            self.touch_dispatch(
+                                event_loop,
+                                window_id,
+                                touch.location,
+                                Some(ElementState::Released),
+                            );
+                        }
+                    }
+                }
+            }
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left,
                 ..
             } => {
+                // Windows promotes the first touch point to mouse input; the
+                // Touch arm already dispatched that tap.
+                if self.touch_recent() && !self.synthetic_touch {
+                    return;
+                }
                 match state {
                     ElementState::Pressed => {
                         let ch = self.chrome();
@@ -2592,6 +2688,10 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
+                // Same promotion guard as the left arm above.
+                if self.touch_recent() && !self.synthetic_touch {
+                    return;
+                }
                 // Middle-click closes the chrome item under the pointer (iTerm2
                 // style); other middle/right clicks go to capturing TUI apps
                 // (2=right, 1=middle). The Left arm owns selection semantics.
@@ -2809,6 +2909,15 @@ const CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const NOTICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
 /// How long a startup config error stays on screen (first-launch triage).
 const STARTUP_NOTICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// Ignore OS-promoted mouse events this long after a touch: Windows promotes
+/// the first contact point to mouse input, which would otherwise double-fire
+/// every tap (two tabs, double close, etc.).
+const TOUCH_MOUSE_GRACE: std::time::Duration = std::time::Duration::from_millis(600);
+
+/// Pure form of `Berth::touch_recent` (testable without a window).
+fn touch_recent_at(last: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    last.is_some_and(|t| now.saturating_duration_since(t) < TOUCH_MOUSE_GRACE)
+}
 /// Default cursor blink interval until config is consulted (530 ms ≈ xterm).
 const BLINK_DEFAULT: std::time::Duration = std::time::Duration::from_millis(530);
 
@@ -3057,6 +3166,9 @@ pub fn run() -> anyhow::Result<()> {
         clipboard: arboard::Clipboard::new().ok(),
         modifiers: ModifiersState::default(),
         mouse: PhysicalPosition::new(0.0, 0.0),
+        touch_id: None,
+        last_touch_at: None,
+        synthetic_touch: false,
         dragging: false,
         drag_pane: None,
         drag_autoscroll: None,
@@ -3159,6 +3271,19 @@ mod tests {
         assert_eq!(cursor_key("D", 1, false, true), b"\x1bOD");
         // Shift/alt/ctrl keep the CSI modifier form even in application mode.
         assert_eq!(cursor_key("A", 2, true, true), b"\x1b[1;2A");
+    }
+
+    #[test]
+    fn promoted_mouse_events_are_ignored_right_after_touch() {
+        use std::time::{Duration, Instant};
+        let now = Instant::now();
+        assert!(touch_recent_at(Some(now), now));
+        assert!(touch_recent_at(Some(now - Duration::from_millis(300)), now));
+        assert!(!touch_recent_at(
+            Some(now - Duration::from_millis(601)),
+            now
+        ));
+        assert!(!touch_recent_at(None, now));
     }
 
     #[test]

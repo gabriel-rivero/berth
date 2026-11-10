@@ -222,7 +222,11 @@ now opt-in]** — gated behind `[terminal] kitty_keyboard` (default `false`) aft
 a Windows typing regression; alternate-key and associated-text parameters still
 to come ·
 wide-glyph audit (glyph advance from swash; underline/strikeout decorations
-now span both cells) **[done 2026-11]**.
+now span both cells) **[done 2026-11]** ·
+touch input: a tap is a left click at the contact point (chrome hit-test,
+double-tap, pane focus/selection all reuse the mouse path; OS-promoted mouse
+events within 600 ms of a touch are ignored so a tap never double-fires)
+**[done 2026-11]** — touch scroll/pinch not bound yet.
 
 All terminal table stakes from the Nov 2026 review are shipped; remaining work
 is plugin polish and distribution (below).
