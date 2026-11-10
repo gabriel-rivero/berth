@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.1](https://github.com/gabriel-rivero/berth/compare/v0.29.0...v0.29.1) (2026-11-10)
+
+
+### Documentation
+
+* refresh status, handover and config for v0.29.0 ([bd4802f](https://github.com/gabriel-rivero/berth/commit/bd4802f731decef633e0dcbeb3f90f2f0f906dfc))
+
 ## [0.29.0](https://github.com/gabriel-rivero/berth/compare/v0.28.0...v0.29.0) (2026-11-10)
 
 
