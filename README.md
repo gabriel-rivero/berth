@@ -101,6 +101,7 @@ Alternate-key and associated-text parameters are not emitted yet.
 | cycle tabs | `cmd+]` / `cmd+[` (`ctrl+tab`, +shift for prev) · `cmd+1`…`9` (`ctrl+1`…`9`, 9 = last) |
 | reorder tabs | drag a tab slot within the strip; drag onto a sidebar entry to move it to that workspace |
 | wheel over chrome | sidebar = cycle workspaces, tab strip = cycle tabs |
+| right-click menu | tab: close / close others / new · sidebar: rename / close / new · pane: copy / paste / split right/down / zoom / close |
 | close focused pane | `cmd+w` (`ctrl+shift+w`) |
 | zoom focused pane (tmux-style) | `cmd+shift+Enter` |
 | close any tab / workspace | `✕` button in the tab slot / sidebar entry |

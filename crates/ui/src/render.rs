@@ -344,6 +344,21 @@ pub struct PluginRowView<'a> {
     pub enabled: bool,
 }
 
+/// One row of a right-click context menu, with its precomputed device-px
+/// rect (the app owns geometry so hit-testing and drawing cannot drift).
+pub struct MenuItemView<'a> {
+    pub label: &'a str,
+    pub enabled: bool,
+    pub separator: bool,
+    pub rect: Rect,
+}
+
+/// Context menu contents: rows plus the hovered index.
+pub struct ContextMenuView<'a> {
+    pub items: &'a [MenuItemView<'a>],
+    pub hover: Option<usize>,
+}
+
 /// Plugin manager overlay contents, preformatted by the app.
 #[derive(Debug, Clone, Copy)]
 pub struct PluginPanelView<'a> {
@@ -1874,6 +1889,79 @@ impl Renderer {
 
     /// Centered bottom overlay strip (quit confirmation). Drawn last so it sits
     /// on top of panes/tabs/sidebar.
+    /// Right-click menu: rounded popup with hover highlight, separators and
+    /// dimmed disabled rows. Geometry comes from the app.
+    fn draw_context_menu(
+        &mut self,
+        view: ContextMenuView<'_>,
+        ch: Chrome,
+        metrics: Metrics,
+        sink: &mut QuadSink,
+    ) {
+        let Some(first) = view.items.first() else {
+            return;
+        };
+        let s = ch.scale;
+        let colors = self.scheme.chrome;
+        let x0 = first.rect.x as f32;
+        let x1 = (first.rect.x + first.rect.w) as f32;
+        let y0 = first.rect.y as f32 - 6.0 * s;
+        let y1 = view
+            .items
+            .last()
+            .map(|i| (i.rect.y + i.rect.h) as f32 + 6.0 * s)
+            .unwrap_or(y0);
+
+        let mut bg = colors.sidebar_entry_active_bg;
+        bg[3] = 0.98;
+        sink.push_round(x0, y0, x1, y1, bg, 6.0 * s);
+        // 1px border so the popup separates from a same-colored panel behind it.
+        let border = colors.divider;
+        sink.push(x0, y0, x1, y0 + s, border, None);
+        sink.push(x0, y1 - s, x1, y1, border, None);
+        sink.push(x0, y0, x0 + s, y1, border, None);
+        sink.push(x1 - s, y0, x1, y1, border, None);
+
+        for (i, item) in view.items.iter().enumerate() {
+            let r = item.rect;
+            if item.separator {
+                sink.push(
+                    x0 + 6.0 * s,
+                    r.y as f32,
+                    x1 - 6.0 * s,
+                    r.y as f32 + s,
+                    colors.divider,
+                    None,
+                );
+            }
+            if view.hover == Some(i) && item.enabled {
+                sink.push(
+                    x0 + 4.0 * s,
+                    r.y as f32,
+                    x1 - 4.0 * s,
+                    (r.y + r.h) as f32,
+                    colors.sidebar_entry_hover_bg,
+                    None,
+                );
+            }
+            let color = if item.enabled {
+                colors.tab_text_active
+            } else {
+                colors.tab_text
+            };
+            let baseline = r.y as f32 + (r.h as f32 - metrics.cell_h) * 0.5 + metrics.ascent;
+            let mut pen = x0 + 12.0 * s;
+            for c in item.label.chars() {
+                if let Some(g) = self.rasterize(c, false, false, sink) {
+                    let gx = pen + g.left as f32;
+                    let gy = baseline - g.top as f32;
+                    sink.push(gx, gy, gx + g.uv[2], gy + g.uv[3], color, Some(g));
+                }
+                pen += metrics.cell_w;
+            }
+        }
+    }
+
     fn draw_confirm(
         &mut self,
         text: &str,
@@ -2297,6 +2385,7 @@ impl Renderer {
         cursor: CursorPaint,
         search: Option<SearchView<'_>>,
         plugin_panel: Option<PluginPanelView<'_>>,
+        context_menu: Option<ContextMenuView<'_>>,
         link: Option<(Rect, LinkSpan)>,
         zoomed: bool,
         hovered: Option<ChromeZone>,
@@ -2389,6 +2478,9 @@ impl Renderer {
         }
         if let Some(view) = plugin_panel {
             self.draw_plugin_panel(view, screen_w, screen_h, ch, metrics, &mut sink);
+        }
+        if let Some(view) = context_menu {
+            self.draw_context_menu(view, ch, metrics, &mut sink);
         }
         if self.hud {
             let label = format!("{:.1} ms · {} quads", self.ema_ms, sink.verts.len() / 6);

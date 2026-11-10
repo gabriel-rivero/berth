@@ -20,9 +20,9 @@ This review is historical; the live tracker is `docs/ROADMAP.md`. As of v0.27.0:
 - **Closed**: BUGS-1/2/3/4/5/6/7/8/9; U-6 (plugin manager panel shipped); BUGS-13 confirmations (renderer loss, DECCKM,
   bold/italic/underline, IME, plugin fuel/limits, `Tab.cwd`); U-1/2/3/4/11/12/13/14/15.
 - **Partly closed**:
-  U-9 (`+` buttons shipped; sidebar-header chevron open).
-- **Still open**: U-5 (config panel), U-7 (context menus), atlas LRU,
-  tab/sidebar overflow, damage tracking, CI hit-test smokes.
+  U-9 (`+` buttons shipped).
+- **Still open**: U-5 (config panel), atlas LRU, tab/sidebar overflow,
+  damage tracking, CI hit-test smokes.
 - The §7 Xvfb+xdotool probe scripts were never promoted to CI; that remains the
   cheapest guard against branch-order regressions.
 
@@ -192,9 +192,9 @@ This review is historical; the live tracker is `docs/ROADMAP.md`. As of v0.27.0:
 | U-4 | S2 | Confirm guard on ✕ cascades: closing the last tab of the last workspace **exits the app instantly** (cascade `app.rs:1275-1281`) and workspace ✕ kills every live job in it — the CloseRequested banner (`app.rs:1620-1634`) covers neither. Fold into roadmap's confirm item. | **[new]** detail | M |
 | U-5 | S3 | **user-reported** "no config panel" | **CONFIRMED**: no settings UI, and `Config` has no `save()` — nothing can write back today. Staging: (1) `open-config` action (open `config.toml` in $EDITOR / reveal path) — cheap; (2) real panel (font/theme/keybinds) — L. | S / L |
 | U-6 | S3 | **user-reported** "no plugin enable/disable interface" | **CONFIRMED**: `load_plugins` loads every `*.wasm` at startup (`plugins/lib.rs:118-135`, `app.rs:1795-1805`); no manifest, no toggles, no error visibility in-app, **no rescan on hot-reload**. Cheap first step: `[[plugin]] name/enabled` config section; full manager UI pairs with roadmap plugin items 2-3. | M |
-| U-7 | S3 | Right-click context menus (tab: close/rename/close-others/move-to-ws; entry: rename/close/new-tab; pane: copy/paste/split/zoom) — none exist anywhere; right-click only forwards to capturing TUIs (`app.rs:1575-1594`). | **[new]** | M |
+| U-7 | S3 | Right-click context menus (tab/entry/pane). | **[done 2026-11]** tab: close/close-others/new; entry: rename/close/new; pane: copy/paste/split right/split down/zoom/close; capturing TUIs still receive right-click | M |
 | U-8 | S3 | Tab **reordering** within a workspace — drag only moves between workspaces; strip slot order is immutable. README's "re-orderable" phrasing oversells. | **[done 2026-11]** drag within strip reorders live | M |
-| U-9 | S3 | Discoverable "+" affordances: tab-strip trailing `+`, sidebar-header `+ ws` (double-click-empty-space is undocumented in-app). | **[new]** | S |
+| U-9 | S3 | Discoverable "+" affordances: tab-strip trailing `+`, sidebar-header `+ ws`. | **[done]** both `+` buttons shipped | S |
 | U-10 | S3 | Wheel over tab strip cycles tabs; over sidebar cycles workspaces (currently inert). | **[done 2026-11]** plus ctrl+1…9 tab slots | S |
 | U-11 | S3 | Dim/hollow cursor in unfocused panes — `draw_term` has no focused flag; every pane renders the identical `CURSOR_BG` block (`render.rs:1402-1414`). Roadmap S1-cluster straggler ✓. | confirmed | S |
 | U-12 | S3 | No "ZOOMED" indicator when pane zoom is active; window title could carry `title — tab — workspace`. | **[new]** | S |

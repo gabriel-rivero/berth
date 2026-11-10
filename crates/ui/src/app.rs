@@ -246,6 +246,8 @@ pub struct Berth {
     plugin_errors: Vec<(String, String)>,
     /// Plugin manager overlay (None = closed).
     plugin_panel: Option<PluginPanel>,
+    /// Right-click menu (tab strip, sidebar entry or pane).
+    context_menu: Option<ContextMenu>,
     /// Status segments republished by plugins (`host.set-status`), tab strip.
     status_segments: Vec<String>,
     /// Transient bottom-strip message (non-zero shell exit, plugin errors) and
@@ -452,6 +454,41 @@ struct PluginRow {
 struct PluginPanel {
     rows: Vec<PluginRow>,
     selected: usize,
+}
+
+/// One entry of a right-click context menu.
+struct MenuItem {
+    label: &'static str,
+    action: MenuAction,
+    enabled: bool,
+    /// Draw a separator line above this row.
+    sep: bool,
+}
+
+/// What a context-menu row does. All variants route to the same methods the
+/// keybinds use, so the two input paths cannot drift.
+#[derive(Clone, Copy, Debug)]
+enum MenuAction {
+    NewTab,
+    CloseTab(usize),
+    CloseOtherTabs(usize),
+    NewWorkspace,
+    RenameWorkspace(usize),
+    CloseWorkspace(usize),
+    Copy,
+    Paste,
+    SplitRight,
+    SplitDown,
+    ToggleZoom,
+    ClosePane,
+}
+
+/// Open context menu: rows plus their device-px rects (computed once at open
+/// so hit-testing and drawing share geometry).
+struct ContextMenu {
+    items: Vec<MenuItem>,
+    rects: Vec<Rect>,
+    hover: Option<usize>,
 }
 
 /// Which way a selection drag beyond `top..bottom` should scroll.
@@ -683,6 +720,299 @@ impl Berth {
             );
         }
         self.synthetic_touch = false;
+    }
+
+    /// Compute popup geometry from the pointer and open a menu. Clamped to the
+    /// window so a right-click near an edge still shows every row.
+    fn open_context_menu(&mut self, items: Vec<MenuItem>) {
+        if items.is_empty() {
+            return;
+        }
+        let ch = self.chrome();
+        let (cell_w, cell_h) = self.cell_metrics();
+        let s = ch.scale;
+        let pad_x = 14.0 * s;
+        let pad_y = 6.0 * s;
+        let row_h = (cell_h * 1.6).max(24.0 * s);
+        let cols = items
+            .iter()
+            .map(|i| i.label.chars().count())
+            .max()
+            .unwrap_or(8) as f32;
+        let w = cols * cell_w + 2.0 * pad_x;
+        let h = items.len() as f32 * row_h + 2.0 * pad_y;
+        let (sw, sh) = self
+            .window
+            .as_ref()
+            .map(|w| w.inner_size())
+            .map(|sz| (sz.width as f32, sz.height as f32))
+            .unwrap_or((800.0, 600.0));
+        let x = (self.mouse.x as f32).min(sw - w - 4.0 * s).max(0.0);
+        let y = (self.mouse.y as f32).min(sh - h - 4.0 * s).max(0.0);
+        let rects = (0..items.len())
+            .map(|i| Rect {
+                x: x as u32,
+                y: (y + pad_y + i as f32 * row_h) as u32,
+                w: w as u32,
+                h: row_h as u32,
+            })
+            .collect();
+        dlog_app!("context menu open at ({x:.0},{y:.0}) rows={}", items.len());
+        self.context_menu = Some(ContextMenu {
+            items,
+            rects,
+            hover: None,
+        });
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+    }
+
+    /// Right-click dispatch: chrome targets get their menu, a pane gets the
+    /// pane menu. Returns false when the click should fall through to the
+    /// mouse-reporting path (TUI apps).
+    fn open_menu_at_mouse(&mut self) -> bool {
+        let zone = self.chrome_zone();
+        let tabs = self
+            .layout
+            .active_workspace()
+            .map(|ws| ws.tabs.len())
+            .unwrap_or(0);
+        let ws_count = self.layout.workspaces.len();
+        match zone {
+            Some(ChromeZone::SidebarEntry(i)) => {
+                let label = self
+                    .layout
+                    .workspaces
+                    .get(i)
+                    .map(|w| w.label.clone())
+                    .unwrap_or_default();
+                self.open_context_menu(vec![
+                    MenuItem {
+                        label: "rename workspace",
+                        action: MenuAction::RenameWorkspace(i),
+                        enabled: true,
+                        sep: false,
+                    },
+                    MenuItem {
+                        label: "close workspace",
+                        action: MenuAction::CloseWorkspace(i),
+                        enabled: ws_count > 1,
+                        sep: true,
+                    },
+                    MenuItem {
+                        label: "new workspace",
+                        action: MenuAction::NewWorkspace,
+                        enabled: true,
+                        sep: true,
+                    },
+                ]);
+                dlog_app!("sidebar menu for ws#{i} {label:?}");
+                true
+            }
+            Some(ChromeZone::Tab(i)) => {
+                self.open_context_menu(vec![
+                    MenuItem {
+                        label: "close tab",
+                        action: MenuAction::CloseTab(i),
+                        enabled: true,
+                        sep: false,
+                    },
+                    MenuItem {
+                        label: "close other tabs",
+                        action: MenuAction::CloseOtherTabs(i),
+                        enabled: tabs > 1,
+                        sep: false,
+                    },
+                    MenuItem {
+                        label: "new tab",
+                        action: MenuAction::NewTab,
+                        enabled: true,
+                        sep: true,
+                    },
+                ]);
+                dlog_app!("tab menu for slot{i}");
+                true
+            }
+            Some(
+                ChromeZone::SidebarEmpty
+                | ChromeZone::SidebarPlus
+                | ChromeZone::SidebarEdge
+                | ChromeZone::SidebarClose(_),
+            ) => {
+                self.open_context_menu(vec![MenuItem {
+                    label: "new workspace",
+                    action: MenuAction::NewWorkspace,
+                    enabled: true,
+                    sep: false,
+                }]);
+                true
+            }
+            Some(ChromeZone::TabPlus | ChromeZone::TabStripEmpty | ChromeZone::TabClose(_)) => {
+                self.open_context_menu(vec![MenuItem {
+                    label: "new tab",
+                    action: MenuAction::NewTab,
+                    enabled: true,
+                    sep: false,
+                }]);
+                true
+            }
+            None => {
+                let Some((id, _, _)) = self.pane_at_mouse() else {
+                    return false;
+                };
+                // Menu actions target the pane under the pointer.
+                self.focused_pane = id;
+                if let Some(tab) = self.layout.active_tab_mut() {
+                    tab.focused = id;
+                }
+                let has_selection = self
+                    .panes
+                    .get(&id)
+                    .and_then(|p| p.lock().expect("pane poisoned").selection_text())
+                    .is_some();
+                let zoomed = self.zoomed == Some(id);
+                self.open_context_menu(vec![
+                    MenuItem {
+                        label: "copy",
+                        action: MenuAction::Copy,
+                        enabled: has_selection,
+                        sep: false,
+                    },
+                    MenuItem {
+                        label: "paste",
+                        action: MenuAction::Paste,
+                        enabled: true,
+                        sep: false,
+                    },
+                    MenuItem {
+                        label: "split right",
+                        action: MenuAction::SplitRight,
+                        enabled: true,
+                        sep: true,
+                    },
+                    MenuItem {
+                        label: "split down",
+                        action: MenuAction::SplitDown,
+                        enabled: true,
+                        sep: false,
+                    },
+                    MenuItem {
+                        label: if zoomed { "unzoom pane" } else { "zoom pane" },
+                        action: MenuAction::ToggleZoom,
+                        enabled: true,
+                        sep: true,
+                    },
+                    MenuItem {
+                        label: "close pane",
+                        action: MenuAction::ClosePane,
+                        enabled: true,
+                        sep: true,
+                    },
+                ]);
+                dlog_app!("pane menu for {id:?}");
+                true
+            }
+        }
+    }
+
+    /// Handle a left press while a menu is open: run the row under the pointer
+    /// or dismiss. Returns true when the press was consumed.
+    fn context_menu_press(&mut self) -> bool {
+        let Some(menu) = self.context_menu.take() else {
+            return false;
+        };
+        let (mx, my) = (self.mouse.x, self.mouse.y);
+        for (i, r) in menu.rects.iter().enumerate() {
+            let inside = mx >= r.x as f64
+                && mx < (r.x + r.w) as f64
+                && my >= r.y as f64
+                && my < (r.y + r.h) as f64;
+            if inside {
+                let item = &menu.items[i];
+                dlog_app!("context menu -> {:?} enabled={}", item.action, item.enabled);
+                if item.enabled {
+                    self.run_menu_action(item.action);
+                }
+                break;
+            }
+        }
+        if let Some(w) = &self.window {
+            w.request_redraw();
+        }
+        true
+    }
+
+    /// Update the hovered row while the pointer moves over an open menu.
+    fn context_menu_hover(&mut self) {
+        let (mx, my) = (self.mouse.x, self.mouse.y);
+        if let Some(menu) = &mut self.context_menu {
+            menu.hover = menu.rects.iter().position(|r| {
+                mx >= r.x as f64
+                    && mx < (r.x + r.w) as f64
+                    && my >= r.y as f64
+                    && my < (r.y + r.h) as f64
+            });
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+        }
+    }
+
+    /// Execute a menu row by delegating to the same methods the keybinds use.
+    fn run_menu_action(&mut self, action: MenuAction) {
+        match action {
+            MenuAction::NewTab => self.new_tab(),
+            MenuAction::CloseTab(i) => self.close_tab(i),
+            MenuAction::CloseOtherTabs(i) => {
+                let Some(target) = self
+                    .layout
+                    .active_workspace()
+                    .and_then(|ws| ws.tabs.get(i))
+                    .map(|t| t.id)
+                else {
+                    return;
+                };
+                while self
+                    .layout
+                    .active_workspace()
+                    .map(|ws| ws.tabs.len())
+                    .unwrap_or(0)
+                    > 1
+                {
+                    let Some(idx) = self
+                        .layout
+                        .active_workspace()
+                        .and_then(|ws| ws.tabs.iter().position(|t| t.id != target))
+                    else {
+                        break;
+                    };
+                    self.close_tab(idx);
+                }
+                if let Some(idx) = self
+                    .layout
+                    .active_workspace()
+                    .and_then(|ws| ws.tabs.iter().position(|t| t.id == target))
+                {
+                    self.select_tab(idx);
+                }
+            }
+            MenuAction::NewWorkspace => self.new_workspace(),
+            MenuAction::RenameWorkspace(i) => self.begin_rename(i),
+            MenuAction::CloseWorkspace(i) => self.confirm_workspace_close(i),
+            MenuAction::Copy => {
+                self.run_action(Action::Copy);
+            }
+            MenuAction::Paste => {
+                self.run_action(Action::Paste);
+            }
+            MenuAction::SplitRight => self.split_focused(false),
+            MenuAction::SplitDown => self.split_focused(true),
+            MenuAction::ToggleZoom => {
+                self.run_action(Action::ZoomPane);
+            }
+            MenuAction::ClosePane => self.close_focused_pane(),
+        }
     }
 
     /// Forward a mouse press/release to the hovered pane when it captured the
@@ -1029,6 +1359,29 @@ impl Berth {
                 rows: &plugin_rows,
                 selected: p.selected,
             });
+        let menu_items: Vec<crate::render::MenuItemView> = self
+            .context_menu
+            .as_ref()
+            .map(|m| {
+                m.items
+                    .iter()
+                    .zip(&m.rects)
+                    .map(|(it, r)| crate::render::MenuItemView {
+                        label: it.label,
+                        enabled: it.enabled,
+                        separator: it.sep,
+                        rect: *r,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let menu_view = self
+            .context_menu
+            .as_ref()
+            .map(|m| crate::render::ContextMenuView {
+                items: &menu_items,
+                hover: m.hover,
+            });
 
         let failed = match (self.renderer.as_mut(), self.window.as_ref()) {
             (Some(r), Some(w)) => r
@@ -1051,6 +1404,7 @@ impl Berth {
                         current: s.current,
                     }),
                     plugin_view,
+                    menu_view,
                     hover_link,
                     self.zoomed.is_some(),
                     self.hovered,
@@ -2648,6 +3002,19 @@ impl ApplicationHandler<PaneEvent> for Berth {
                     self.blink_next =
                         std::time::Instant::now() + self.blink_interval().unwrap_or(BLINK_DEFAULT);
                 }
+                if event.state == ElementState::Pressed && self.context_menu.is_some() {
+                    let esc = matches!(
+                        event.logical_key,
+                        winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape)
+                    );
+                    self.context_menu = None;
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                    if esc {
+                        return;
+                    }
+                }
                 let consumed = event.state == ElementState::Pressed
                     && self.handle_chord(&event, self.modifiers);
                 // DECCKM: the focused pane decides arrow-key encoding.
@@ -2717,6 +3084,10 @@ impl ApplicationHandler<PaneEvent> for Berth {
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::CursorMoved { position, .. } => {
                 self.mouse = position;
+                if self.context_menu.is_some() {
+                    self.context_menu_hover();
+                    return;
+                }
 
                 let next_hover = self.chrome_zone();
                 if next_hover != self.hovered {
@@ -2957,6 +3328,9 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 }
                 match state {
                     ElementState::Pressed => {
+                        if self.context_menu_press() {
+                            return;
+                        }
                         let ch = self.chrome();
                         dlog_app!(
                             "mouse press at ({:?},{:?}) y_strip={}",
@@ -3132,6 +3506,12 @@ impl ApplicationHandler<PaneEvent> for Berth {
                 // Middle-click closes the chrome item under the pointer (iTerm2
                 // style); other middle/right clicks go to capturing TUI apps
                 // (2=right, 1=middle). The Left arm owns selection semantics.
+                if button == MouseButton::Right
+                    && state == ElementState::Pressed
+                    && self.open_menu_at_mouse()
+                {
+                    return;
+                }
                 if button == MouseButton::Middle && state == ElementState::Pressed {
                     let ch = self.chrome();
                     let zone = crate::render::chrome_zone_at(
@@ -3698,6 +4078,7 @@ pub fn run() -> anyhow::Result<()> {
         plugins,
         plugin_errors,
         plugin_panel: None,
+        context_menu: None,
         status_segments: Vec::new(),
         notice: config_error.map(|msg| (msg, std::time::Instant::now() + STARTUP_NOTICE_TIMEOUT)),
         attention: HashSet::new(),
