@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.27.0](https://github.com/gabriel-rivero/berth/compare/v0.26.2...v0.27.0) (2026-11-10)
+
+
+### Features
+
+* **input:** map touchscreen taps to left clicks ([8878a1f](https://github.com/gabriel-rivero/berth/commit/8878a1f75194c593f1827a207452a37274465428))
+
+
+### Documentation
+
+* record ROG Ally Windows run and touch-tap support in handover ([2c64c3e](https://github.com/gabriel-rivero/berth/commit/2c64c3e910526563593bd07158e752b284b42eba))
+
 ## [0.26.2](https://github.com/gabriel-rivero/berth/compare/v0.26.1...v0.26.2) (2026-11-10)
 
 
