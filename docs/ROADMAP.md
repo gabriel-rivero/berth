@@ -15,13 +15,17 @@ qwen review; items tagged *(user-reported)* from the user UX list (statuses in
   vendored `fonts/` faces and (Linux) `fc-list` codepoint resolution, so p10k /
   oh-my-posh / starship glyphs render with an unpatched primary family;
   placeholder (`*sample*`, LastResort) faces are skipped.
-- **[done 2026-11]** **Ligatures**: uniform ASCII runs per row are shaped
-  through the font's GSUB (`calt`/`liga`); multi-cell glyphs are drawn once at
-  their cluster start and the covered cells are skipped. Layout is cached per
-  text+style (`FontCtx::shaped`), glyphs by id, and `[font] ligatures` toggles
-  it. Runs without ligatures fall back to the per-cell charmap path, so
-  non-ligature fonts render byte-identically. Unverified visually (no
-  ligature-capable font installed here); logic covered by unit tests.
+- **[done 2026-11]** **Ligatures**: uniform ASCII runs per row are shaped with
+  HarfBuzz (`harfrust`, features `calt`/`liga`/`clig`), and the resulting glyph
+  ids are drawn through swash's rasterizer; layout is cached per text+style
+  (`FontCtx::shaped`) and `[font] ligatures` toggles it. Two ligature styles are
+  handled: one glyph spanning several cells (drawn once at the cluster start,
+  covered cells skipped) and one replacement glyph per cell that joins across
+  the cell boundary (Fira Code's `calt` halves). Runs whose glyphs equal the
+  plain cmap fall back to the per-cell path, so non-ligature fonts render
+  byte-identically. Verified headless with Fira Code 6: `->`, `==>`, `!=`,
+  `<--`, `<=`, `>=`, `===`, `!==`, `::=`, `www` all ligate; `ligatures = false`
+  renders the plain characters.
 
 ## Vision (north star, Nov 2026)
 
@@ -36,7 +40,7 @@ The five pillars and where they stand:
 | **cmux shape** | Workspaces as project containers, tabs in a left sidebar, splits, session persistence, a `berth` CLI/IPC for scripting | Layout/workspaces/persistence **[done]**; quick switcher, activity badges, CLI/IPC **[open]** (Identity, Plugin tier 4) |
 | **Hardware accelerated** | GPU-drawn cells + chrome, no webview; honest adapter reporting and a usable software fallback | **[done 2026-11]** — wgpu renderer, `--gpu-info`, sRGB pipeline, lost-surface recovery; damage tracking + CI perf budget **[open]** (visual wave 7) |
 | **Near-equal on Linux/macOS/Windows** | Same rendering, keybinds, config and input semantics everywhere | Linux verified (Xvfb + real); macOS/Windows reasoned + CI-built but **not manually verified** (no hardware) — IME, ConPTY resize and modifier mapping remain the risk areas |
-| **Modern look & feel** | Rounded chrome, real font faces, themes, hover/press states, smooth scrolling, no visual glitches | **[done 2026-11]** — theme presets/overrides, real bold/italic, pill chrome, cursor styles, frame recovery; subpixel glyphs, ligatures, animations **[open]** (visual wave) |
+| **Modern look & feel** | Rounded chrome, real font faces, themes, hover/press states, smooth scrolling, no visual glitches | **[done 2026-11]** — theme presets/overrides, real bold/italic, Nerd/Powerline fallbacks, ligatures, pill chrome, cursor styles, frame recovery; subpixel glyphs, animations **[open]** (visual wave) |
 | **Plugins & customization** | Sandboxed WASM plugins; every visual/behavioral knob in TOML, hot-reloaded; no rebuild-to-configure | Plugin host + fuel/memory caps + capability manifests + status segments + **plugin manager UI (enable/disable, error list, rescan)** **[done 2026-11]**; change-event diffs, tier 2–4 APIs, settings panel **[open]**. Config covers font/theme/terminal/shell/keybinds and hot-reloads; `Config::save()` shipped for plugin toggles |
 
 Release cadence: conventional commits → release-please bumps `Cargo.toml`, `CHANGELOG.md`
@@ -160,14 +164,14 @@ like one) while staying small and GPU-cheap. Ordered by perceived impact per eff
 1. **[done 2026-11]** Color correctness + sRGB pipeline (see S1 colors row) and
    **GPU honesty**: adapter/backend logged every run; software fallback + non-sRGB
    surface warned; no silent lavapipe.
-2. **[done 2026-11, faux→real faces + font config; subpixel/ligatures open]**
+2. **[done 2026-11, faux→real faces + font config + ligatures; subpixel open]**
    **Font quality** *(the single biggest "looks cheap" factor)*: real bold/italic/
    bold-italic faces are resolved from the same family (fontdb weight/style query;
    synthetic embolden/skew only when the family lacks them); underline/double
    underline/strikethrough quads; per-font fallback chain with diagnostics;
    `[font] family/size_pt/line_height` config, hot-reloaded. Still open: fractional
    (subpixel-positioned) glyph placement + gamma-correct blending, cell padding,
-   `.woff2`/variable-font tuning, ligatures (off by default).
+   `.woff2`/variable-font tuning, subpixel positioning.
 3. **[done 2026-11, auto-switch open]** **Theme system**: `[theme] preset = "dark"|"light"`
    plus `background`/`foreground`/`cursor` and 16 `[theme.palette]` `#rrggbb` overrides;
    separate chrome palette (tab strip/sidebar/divider/banner) from the ANSI palette;

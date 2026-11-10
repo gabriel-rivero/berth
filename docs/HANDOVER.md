@@ -111,10 +111,16 @@ takes ~9 min cold.
 Nerd/Powerline family list → symbol/CJK/emoji → DejaVu/Unifont → Linux
 `fc-list` per codepoint (cached in `probed`). Placeholder fonts are filtered by
 name. Verified headless: PUA glyphs resolve, truecolor and 256-color SGR render
-exactly (pixel-checked). Ligatures are shaped per row (`FontCtx::shape_ligatures`,
-`Renderer::rasterize_gid`, `[font] ligatures`), but have only been verified
-against a non-ligature font — check `a -> b ==> c` with Fira Code / Cascadia on
-a machine that has one.
+exactly (pixel-checked). Ligatures are shaped per row with **harfrust**
+(HarfBuzz port; `calt`/`liga`/`clig`) and rasterized through swash — swash's own
+shaper could not apply Fira Code's contextual `calt` chains, which is why the
+shaping engine and the rasterizer are now split. `FontCtx::shape_ligatures`
+caches per text+style, `Renderer::rasterize_gid` caches by glyph id, and
+`[font] ligatures = true` (default) toggles the whole path. Both ligature styles
+work: one glyph spanning several cells (covered cells skipped) and one
+replacement glyph per cell (Fira Code's `calt` halves). Verified headless with
+Fira Code 6 at 16 pt: `-> == > != <-- <= >= === !== ::= www` ligate, and
+`ligatures = false` renders the plain characters.
 
 ## Next up (roadmap order)
 

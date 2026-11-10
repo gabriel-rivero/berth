@@ -790,6 +790,9 @@ struct Face {
     /// Keeps the transmuted 'static `font` alive.
     _data: Vec<u8>,
     font: FontRef<'static>,
+    /// Same bytes shaped by harfrust (swash's shaper cannot apply Fira Code's
+    /// contextual `calt` ligatures; swash is still used for rasterization).
+    shape: harfrust::Font,
 }
 
 /// One glyph of a shaped (ligature-aware) run.
@@ -829,6 +832,8 @@ pub struct FontCtx {
     size_px: f32,
     /// Line-height multiplier used when computing `cell_h`.
     line_height: f32,
+    /// harfrust view of the primary face, used for ligature shaping.
+    shape: harfrust::Font,
     /// The family this context was built for (hot-reload comparison).
     family: String,
     ctx: ScaleContext,
@@ -839,7 +844,6 @@ pub struct FontCtx {
     /// Shaped ASCII runs: text + style -> glyph/cluster layout (None = no ligature).
     shaped: HashMap<(String, bool, bool), Option<Vec<LigGlyph>>>,
     /// GSUB/GPOS context for ligature shaping (borrowed per call, never stored).
-    shape_ctx: swash::shape::ShapeContext,
     /// Codepoints already probed through fontconfig (hits and misses).
     probed: std::collections::HashSet<char>,
     pub metrics: Metrics,
@@ -905,6 +909,10 @@ impl FontCtx {
             .ok_or_else(|| anyhow::anyhow!("invalid sfnt font"))?;
         // SAFETY: `data` is owned by this struct and outlives the FontRef.
         let font: FontRef<'static> = unsafe { std::mem::transmute(font_ref) };
+        // SAFETY: same ownership argument; harfrust borrows the same bytes.
+        let shape_data: &'static [u8] = unsafe { std::mem::transmute(data.as_slice()) };
+        let shape = harfrust::Font::new(shape_data, face_index as u32)
+            .ok_or_else(|| anyhow::anyhow!("harfrust rejected primary face"))?;
         let source_desc = id
             .and_then(|id| db.face(id))
             .map(|fi| {
@@ -937,6 +945,9 @@ impl FontCtx {
             let fr = FontRef::from_index(&fdata, fidx as usize)?;
             // SAFETY: `fdata` moves into the returned Face and outlives its FontRef.
             let fr: FontRef<'static> = unsafe { std::mem::transmute(fr) };
+            // SAFETY: same ownership argument for harfrust.
+            let sd: &'static [u8] = unsafe { std::mem::transmute(fdata.as_slice()) };
+            let shape = harfrust::Font::new(sd, fidx)?;
             let desc = db
                 .face(fid)
                 .map(|fi| {
@@ -954,6 +965,7 @@ impl FontCtx {
             Some(Face {
                 _data: fdata,
                 font: fr,
+                shape,
             })
         };
         let bold = load_face(Weight::BOLD, Style::Normal, "bold");
@@ -1065,12 +1077,12 @@ impl FontCtx {
             fallbacks,
             size_px,
             line_height,
+            shape,
             family: family.to_string(),
             ctx: swash::scale::ScaleContext::new(),
             glyphs: HashMap::new(),
             gid_glyphs: HashMap::new(),
             shaped: HashMap::new(),
-            shape_ctx: swash::shape::ShapeContext::new(),
             probed: std::collections::HashSet::new(),
             metrics: Self::compute_metrics(&font, size_px, line_height),
         })
@@ -1093,6 +1105,83 @@ impl FontCtx {
     }
 
     fn shape_uncached(&mut self, text: &str, bold: bool, italic: bool) -> Option<Vec<LigGlyph>> {
+        // HarfBuzz-accurate shaping: swash's own shaper applies simple `calt`
+        // substitutions but not Fira Code's chain-context arrow ligatures.
+        let font = match (bold, italic) {
+            (false, false) => self.shape.clone(),
+            (true, false) => self
+                .bold
+                .as_ref()
+                .map(|f| f.shape.clone())
+                .unwrap_or_else(|| self.shape.clone()),
+            (false, true) => self
+                .italic
+                .as_ref()
+                .map(|f| f.shape.clone())
+                .unwrap_or_else(|| self.shape.clone()),
+            (true, true) => self
+                .bold_italic
+                .as_ref()
+                .or(self.bold.as_ref())
+                .or(self.italic.as_ref())
+                .map(|f| f.shape.clone())
+                .unwrap_or_else(|| self.shape.clone()),
+        };
+        let shaper = harfrust::ShaperFont::new(&font);
+        let mut buf = harfrust::Buffer::new();
+        buf.push_str(text);
+        buf.set_direction(harfrust::Direction::LeftToRight);
+        buf.guess_segment_properties();
+        // Enable the programming-ligature features explicitly: some fonts put
+        // ligatures under `liga`/`clig` instead of `calt`.
+        let feats = [
+            harfrust::Feature::new(harfrust::Tag::new(b"calt"), 1, ..),
+            harfrust::Feature::new(harfrust::Tag::new(b"liga"), 1, ..),
+            harfrust::Feature::new(harfrust::Tag::new(b"clig"), 1, ..),
+        ];
+        let opts = harfrust::ShapeOptions::new()
+            .features(&feats)
+            .point_size(Some(self.size_px));
+        harfrust::shape(&shaper, &mut buf, opts).ok()?;
+
+        // harfrust reports byte clusters; map them to cell indices and take the
+        // first real glyph of each cluster (spacer glyphs are skipped).
+        let mut byte_cell = HashMap::new();
+        for (cell, (byte, _)) in text.char_indices().enumerate() {
+            byte_cell.insert(byte as u32, cell);
+        }
+        let total = text.chars().count();
+        let cell_w = self.metrics.cell_w;
+        let mut out: Vec<LigGlyph> = Vec::new();
+        for info in buf.glyph_infos() {
+            if info.glyph_id == 0 {
+                continue;
+            }
+            let Some(&cell) = byte_cell.get(&info.cluster) else {
+                continue;
+            };
+            if out.last().is_some_and(|g| g.cell == cell) {
+                continue;
+            }
+            out.push(LigGlyph {
+                cell,
+                span: 1,
+                gid: info.glyph_id as u16,
+                pen: cell as f32 * cell_w,
+            });
+        }
+        if out.is_empty() {
+            return None;
+        }
+        // Derive each glyph's cell span from the next cluster's start.
+        for i in 0..out.len() {
+            let next = out.get(i + 1).map(|g| g.cell).unwrap_or(total);
+            out[i].span = next.saturating_sub(out[i].cell).max(1);
+        }
+        // Two ligature styles exist in the wild: one glyph spanning several
+        // cells (ligature fonts proper), and one *replacement* glyph per cell
+        // that joins across the cell boundary (Fira Code's `calt` halves).
+        // Both are worth drawing only when a glyph differs from the plain cmap.
         let face = match (bold, italic) {
             (false, false) => self.font,
             (true, false) => self.bold.as_ref().map(|f| f.font).unwrap_or(self.font),
@@ -1105,43 +1194,13 @@ impl FontCtx {
                 .map(|f| f.font)
                 .unwrap_or(self.font),
         };
-        if face.charmap().map('a') == 0 {
-            return None;
-        }
-        let size = self.size_px;
-        let mut shaper = self.shape_ctx.builder(face).size(size).build();
-        shaper.add_str(text);
-        let mut byte_cell = HashMap::new();
-        for (cell, (byte, _)) in text.char_indices().enumerate() {
-            byte_cell.insert(byte as u32, cell);
-        }
-        let total = text.chars().count();
-        let mut out: Vec<LigGlyph> = Vec::new();
-        let mut pen = 0.0f32;
-        shaper.shape_with(|cluster| {
-            let Some(&cell) = byte_cell.get(&cluster.source.start) else {
-                return;
-            };
-            let Some(glyph) = cluster.glyphs.iter().find(|g| g.id != 0) else {
-                return;
-            };
-            out.push(LigGlyph {
-                cell,
-                span: 1,
-                gid: glyph.id,
-                pen,
-            });
-            pen += glyph.advance;
+        let cmap = face.charmap();
+        let changed = out.iter().any(|g| {
+            text.chars()
+                .nth(g.cell)
+                .is_some_and(|ch| cmap.map(ch) != g.gid)
         });
-        if out.is_empty() {
-            return None;
-        }
-        // Derive each glyph's cell span from the next cluster's start.
-        for i in 0..out.len() {
-            let next = out.get(i + 1).map(|g| g.cell).unwrap_or(total);
-            out[i].span = next.saturating_sub(out[i].cell).max(1);
-        }
-        if out.iter().all(|g| g.span == 1) {
+        if !changed {
             return None;
         }
         Some(out)
@@ -3228,7 +3287,6 @@ impl Renderer {
                     }
                     if end - start >= 2
                         && let Some(glyphs) = self.font.shape_ligatures(&text, style.0, style.1)
-                        && glyphs.iter().any(|g| g.span > 1)
                     {
                         for g in &glyphs {
                             let c = start + g.cell;
@@ -3551,13 +3609,30 @@ mod tests {
     }
 
     #[test]
+    fn shaping_merges_fira_code_arrows_when_installed() {
+        let mut ctx = FontCtx::new("Fira Code", 16.0, 1.0).expect("font ctx");
+        if ctx.family != "Fira Code" || ctx.font.charmap().map('-') == 0 {
+            return; // font not installed on this machine
+        }
+        // Fira Code ligates these through `calt`; any missing run means the
+        // shaper never saw the feature list.
+        for text in ["->", "=>", "==", "!="] {
+            let run = ctx.shape_ligatures(text, false, false);
+            assert!(run.is_some(), "Fira Code should ligate {text:?}");
+        }
+    }
+
+    #[test]
     fn shaped_runs_cover_the_whole_text() {
         let mut ctx = FontCtx::new("monospace", 16.0, 1.0).expect("font ctx");
         for text in ["abc", "->", "==>", "!=="] {
             if let Some(glyphs) = ctx.shape_ligatures(text, false, false) {
                 let covered: usize = glyphs.iter().map(|g| g.span).sum();
                 assert_eq!(covered, text.chars().count(), "coverage for {text:?}");
-                assert!(glyphs.iter().any(|g| g.span > 1));
+                assert!(
+                    !glyphs.is_empty(),
+                    "shaping should substitute at least one glyph"
+                );
             }
         }
     }
