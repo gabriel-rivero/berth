@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.26.1](https://github.com/gabriel-rivero/berth/compare/v0.26.0...v0.26.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **input:** make kitty keyboard protocol opt-in, Windows-safe IME gating ([8c210b3](https://github.com/gabriel-rivero/berth/commit/8c210b31b6b4015285095090b3c076bfb3327cbc))
+
+
+### Documentation
+
+* add vision north star, refresh handover and README status ([ac0b1a4](https://github.com/gabriel-rivero/berth/commit/ac0b1a4233c49d8d42a009c911be289aa55d4c72))
+
 ## [0.26.0](https://github.com/gabriel-rivero/berth/compare/v0.25.0...v0.26.0) (2026-11-08)
 
 
