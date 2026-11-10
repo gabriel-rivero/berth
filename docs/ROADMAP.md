@@ -9,6 +9,26 @@ Consolidated from the external product/code review + shipped work. Status marker
 qwen review; items tagged *(user-reported)* from the user UX list (statuses in
 `docs/UI-REVIEW-qwen.md` §4).
 
+## Vision (north star, Nov 2026)
+
+**A Rust cmux clone with hardware acceleration that behaves near-equally across all
+major desktop OSes, with a modern look & feel, plugin support, and heavy
+customizability.**
+
+The five pillars and where they stand:
+
+| Pillar | Meaning | Status / where tracked |
+| --- | --- | --- |
+| **cmux shape** | Workspaces as project containers, tabs in a left sidebar, splits, session persistence, a `berth` CLI/IPC for scripting | Layout/workspaces/persistence **[done]**; quick switcher, activity badges, CLI/IPC **[open]** (Identity, Plugin tier 4) |
+| **Hardware accelerated** | GPU-drawn cells + chrome, no webview; honest adapter reporting and a usable software fallback | **[done 2026-11]** — wgpu renderer, `--gpu-info`, sRGB pipeline, lost-surface recovery; damage tracking + CI perf budget **[open]** (visual wave 7) |
+| **Near-equal on Linux/macOS/Windows** | Same rendering, keybinds, config and input semantics everywhere | Linux verified (Xvfb + real); macOS/Windows reasoned + CI-built but **not manually verified** (no hardware) — IME, ConPTY resize and modifier mapping remain the risk areas |
+| **Modern look & feel** | Rounded chrome, real font faces, themes, hover/press states, smooth scrolling, no visual glitches | **[done 2026-11]** — theme presets/overrides, real bold/italic, pill chrome, cursor styles, frame recovery; subpixel glyphs, ligatures, animations **[open]** (visual wave) |
+| **Plugins & customization** | Sandboxed WASM plugins; every visual/behavioral knob in TOML, hot-reloaded; no rebuild-to-configure | Plugin host + fuel/memory caps + capability manifests + status segments **[done]**; plugin manager UI, change-event diffs, tier 2–4 APIs **[open]**. Config covers font/theme/terminal/shell/keybinds and hot-reloads; `Config::save()` + settings panel **[open]** |
+
+Release cadence: conventional commits → release-please bumps `Cargo.toml`, `CHANGELOG.md`
+and tags `v*`; the release workflow builds all five targets and attaches archives, deb/rpm
+and checksums. Patch releases should be cheap; every wave updates this file in the same PR.
+
 **Acceptance rule (single source of truth):** every future feature wave must update this
 roadmap in the same PR — new items, status flips, and stragglers land here before release.
 

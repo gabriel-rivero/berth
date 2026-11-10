@@ -5,6 +5,10 @@ a **left-side tab sidebar** and **project workspaces** — the UX that mainstrea
 Ghostty closed the side-tabs request and ships only horizontal tabs; cmux has the right shape but is
 macOS-first and closed.
 
+North star: **a Rust cmux clone with hardware acceleration that behaves near-equally on all major
+desktop OSes, with a modern look & feel, plugin support, and heavy customizability.** See
+[docs/ROADMAP.md](docs/ROADMAP.md#vision-north-star-nov-2026) for the pillar-by-pillar status.
+
 ![berth running a shell: left workspace sidebar (main/ws2), two tabs, fastfetch and git log](docs/assets/berth.png)
 
 ## Meaning
@@ -27,7 +31,7 @@ Events and full tracking: **[docs/ROADMAP.md](docs/ROADMAP.md)** (includes the
 Nov 2026 external review's findings and their status). Every config key,
 default and per-OS path: **[docs/CONFIG.md](docs/CONFIG.md)**.
 
-v0.25.0 — M1–M3 shipped (details below), M4 plugin host in progress.
+v0.26.1 — M1–M3 shipped (details below), M4 plugin host in progress.
 Post-0.24.0 fixes: correct sRGB→linear color pipeline, mouse wheel scrolls the
 viewport instead of walking shell history (trackpad pixel deltas accumulate
 instead of rounding away), typing while scrolled back returns to the live tail

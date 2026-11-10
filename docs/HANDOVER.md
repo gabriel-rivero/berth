@@ -1,41 +1,26 @@
-# Session handover — 2026-11-06
+# Session handover — 2026-11-10
 
 State for the next session. History lives in `docs/ROADMAP.md`; this file is
 the short version: what landed, what to run, what is next.
 
 ## Branch state
 
-`main` at `e2ecbde`, pushed. 27 commits since the v0.24.0 release
-(`bc620e8`), all tests/clippy green at the time of writing:
+`main` at `8c210b3` (v0.26.1), pushed, all tests/clippy/fmt green. Since v0.25.0:
 
 ```
-e2ecbde wide-char underline/strikeout decorations span two cells
-bde62cb point handover at selection auto-scroll head
-9c9d96b selection drag auto-scrolls past pane edges (qwen U-13)
-b30f0aa DECCKM application arrows + platform IME routing
-9cac149 refresh handover header/next-up after bell work
-31a793c bell in a background tab lights an attention dot
-4997045 refresh handover after exit-notice/bell work
-3b15f26 non-zero shell exit notice (transient bottom strip)
-cd11eb6 plugin status segments + accent() host import
-3ea636c refresh handover after budget work
-83112cd lightweight budget probe, --version, CI 60 MiB size gate
-6b0970a session handover doc
-0be64f8 fullscreen, clear-scrollback, zoom badge + rich window title
-fa9421c clickable links (OSC 8 + URL detection, hover underline, cmd/ctrl+click)
-abd72d4 double-click word / triple-click line selection
-387ee78 scrollback search (incremental query, hit cycling, live highlight)
-dea96e7 [shell] program/args/env/working_dir + [terminal] scrollback
-0e18b42 stop tracking crates/plugins/guest/target
-aadbd3d plugin fuel (50M) + memory cap (64 MiB), trap surfacing, auto-disable
-7e42e5c surface-loss recovery, BERTH_DEBUG frame HUD, confirm banner drawn last
-33fd501 cursor shapes/blink, focused-pane-only cursor, hollow unfocused block
-1d12eaf chrome polish: SDF rounded pills, shrink-to-fit tabs (140→96), hover-only ✕
-35f4ed5 scrolling: sub-line wheel accumulation, tail snap, overlay scrollbar + ↑N badge
-8fd8967 real bold/italic faces, [font] line_height, [theme] dark/light + palette overrides
-44326f9 faux bold/italic, underline/strikeout, SGR reverse/dim
-3b36c12 chrome hit-test unification, wheel routing fix (ALTERNATE_SCROLL trap), sRGB pipeline
+8c210b3 fix(input): make kitty keyboard protocol opt-in, Windows-safe IME gating
+cb405a5 ci(release): fix macOS arm runner and Windows archive version
+306f08e chore(main): release 0.26.0
+844ce96 plugins: enforce per-plugin capability manifests
+cb22717 ui: kitty keyboard protocol (CSI-u encoding from pushed flags)
+1f5e980 chore(main): release 0.25.0
 ```
+
+The kitty commit is a **functional revert**: the protocol code and tests remain, but
+`[terminal] kitty_keyboard` (default `false`) now gates `TermConfig`, so panes never
+advertise CSI-u support unless the user asks. Same commit makes `ime_owns_text()`
+never suppress `KeyboardInput` text on Windows (WM_CHAR delivers text even with an
+IME associated; a stuck composition could otherwise swallow every keystroke).
 
 ## User-reported issues from the original brief
 
@@ -96,16 +81,19 @@ takes ~9 min cold.
 
 ## Next up (roadmap order)
 
-1. **Plugin-facing polish (item 8 remainder)** — status segments shipped via
+1. **Windows/macOS verification pass** — the single biggest risk to "near-equal on all
+   platforms". Run the 0.26.1 Windows build with `set BERTH_DEBUG=1`, confirm typing
+   (look for `kbd write:` lines in `%APPDATA%\com\berth\berth\berth.log`), then check
+   ConPTY resize, IME composition end, and modifier chords. Same for macOS.
+2. **Plugin-facing polish (item 8 remainder)** — status segments shipped via
    host `set-status`/`accent` imports; still open: plugin manager panel (list,
    enable/disable, last error, reload), richer segment
    metadata (badges/icons/click actions).
-2. **Table stakes** — all done: kitty keyboard protocol (now opt-in behind
-   `[terminal] kitty_keyboard`, default off after a Windows typing regression)
-   and the wide-glyph audit.
-3. **Distribution** — README screenshot/GIF, `.desktop` + AppStream, winget,
-   `sha256sums.txt`, cargo-binstall metadata, config reference doc, CHANGELOG
-   dedupe, in-app config access (`Config` still has no `save()`).
+3. **Distribution** — winget manifest (needs the Windows zip SHA256 from a release
+   with assets), in-app config access (`Config` still has no `save()`), overflow
+   chevrons for tabs/sidebar, damage tracking + CI perf budget.
+4. **Customization depth** — per-workspace config (cwd/env/command/color/icon),
+   theme-aware plugin accents, settings panel backed by a config writer.
 
 Lightweight budget is measured and gated: 49 MB binary, 365 ms to first frame,
 ~178 MiB idle RSS (Linux/ADL-N/Xvfb; real GPU is faster). Re-run
@@ -114,7 +102,16 @@ Lightweight budget is measured and gated: 49 MB binary, 365 ms to first frame,
 ## Known gaps / gotchas
 
 - macOS and Windows behavior is unverified on this machine; the close-button
-  and ConPTY paths are reasoned/tested but not run there.
+  and ConPTY paths are reasoned/tested but not run there. Kitty keyboard
+  support is opt-in (`[terminal] kitty_keyboard`, default `false`) precisely
+  because ConPTY's CSI-u handling is unproven.
+- Windows input triage: `set BERTH_DEBUG=1` then check
+  `%APPDATA%\com\berth\berth\berth.log` for `kbd write:` lines — present means
+  keys reached the PTY, absent means the UI dropped them.
+- Rune (`anomalyco/rune`) was evaluated as a UI framework: rejected for the
+  terminal surface (0.0.1 on a pinned dev rev, own event loop/renderer, still
+  needs a custom cell-grid path). Same wgpu/winit majors, so a settings-window
+  spike remains cheap later.
 - Clear-scrollback uses ED 3 through the parser (alacritty's `clear_screen` is
   private) — fine, but note it keeps the visible screen by design.
 - Fullscreen under bare Xvfb cannot be visually distinguished (no WM); the
