@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.28.0](https://github.com/gabriel-rivero/berth/compare/v0.27.0...v0.28.0) (2026-11-10)
+
+
+### Features
+
+* **chrome:** move-tab-to-workspace rows in the tab context menu ([7a7ec0c](https://github.com/gabriel-rivero/berth/commit/7a7ec0c6c4825d3b81743df59cc5759a56dfe0ab))
+* **chrome:** right-click context menus for tabs, workspaces and panes ([cb5e03d](https://github.com/gabriel-rivero/berth/commit/cb5e03d39488a12788f96934fe93075ae740ea5f))
+* **chrome:** tab reordering, wheel-over-chrome, ctrl+digit tab slots ([8ba2296](https://github.com/gabriel-rivero/berth/commit/8ba229666b92fcebb0f0e4a9ffb3a4d9354d8703))
+* **fonts:** nerd/powerline fallback chain and fontconfig glyph resolution ([07b1ee1](https://github.com/gabriel-rivero/berth/commit/07b1ee198c5fcb31702e7775f5c488b0a4542a79))
+* **plugins:** in-app plugin manager with enable/disable, error list and hot reload ([7dd0ebb](https://github.com/gabriel-rivero/berth/commit/7dd0ebbdd4c3a2e4d684bc80f0711d4b28022227))
+* **settings:** cmd+, config panel with live apply and persistence ([a1803d3](https://github.com/gabriel-rivero/berth/commit/a1803d3952dfaba6701a09099cf7b63e4d2b225d))
+
+
+### Bug Fixes
+
+* **sidebar:** real single-line editor for workspace rename ([f316dd9](https://github.com/gabriel-rivero/berth/commit/f316dd934cdd9b8bb9c362c0b6ae9d2f6972ccc1))
+
+
+### Documentation
+
+* handover for chrome input, rename editor and context menus ([9cc5e28](https://github.com/gabriel-rivero/berth/commit/9cc5e288cb90a80ef8fce13353455e799beb79fc))
+
 ## [0.27.0](https://github.com/gabriel-rivero/berth/compare/v0.26.2...v0.27.0) (2026-11-10)
 
 
