@@ -5,15 +5,16 @@ the short version: what landed, what to run, what is next.
 
 ## Branch state
 
-`main` at `8c210b3` (v0.26.1), pushed, all tests/clippy/fmt green. Since v0.25.0:
+`main` at `8fafcf4` (v0.26.2), pushed, all tests/clippy/fmt green. Since v0.26.0:
 
 ```
+8878a1f feat(input): map touchscreen taps to left clicks
+fc078b4 chore(main): release 0.26.2 (#48)
+4c7995a fix(config): boot with defaults on parse errors; fix Windows IME test
+2ee0cf9 docs: reconcile roadmap and qwen review with v0.26.1 status
+735512a chore(main): release 0.26.1 (#47)
+ac0b1a4 docs: add vision north star, refresh handover and README status
 8c210b3 fix(input): make kitty keyboard protocol opt-in, Windows-safe IME gating
-cb405a5 ci(release): fix macOS arm runner and Windows archive version
-306f08e chore(main): release 0.26.0
-844ce96 plugins: enforce per-plugin capability manifests
-cb22717 ui: kitty keyboard protocol (CSI-u encoding from pushed flags)
-1f5e980 chore(main): release 0.25.0
 ```
 
 The kitty commit is a **functional revert**: the protocol code and tests remain, but
@@ -82,9 +83,11 @@ takes ~9 min cold.
 ## Next up (roadmap order)
 
 1. **Windows/macOS verification pass** — the single biggest risk to "near-equal on all
-   platforms". Run the 0.26.1 Windows build with `set BERTH_DEBUG=1`, confirm typing
-   (look for `kbd write:` lines in `%APPDATA%\com\berth\berth\berth.log`), then check
-   ConPTY resize, IME composition end, and modifier chords. Same for macOS.
+   platforms". On a ROG Ally (Windows 11 handheld, 0.26.2) the build launches and
+   `dir` works, so ConPTY typing is confirmed; touchscreen taps did nothing, which
+   `8878a1f` fixes by mapping them to left clicks (not yet retested on device).
+   Still to check there: whether taps now hit the chrome, ConPTY resize, IME
+   composition end, modifier chords. Same pass for macOS.
 2. **Plugin-facing polish (item 8 remainder)** — status segments shipped via
    host `set-status`/`accent` imports; still open: plugin manager panel (list,
    enable/disable, last error, reload), richer segment
@@ -112,6 +115,13 @@ Lightweight budget is measured and gated: 49 MB binary, 365 ms to first frame,
   terminal surface (0.0.1 on a pinned dev rev, own event loop/renderer, still
   needs a custom cell-grid path). Same wgpu/winit majors, so a settings-window
   spike remains cheap later.
+- Touch is tap-to-click only: `WindowEvent::Touch` re-dispatches synthetic
+  cursor + left-button events through `window_event`, so every mouse path
+  (chrome zones, double-tap, selection drag, tab drag, sidebar resize) works
+  unchanged. First contact only; extra fingers ignored. Windows promotes the
+  first touch point to mouse input, so promoted mouse events within 600 ms of
+  a touch are dropped unless they are our own dispatch. Touch scroll / pinch
+  are not bound yet.
 - Clear-scrollback uses ED 3 through the parser (alacritty's `clear_screen` is
   private) — fine, but note it keeps the visible screen by design.
 - Fullscreen under bare Xvfb cannot be visually distinguished (no WM); the
